@@ -4,7 +4,7 @@ DivApply is an AI-assisted job application pipeline that discovers jobs, enriche
 
 It is designed to stay fact-driven: it uses your profile, resume, saved preferences, and private coursework knowledge to make matching decisions without inventing experience.
 
-For transparency about the AI-assisted development process, see [AI_ASSISTANCE.md](AI_ASSISTANCE.md).
+For transparency about the Codex-assisted development process, see [AI_ASSISTANCE.md](AI_ASSISTANCE.md).
 
 ## What It Does
 
