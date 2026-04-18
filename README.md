@@ -28,15 +28,63 @@ DivApply runs in stages:
 
 ## Install
 
-```bash
+### Quick install from GitHub
+
+1. Install Git.
+2. Install the official Python 3.11+ release from [python.org](https://www.python.org/downloads/).
+3. Clone the repo and run the bootstrap script:
+
+```powershell
+git clone https://github.com/InnitDivine/DivApply.git
+cd DivApply
+.\tools\bootstrap.ps1
+```
+
+That script creates a local `.venv`, installs DivApply, and runs `divapply doctor` for you.
+
+If you want an editable development setup, use:
+
+```powershell
+.\tools\bootstrap.ps1 -Dev
+```
+
+### If `python` is not on PATH
+
+If Windows cannot find `python` or `py`, point the bootstrap script at a full interpreter path:
+
+```powershell
+.\tools\bootstrap.ps1 -PythonCommand "C:\Path\To\python.exe"
+```
+
+### Manual install
+
+If you already have a working Python 3.11+ environment:
+
+```powershell
 pip install .
 ```
 
-If you want an editable install during development:
+For editable development:
 
-```bash
+```powershell
 pip install -e .
 ```
+
+After installing, run:
+
+```powershell
+divapply doctor
+```
+
+That checks your profile files, LLM setup, browser runtime, and apply backend.
+
+If you are upgrading from a previous release, run:
+
+```powershell
+divapply migrate
+```
+
+That copies your old local files into the new `~/.divapply` layout.
 
 ## First Run
 
@@ -57,6 +105,7 @@ divapply apply --dry-run
 divapply status
 divapply dashboard
 divapply import-coursework path\to\transcript.json
+divapply migrate
 ```
 
 ## Configuration
@@ -102,4 +151,6 @@ python -m py_compile src/divapply/**/*.py
 
 - The codebase uses the `divapply` Python package.
 - The primary public branding and CLI entry point is `DivApply`.
+- Migration notes and legacy compatibility items live in [MIGRATION_CHECKLIST.md](MIGRATION_CHECKLIST.md).
+- Auto-apply on a fresh machine usually needs Node.js `npx` plus Playwright browser binaries. If Firefox is missing, run `npx playwright install firefox` once before using `divapply apply`.
 - Browser-based auto-apply can be risky. Use dry runs and review the generated prompt files if you are testing a new setup.

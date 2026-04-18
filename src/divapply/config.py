@@ -5,8 +5,12 @@ import platform
 import shutil
 from pathlib import Path
 
-# User data directory Ã¢â‚¬â€ all user-specific files live here
-APP_DIR = Path(os.environ.get("DIVAPPLY_DIR", Path.home() / ".divapply"))
+# User data directory - all user-specific files live here.
+#
+# New installs default to ~/.divapply, but we still read legacy ~/.applypilot
+# files so existing users can migrate without losing data.
+APP_DIR = Path(os.environ.get("DIVAPPLY_DIR", os.environ.get("APPLYPILOT_DIR", Path.home() / ".divapply")))
+LEGACY_APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
 
 # Core paths
 DB_PATH = APP_DIR / "divapply.db"
@@ -15,6 +19,10 @@ RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
 ENV_PATH = APP_DIR / ".env"
+LEGACY_DB_PATH = LEGACY_APP_DIR / "applypilot.db"
+LEGACY_PROFILE_PATH = LEGACY_APP_DIR / "profile.json"
+LEGACY_SEARCH_CONFIG_PATH = LEGACY_APP_DIR / "searches.yaml"
+LEGACY_ENV_PATH = LEGACY_APP_DIR / ".env"
 
 # Generated output
 TAILORED_DIR = APP_DIR / "tailored_resumes"
@@ -89,15 +97,66 @@ def ensure_dirs() -> None:
         directory.mkdir(parents=True, exist_ok=True)
 
 
+def _read_text_with_legacy(current: Path, legacy: Path | None = None, *, encoding: str = "utf-8") -> str | None:
+    """Read current user data, falling back to a legacy file."""
+    if current.exists():
+        return current.read_text(encoding=encoding)
+    if legacy is not None and legacy.exists():
+        return legacy.read_text(encoding=encoding)
+    return None
+
+
+def _copy_if_present(source: Path, target: Path, *, overwrite: bool = False) -> str:
+    """Copy a file when available and report the action taken."""
+    if not source.exists():
+        return "missing"
+    try:
+        if source.resolve() == target.resolve():
+            return "skipped"
+    except Exception:
+        pass
+    if target.exists() and not overwrite:
+        return "skipped"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(source, target)
+    return "copied"
+
+
+def migrate_legacy_user_data(
+    *,
+    source_dir: Path | None = None,
+    target_dir: Path | None = None,
+    overwrite: bool = False,
+) -> dict[str, str]:
+    """Copy legacy files into the current DivApply layout.
+
+    This intentionally preserves the current files unless overwrite=True.
+    The helper is used by the CLI migrate command and is safe to call on a
+    fresh install or repeatedly during upgrade troubleshooting.
+    """
+    source_root = Path(source_dir or LEGACY_APP_DIR)
+    target_root = Path(target_dir or APP_DIR)
+    results = {
+        "profile": _copy_if_present(source_root / "profile.json", target_root / "profile.json", overwrite=overwrite),
+        "searches": _copy_if_present(source_root / "searches.yaml", target_root / "searches.yaml", overwrite=overwrite),
+        "env": _copy_if_present(source_root / ".env", target_root / ".env", overwrite=overwrite),
+        "resume_txt": _copy_if_present(source_root / "resume.txt", target_root / "resume.txt", overwrite=overwrite),
+        "resume_pdf": _copy_if_present(source_root / "resume.pdf", target_root / "resume.pdf", overwrite=overwrite),
+        "database": _copy_if_present(source_root / "applypilot.db", target_root / "divapply.db", overwrite=overwrite),
+    }
+    return results
+
+
 def load_profile() -> dict:
     """Load user profile from ~/.divapply/profile.json."""
     import json
 
-    if not PROFILE_PATH.exists():
+    raw = _read_text_with_legacy(PROFILE_PATH, LEGACY_PROFILE_PATH)
+    if raw is None:
         raise FileNotFoundError(
             f"Profile not found at {PROFILE_PATH}. Run `divapply init` first."
         )
-    profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    profile = json.loads(raw)
 
     # Hidden coursework knowledge is stored in SQLite so it can inform
     # scoring/tailoring without being exposed in the generated resume text.
@@ -176,12 +235,13 @@ def load_search_config() -> dict:
     """Load search configuration from ~/.divapply/searches.yaml."""
     import yaml
 
-    if not SEARCH_CONFIG_PATH.exists():
+    raw = _read_text_with_legacy(SEARCH_CONFIG_PATH, LEGACY_SEARCH_CONFIG_PATH)
+    if raw is None:
         example = CONFIG_DIR / "searches.example.yaml"
         if example.exists():
             return yaml.safe_load(example.read_text(encoding="utf-8"))
         return {}
-    return yaml.safe_load(SEARCH_CONFIG_PATH.read_text(encoding="utf-8"))
+    return yaml.safe_load(raw)
 
 
 def load_sites_config() -> dict:
@@ -241,6 +301,8 @@ def load_env() -> None:
 
     if ENV_PATH.exists():
         load_dotenv(ENV_PATH, override=True)
+    elif LEGACY_ENV_PATH.exists():
+        load_dotenv(LEGACY_ENV_PATH, override=True)
     load_dotenv()
 
 
@@ -281,7 +343,7 @@ def get_available_apply_backends() -> dict[str, str]:
 
 def get_apply_backend(preferred: str | None = None) -> str | None:
     """Resolve which apply backend to use."""
-    requested = preferred or os.environ.get("DIVAPPLY_APPLY_BACKEND")
+    requested = preferred or os.environ.get("DIVAPPLY_APPLY_BACKEND") or os.environ.get("APPLYPILOT_APPLY_BACKEND")
     available = get_available_apply_backends()
     if requested:
         requested = requested.strip().lower()
@@ -301,7 +363,7 @@ def get_apply_backend_label(backend: str | None) -> str:
 
 def get_apply_browser(preferred: str | None = None) -> str:
     """Resolve which Playwright MCP browser channel to use."""
-    requested = preferred or os.environ.get("DIVAPPLY_BROWSER", "firefox")
+    requested = preferred or os.environ.get("DIVAPPLY_BROWSER") or os.environ.get("APPLYPILOT_BROWSER") or "firefox"
     browser = requested.strip().lower()
     return browser if browser in APPLY_BROWSER_LABELS else "firefox"
 

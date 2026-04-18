@@ -76,6 +76,39 @@ def init() -> None:
     run_wizard()
 
 
+@app.command()
+def migrate(
+    overwrite: bool = typer.Option(False, "--overwrite", help="Replace current files with legacy copies when both exist."),
+) -> None:
+    """Copy legacy user files into the current DivApply layout."""
+    from divapply.config import ensure_dirs, migrate_legacy_user_data
+
+    ensure_dirs()
+    results = migrate_legacy_user_data(overwrite=overwrite)
+
+    console.print("\n[bold]Migration summary[/bold]")
+    for key, status in results.items():
+        label = {
+            "profile": "profile.json",
+            "searches": "searches.yaml",
+            "env": ".env",
+            "resume_txt": "resume.txt",
+            "resume_pdf": "resume.pdf",
+            "database": "divapply.db",
+        }.get(key, key)
+        color = "green" if status == "copied" else "yellow" if status == "skipped" else "dim"
+        console.print(f"  [{color}]{label}[/{color}] {status}")
+
+    copied = sum(1 for status in results.values() if status == "copied")
+    skipped = sum(1 for status in results.values() if status == "skipped")
+    if copied:
+        console.print("[green]Legacy data copied into the DivApply layout.[/green]")
+    if skipped:
+        console.print("[yellow]Some current files already existed and were left in place.[/yellow]")
+    if not copied and not skipped:
+        console.print("[dim]No legacy files were found to migrate.[/dim]")
+
+
 @app.command("import-coursework")
 def import_coursework(
     path: Path = typer.Argument(..., exists=True, readable=True, resolve_path=True, help="Transcript or coursework file to import."),
@@ -453,6 +486,7 @@ def doctor() -> None:
     from divapply.config import (
         load_env, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
         SEARCH_CONFIG_PATH, ENV_PATH, get_chrome_path,
+        get_apply_browser, get_apply_browser_label,
     )
 
     load_env()
@@ -522,13 +556,18 @@ def doctor() -> None:
         results.append(("Apply agent CLI", fail_mark,
                         "Install Codex or Claude Code (needed for auto-apply)"))
 
-    # Chrome
-    try:
-        chrome_path = get_chrome_path()
-        results.append(("Chrome/Chromium", ok_mark, chrome_path))
-    except FileNotFoundError:
-        results.append(("Chrome/Chromium", fail_mark,
-                        "Install Chrome or set CHROME_PATH env var (needed for auto-apply)"))
+    # Browser runtime
+    selected_browser = get_apply_browser()
+    if selected_browser == "chrome":
+        try:
+            chrome_path = get_chrome_path()
+            results.append(("Browser", ok_mark, chrome_path))
+        except FileNotFoundError:
+            results.append(("Browser", fail_mark,
+                            "Install Chrome or set CHROME_PATH env var (needed for Chrome mode)"))
+    else:
+        results.append(("Browser", ok_mark,
+                        f"Playwright channel: {get_apply_browser_label(selected_browser)}"))
 
     # Node.js / npx (for Playwright MCP)
     npx_bin = shutil.which("npx")
@@ -562,13 +601,13 @@ def doctor() -> None:
     tier = get_tier()
     if selected_backend:
         console.print(f"[dim]  Auto-apply backend: {get_apply_backend_label(selected_backend)}[/dim]")
-    console.print(f"[bold]Current tier: Tier {tier} â€” {TIER_LABELS[tier]}[/bold]")
+    console.print(f"[bold]Current tier: Tier {tier} - {TIER_LABELS[tier]}[/bold]")
 
     if tier == 1:
-        console.print("[dim]  â†’ Tier 2 unlocks: scoring, tailoring, cover letters (needs LLM API key)[/dim]")
-        console.print("[dim]  â†’ Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
+        console.print("[dim]  -> Tier 2 unlocks: scoring, tailoring, cover letters (needs LLM API key)[/dim]")
+        console.print("[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]")
     elif tier == 2:
-        console.print("[dim]  â†’ Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
+        console.print("[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]")
 
     console.print()
 
