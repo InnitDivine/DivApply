@@ -1,5 +1,5 @@
 """
-Unified LLM client for ApplyPilot.
+Unified LLM client for DivApply.
 
 Auto-detects provider from environment:
   GEMINI_API_KEY  -> Google Gemini (default: gemini-2.0-flash)

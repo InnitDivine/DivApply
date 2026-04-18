@@ -1,4 +1,4 @@
-"""ApplyPilot configuration: paths, platform detection, user data."""
+"""DivApply configuration: paths, platform detection, user data."""
 
 import os
 import platform

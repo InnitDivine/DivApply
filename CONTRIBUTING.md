@@ -1,6 +1,6 @@
-# Contributing to ApplyPilot
+# Contributing to DivApply
 
-Thank you for your interest in contributing to ApplyPilot. This guide covers everything you need to get started.
+Thank you for your interest in contributing to DivApply. This guide covers everything you need to get started.
 
 ## Development Setup
 
@@ -12,18 +12,18 @@ Thank you for your interest in contributing to ApplyPilot. This guide covers eve
 ### Clone and Install
 
 ```bash
-git clone https://github.com/Pickle-Pixel/ApplyPilot.git
-cd ApplyPilot
+git clone https://github.com/InnitDivine/DivApply.git
+cd DivApply
 pip install -e ".[dev]"
 playwright install chromium
 ```
 
-This installs ApplyPilot in editable mode with all development dependencies (pytest, ruff, etc.) and downloads the Chromium browser binary for Playwright.
+This installs DivApply in editable mode with all development dependencies (pytest, ruff, etc.) and downloads the Chromium browser binary for Playwright.
 
 ### Verify Installation
 
 ```bash
-applypilot --version
+divapply --version
 pytest tests/ -v
 ruff check src/
 ```
@@ -45,7 +45,7 @@ Workday employer portals are configured in `config/employers.yaml`. To add a new
   url: "https://company.wd5.myworkdaysite.com/en-US/recruiting"
 ```
 
-4. Test discovery: `applypilot discover --employer "Company Name"`
+4. Test discovery: `divapply discover --employer "Company Name"`
 5. Submit a PR with the new entry
 
 ### Adding New Career Sites
@@ -66,12 +66,12 @@ Direct career site scrapers are configured in `config/sites.yaml`. To add a new 
     description: ".job-description"
 ```
 
-3. Test: `applypilot discover --site "Company Name"`
+3. Test: `divapply discover --site "Company Name"`
 4. Submit a PR
 
 ### Bug Fixes and Features
 
-1. Check existing [issues](https://github.com/Pickle-Pixel/ApplyPilot/issues) to avoid duplicating work
+1. Check existing [issues](https://github.com/InnitDivine/DivApply/issues) to avoid duplicating work
 2. For new features, open an issue first to discuss the approach
 3. Fork the repo and create a feature branch from `main`
 4. Write your code with type hints and docstrings
@@ -94,7 +94,7 @@ pytest tests/ --cov=src/applypilot --cov-report=term-missing
 
 ## Linting and Code Style
 
-ApplyPilot uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
+DivApply uses [Ruff](https://docs.astral.sh/ruff/) for linting and formatting.
 
 ```bash
 # Check for issues
@@ -127,7 +127,7 @@ ruff format src/
 ## Project Structure
 
 ```
-ApplyPilot/
+DivApply/
 ├── src/applypilot/       # Main package
 │   ├── __init__.py
 │   ├── cli.py            # CLI entry points
@@ -146,4 +146,4 @@ ApplyPilot/
 
 ## License
 
-By contributing to ApplyPilot, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0](LICENSE).
+By contributing to DivApply, you agree that your contributions will be licensed under the [GNU Affero General Public License v3.0](LICENSE).

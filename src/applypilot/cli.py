@@ -379,7 +379,7 @@ def status() -> None:
 
     stats = get_stats()
 
-    console.print("\n[bold]ApplyPilot Pipeline Status[/bold]\n")
+    console.print("\n[bold]DivApply Pipeline Status[/bold]\n")
 
     # Summary table
     summary = Table(title="Pipeline Overview", show_header=True, header_style="bold cyan")
@@ -548,7 +548,7 @@ def doctor() -> None:
 
     # --- Render results ---
     console.print()
-    console.print("[bold]ApplyPilot Doctor[/bold]\n")
+    console.print("[bold]DivApply Doctor[/bold]\n")
 
     col_w = max(len(r[0]) for r in results) + 2
     for check, status, note in results:

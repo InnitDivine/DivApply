@@ -316,7 +316,7 @@ def _setup_auto_apply() -> None:
                     encoding="utf-8",
                 )
         else:
-            ENV_PATH.write_text(f"# ApplyPilot configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
+            ENV_PATH.write_text(f"# DivApply configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
         console.print("[green]CapSolver key saved.[/green]")
     else:
         console.print("[dim]Skipped. Add CAPSOLVER_API_KEY to .env later if needed.[/dim]")
