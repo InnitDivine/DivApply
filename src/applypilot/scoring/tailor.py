@@ -18,7 +18,7 @@ from pathlib import Path
 
 from applypilot.config import RESUME_PATH, TAILORED_DIR, load_profile
 from applypilot.database import get_connection, get_jobs_by_stage
-from applypilot.llm import get_client
+from applypilot.llm import get_client_for_stage
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     FABRICATION_WATCHLIST,
@@ -30,6 +30,12 @@ from applypilot.scoring.validator import (
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5  # max cross-run retries before giving up
+SUMMARY_MAX_WORDS = 42
+BULLET_MAX_WORDS = 26
+PROJECT_BULLET_MAX_WORDS = 20
+SKILLS_MAX_ITEMS = 5
+EXPERIENCE_MAX_ENTRIES = 4
+PROJECTS_MAX_ENTRIES = 1
 
 
 # ── Prompt Builders (profile-driven) ──────────────────────────────────────
@@ -56,6 +62,8 @@ def _build_tailor_prompt(profile: dict) -> str:
     projects = resume_facts.get("preserved_projects", [])
     school = resume_facts.get("preserved_school", "")
     real_metrics = resume_facts.get("real_metrics", [])
+    coursework = profile.get("coursework_summary", [])
+    coursework_skills = profile.get("coursework_skills", [])
 
     companies_str = ", ".join(companies) if companies else "N/A"
     projects_str = ", ".join(projects) if projects else "N/A"
@@ -67,8 +75,10 @@ def _build_tailor_prompt(profile: dict) -> str:
 
     education = profile.get("experience", {})
     education_level = education.get("education_level", "")
+    coursework_block = "\n".join(f"- {item}" for item in coursework) if coursework else "N/A"
+    coursework_skills_block = "\n".join(f"- {item}" for item in coursework_skills) if coursework_skills else "N/A"
 
-    return f"""You are a senior technical recruiter rewriting a resume to get this person an interview.
+    return f"""You are a neutral resume editor rewriting a resume using only verified facts.
 
 Take the base resume and job description. Return a tailored resume as a JSON object.
 
@@ -81,21 +91,28 @@ Take the base resume and job description. Return a tailored resume as a JSON obj
 ## SKILLS BOUNDARY (real skills only):
 {skills_block}
 
-You MAY add 2-3 closely related tools (Kubernetes if Docker, Terraform if AWS, Redis if PostgreSQL). No unrelated languages/frameworks.
+## ACADEMIC COURSEWORK (internal only, do not cite unless already present in the resume):
+{coursework_block}
+
+## ACADEMIC SKILL MAP (internal only, do not cite unless already present in the resume):
+{coursework_skills_block}
+
+Do not add new tools unless they are directly supported by the profile or resume. Keep everything factual.
 
 ## TAILORING RULES:
 
 TITLE: Match the target role. Keep seniority (Senior/Lead/Staff). Drop company suffixes and team names.
 
-SUMMARY: Rewrite from scratch. Lead with the 1-2 skills that matter most for THIS role. Sound like someone who's done this job.
+SUMMARY: Rewrite from scratch. Lead with the strongest verified skills relevant to this role. Sound like someone who's done this job. Exactly 2 sentences, max 42 words total.
 
-SKILLS: Reorder each category so the job's must-haves appear first.
+SKILLS: Reorder each category so the job's most relevant verified skills appear first. Max 5 items per category.
 
 Reframe EVERY bullet for this role. Same real work, different angle. Every bullet must be reworded. Never copy verbatim.
+List experience entries from most recent to oldest.
 
-PROJECTS: Reorder by relevance. Drop irrelevant projects entirely.
+PROJECTS: Keep only projects that are directly relevant to the role. Drop unrelated projects entirely.
 
-BULLETS: Strong verb + what you built + quantified impact. Vary verbs (Built, Designed, Implemented, Reduced, Automated, Deployed, Operated, Optimized). Most relevant first. Max 4 per section.
+BULLETS: Strong verb + what you built + quantified impact. Vary verbs (Built, Designed, Implemented, Reduced, Automated, Deployed, Operated, Optimized). Most relevant first. Max 3 bullets for the first two experience entries, max 2 bullets for any remaining entries, max 2 bullets per project.
 
 ## VOICE:
 - Write like a real engineer. Short, direct.
@@ -108,13 +125,30 @@ BULLETS: Strong verb + what you built + quantified impact. Vary verbs (Built, De
 ## HARD RULES:
 - Do NOT invent work, companies, degrees, or certifications
 - Do NOT change real numbers ({metrics_str})
-- Preserved companies: {companies_str} -- names stay as-is
-- Preserved school: {school}
+- CRITICAL: You MUST include experience entries for these companies (at minimum the first two): {companies_str} — these are real jobs the candidate held. Reframe the bullets for this role, but the company names MUST appear in the experience section headers.
 - Must fit 1 page.
+- Target about 475-575 words before contact links.
+- Leave enough room for the code-injected EDUCATION section at the bottom.
+
+## TRUTHFULNESS RULES (critical — violating these = immediate rejection):
+- The candidate's IT skills come from PERSONAL PROJECTS (home lab, PC building), NOT from paid jobs
+- City of Roseville role is a CUSTOMER SERVICE front desk position at Parks & Rec — do NOT add IT duties like "network troubleshooting", "server administration", "SSH", or "Tier 1 support" to this role. Systems used: When To Work (scheduling), Microsoft Teams, payment processing, and a registration/permit application (name TBD).
+- Nevada County role is ACCOUNTING — reconciliation, data entry, financial records. Not IT. Systems used: Workday ERP (financial/accounting), Megabyte Property Tax Systems (tax collection).
+- Theatre Manager at UEC is REAL management — P&L, hiring, scheduling, vendor coordination. Systems used: RTS (Ready Theatre Systems), NCR Radiant POS, projection equipment.
+- Banquet Captain at Ridge Golf is EVENT SETUP and SERVICE — not management or IT. Systems used: point-of-sale, event management.
+- Fitness Representative at Montreux Golf is FRONT DESK — member check-ins, enrollment, records. Systems used: Jonas Club Software (member management).
+- You MAY reframe bullets to emphasize relevant soft skills (communication, problem-solving, data accuracy) but NEVER add technical duties that didn't happen in that job
+- Project-based IT skills belong in the PROJECTS section only when they are truly project work.
+- Do not steer toward one job family over another. Use the same factual standard for every role.
+- Do NOT invent metrics or percentages (e.g. "99% accuracy rate", "reduced time by 40%", "processed 500+ transactions daily"). If the original resume does not contain a specific number, do NOT add one. Use qualitative descriptions instead.
+- Do NOT add tools or systems the candidate has not used professionally. "ticketing systems", "incident documentation", "ServiceNow", "Jira", "ITSM" — NONE of these belong on this resume unless they appear in the original.
+- The "subtitle" field under each experience entry should contain the COMPANY NAME and DATE RANGE only (e.g. "City of Roseville Parks, Recreation & Libraries | September 2025 - Present"). Do NOT put "Tech" or any category tag in the subtitle.
 
 ## OUTPUT: Return ONLY valid JSON. No markdown fences. No commentary. No "here is" preamble.
+Education is injected automatically by code — do NOT include an education field. Omit it entirely.
+If no projects are relevant to the role, return an empty projects array: "projects": []
 
-{{"title":"Role Title","summary":"2-3 tailored sentences.","skills":{{"Languages":"...","Frameworks":"...","DevOps & Infra":"...","Databases":"...","Tools":"..."}},"experience":[{{"header":"Title at Company","subtitle":"Tech | Dates","bullets":["bullet 1","bullet 2","bullet 3","bullet 4"]}}],"projects":[{{"header":"Project Name - Description","subtitle":"Tech | Dates","bullets":["bullet 1","bullet 2"]}}],"education":"{school} | {education_level}"}}"""
+{{"title":"Role Title","summary":"2-3 tailored sentences.","skills":{{"Operating Systems":"...","Networking":"...","Infrastructure":"...","Scripting":"...","Tools":"..."}},"experience":[{{"header":"Job Title","subtitle":"Company Name | Start Date - End Date","bullets":["bullet 1","bullet 2","bullet 3","bullet 4"]}}],"projects":[{{"header":"Project Name - Brief Description","subtitle":"Tech Stack | Date","bullets":["bullet 1","bullet 2"]}}]}}"""
 
 
 def _build_judge_prompt(profile: dict) -> str:
@@ -162,6 +196,8 @@ ISSUES: (list any problems, or "none")
 - Dropping bullets entirely
 - Reordering anything
 - Changing the title or summary completely
+- EDUCATION: The education section is ALWAYS auto-generated by code from the candidate's profile — it will look different from the original resume text. NEVER flag education formatting, location, date, or wording differences as fabrication.
+- OFFICE TOOLS: Microsoft Teams, Outlook, Excel, Word, Office 365, and similar general workplace tools are in the candidate's real skills and may appear in any professional context. Do NOT flag these as fabricated.
 
 ## TOLERANCE RULE:
 The goal is to get interviews, not to be a perfect fact-checker. Allow up to 3 minor stretches per resume:
@@ -218,6 +254,133 @@ def extract_json(raw: str) -> dict:
     raise ValueError("No valid JSON found in LLM response")
 
 
+def _normalize_resume_json(data: dict) -> dict:
+    """Normalize LLM JSON output to consistent types before rendering.
+
+    llama3.1:8b frequently returns JSON arrays for skill values and dicts
+    for education instead of the expected string types. Normalize everything
+    here so assemble_resume_text never has to deal with unexpected types.
+    """
+    # Skills: ensure every value is a comma-separated string, not a list/dict
+    if isinstance(data.get("skills"), dict):
+        cleaned = {}
+        for cat, val in data["skills"].items():
+            if isinstance(val, list):
+                cleaned[cat] = ", ".join(str(v) for v in val if v)
+            elif isinstance(val, dict):
+                cleaned[cat] = ", ".join(str(v) for v in val.values() if v)
+            else:
+                cleaned[cat] = str(val) if val else ""
+        # Drop empty categories entirely
+        data["skills"] = {k: v for k, v in cleaned.items() if v.strip()}
+
+    # Education: ensure it's a plain string
+    edu = data.get("education", "")
+    if isinstance(edu, dict):
+        if edu.get("header") or edu.get("subtitle"):
+            parts = [edu.get("header", ""), edu.get("subtitle", "")]
+            if edu.get("bullets"):
+                parts.extend(edu["bullets"])
+            data["education"] = " | ".join(p for p in parts if p)
+        else:
+            # Keys are the institution strings (e.g. {"School | Degree": ""})
+            data["education"] = " | ".join(k for k in edu.keys() if k.strip())
+    elif isinstance(edu, list):
+        # List may contain plain strings or dicts with header/subtitle
+        parts = []
+        for e in edu:
+            if not e:
+                continue
+            if isinstance(e, dict):
+                seg = []
+                if e.get("header"):
+                    seg.append(e["header"])
+                if e.get("subtitle"):
+                    seg.append(e["subtitle"])
+                parts.append(" | ".join(seg) if seg else str(e))
+            else:
+                parts.append(str(e))
+        data["education"] = " | ".join(parts)
+
+    return data
+
+
+def _truncate_words(text: str, max_words: int) -> str:
+    """Trim text to a maximum number of whitespace-delimited words."""
+    words = str(text or "").split()
+    if len(words) <= max_words:
+        return str(text or "").strip()
+    trimmed = " ".join(words[:max_words]).rstrip(",;:-")
+    if trimmed and trimmed[-1] not in ".!?":
+        trimmed += "."
+    return trimmed
+
+
+def _trim_list_items(raw: str, max_items: int) -> str:
+    """Keep only the first N comma-separated items in a skills string."""
+    parts = [p.strip() for p in str(raw or "").split(",") if p.strip()]
+    if not parts:
+        return str(raw or "").strip()
+    return ", ".join(parts[:max_items])
+
+
+def _enforce_one_page_shape(data: dict) -> dict:
+    """Trim verbose LLM output into a tighter one-page resume shape."""
+    data["title"] = _truncate_words(data.get("title", ""), 8)
+    data["summary"] = _truncate_words(data.get("summary", ""), SUMMARY_MAX_WORDS)
+
+    if isinstance(data.get("skills"), dict):
+        trimmed_skills = {}
+        for cat, val in data["skills"].items():
+            compact = _trim_list_items(val, SKILLS_MAX_ITEMS)
+            if compact:
+                trimmed_skills[cat] = compact
+        data["skills"] = trimmed_skills
+
+    trimmed_experience = []
+    for idx, entry in enumerate(data.get("experience", [])[:EXPERIENCE_MAX_ENTRIES]):
+        bullets = entry.get("bullets", [])
+        bullet_cap = 3 if idx < 2 else 2
+        trimmed_experience.append({
+            "header": _truncate_words(entry.get("header", ""), 10),
+            "subtitle": _truncate_words(entry.get("subtitle", ""), 14),
+            "bullets": [_truncate_words(b, BULLET_MAX_WORDS) for b in bullets[:bullet_cap] if b],
+        })
+    data["experience"] = trimmed_experience
+
+    trimmed_projects = []
+    for entry in data.get("projects", [])[:PROJECTS_MAX_ENTRIES]:
+        trimmed_projects.append({
+            "header": _truncate_words(entry.get("header", ""), 12),
+            "subtitle": _truncate_words(entry.get("subtitle", ""), 10),
+            "bullets": [_truncate_words(b, PROJECT_BULLET_MAX_WORDS) for b in entry.get("bullets", [])[:2] if b],
+        })
+    data["projects"] = trimmed_projects
+
+    return data
+
+
+def _experience_sort_key(entry: dict, index: int) -> tuple[int, int, int]:
+    """Sort experience entries newest-first using subtitle date hints."""
+    subtitle = str(entry.get("subtitle", "")).lower()
+    years = [int(m.group(0)) for m in re.finditer(r"(?:19|20)\d{2}", subtitle)]
+    if years:
+        end_year = max(years)
+        start_year = min(years)
+    else:
+        end_year = -1
+        start_year = -1
+    if any(token in subtitle for token in ("present", "current", "now")):
+        end_year = 9999
+    return (-end_year, -start_year, index)
+
+
+def _sort_experience_recent_first(experience: list[dict]) -> list[dict]:
+    """Return experience entries ordered most recent to oldest."""
+    indexed = list(enumerate(experience))
+    return [entry for _, entry in sorted(indexed, key=lambda pair: _experience_sort_key(pair[1], pair[0]))]
+
+
 # ── Resume Assembly (profile-driven header) ──────────────────────────────
 
 def assemble_resume_text(data: dict, profile: dict) -> str:
@@ -263,16 +426,17 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
     lines.append(sanitize_text(data["summary"]))
     lines.append("")
 
-    # Technical Skills
+    # Technical Skills (normalized to strings by _normalize_resume_json)
     lines.append("TECHNICAL SKILLS")
-    if isinstance(data["skills"], dict):
+    if isinstance(data.get("skills"), dict):
         for cat, val in data["skills"].items():
-            lines.append(f"{cat}: {sanitize_text(str(val))}")
+            if val:  # empty categories already stripped by normalizer
+                lines.append(f"{cat}: {sanitize_text(str(val))}")
     lines.append("")
 
     # Experience
     lines.append("EXPERIENCE")
-    for entry in data.get("experience", []):
+    for entry in _sort_experience_recent_first(list(data.get("experience", []))):
         lines.append(sanitize_text(entry.get("header", "")))
         if entry.get("subtitle"):
             lines.append(sanitize_text(entry["subtitle"]))
@@ -280,19 +444,40 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
             lines.append(f"- {sanitize_text(b)}")
         lines.append("")
 
-    # Projects
-    lines.append("PROJECTS")
-    for entry in data.get("projects", []):
-        lines.append(sanitize_text(entry.get("header", "")))
-        if entry.get("subtitle"):
-            lines.append(sanitize_text(entry["subtitle"]))
-        for b in entry.get("bullets", []):
-            lines.append(f"- {sanitize_text(b)}")
-        lines.append("")
+    # Projects -- skip section entirely if LLM returned none
+    projects = [e for e in data.get("projects", []) if e.get("header") or e.get("bullets")]
+    if projects:
+        lines.append("PROJECTS")
+        for entry in projects:
+            lines.append(sanitize_text(entry.get("header", "")))
+            if entry.get("subtitle"):
+                lines.append(sanitize_text(entry["subtitle"]))
+            for b in entry.get("bullets", []):
+                lines.append(f"- {sanitize_text(b)}")
+            lines.append("")
 
-    # Education
+    # Education -- always injected from profile, never trusted from LLM
     lines.append("EDUCATION")
-    lines.append(sanitize_text(str(data.get("education", ""))))
+    edu_schools = profile.get("education_schools", [])
+    if edu_schools:
+        for sch in edu_schools:
+            degree_status = sch.get("degree", "")
+            received = sch.get("degree_received", False)
+            end_year = sch.get("end_year", "")
+            if not received and end_year == "present":
+                status_note = "in progress"
+            elif not received:
+                status_note = "not completed"
+            else:
+                status_note = f"conferred {end_year}"
+            gpa_str = f" | GPA: {sch['gpa']}" if sch.get("gpa") else ""
+            minor_str = f" | Minor: {sch['minor']}" if sch.get("minor") else ""
+            lines.append(f"{degree_status} ({status_note})")
+            lines.append(f"{sch['school']} | {sch['city_state']} | {sch['start_year']}-{end_year}{gpa_str}{minor_str}")
+            lines.append("")
+    else:
+        # Fallback to LLM-provided education if profile has none
+        lines.append(sanitize_text(str(data.get("education", ""))))
 
     return "\n".join(lines)
 
@@ -325,7 +510,7 @@ def judge_tailored_resume(
         )},
     ]
 
-    client = get_client()
+    client = get_client_for_stage("tailor")
     response = client.chat(messages, max_tokens=512, temperature=0.1)
 
     passed = "VERDICT: PASS" in response.upper()
@@ -373,7 +558,7 @@ def tailor_resume(
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
         f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
+        f"DESCRIPTION:\n{(job.get('full_description') or '')[:4000]}"
     )
 
     report: dict = {
@@ -382,7 +567,7 @@ def tailor_resume(
     }
     avoid_notes: list[str] = []
     tailored = ""
-    client = get_client()
+    client = get_client_for_stage("tailor")
     tailor_prompt_base = _build_tailor_prompt(profile)
 
     for attempt in range(max_retries + 1):
@@ -406,8 +591,13 @@ def tailor_resume(
         try:
             data = extract_json(raw)
         except ValueError:
+            log.warning("Attempt %d: not valid JSON. First 200 chars: %s", attempt + 1, raw[:200])
             avoid_notes.append("Output was not valid JSON. Return ONLY a JSON object, nothing else.")
             continue
+
+        # Normalize inconsistent LLM output types (lists/dicts for skills/education)
+        data = _normalize_resume_json(data)
+        data = _enforce_one_page_shape(data)
 
         # Layer 1: Validate JSON fields
         validation = validate_json_fields(data, profile, mode=validation_mode)
@@ -415,6 +605,7 @@ def tailor_resume(
 
         if not validation["passed"]:
             # Only retry if there are hard errors (warnings never block)
+            log.warning("Attempt %d validation errors: %s", attempt + 1, validation["errors"])
             avoid_notes.extend(validation["errors"])
             if attempt < max_retries:
                 continue
@@ -426,8 +617,20 @@ def tailor_resume(
         # Assemble text (header injected by code, em dashes auto-fixed)
         tailored = assemble_resume_text(data, profile)
 
-        # Layer 2: LLM judge (catches subtle fabrication) — skipped in lenient mode
-        if validation_mode == "lenient":
+        # Layer 2: Programmatic text validation, including one-page length checks.
+        text_validation = validate_tailored_resume(tailored, profile, original_text=resume_text)
+        report["text_validator"] = text_validation
+
+        if not text_validation["passed"]:
+            log.warning("Attempt %d text validation errors: %s", attempt + 1, text_validation["errors"])
+            avoid_notes.extend(text_validation["errors"])
+            if attempt < max_retries:
+                continue
+            report["status"] = "failed_validation"
+            return tailored, report
+
+        # Layer 3: LLM judge (catches subtle fabrication) — skipped in lenient/none mode
+        if validation_mode in ("lenient", "none"):
             report["judge"] = {"verdict": "SKIPPED", "passed": True, "issues": "none"}
             report["status"] = "approved"
             return tailored, report
@@ -438,10 +641,9 @@ def tailor_resume(
         if not judge["passed"]:
             avoid_notes.append(f"Judge rejected: {judge['issues']}")
             if attempt < max_retries:
-                # In normal mode, only retry on judge failure if there are retries left
-                if validation_mode != "lenient":
-                    continue
-            # Accept best attempt on last retry (all modes) or if lenient
+                # Retry if retries remain
+                continue
+            # Out of retries — accept with warning
             report["status"] = "approved_with_judge_warning"
             return tailored, report
 
@@ -493,6 +695,13 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             # Build safe filename prefix
             safe_title = re.sub(r"[^\w\s-]", "", job["title"])[:50].strip().replace(" ", "_")
             safe_site = re.sub(r"[^\w\s-]", "", job["site"])[:20].strip().replace(" ", "_")
+            # Avoid Windows reserved names (CON, NUL, PRN, etc.)
+            _WIN_RESERVED = {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4",
+                             "LPT1", "LPT2", "LPT3", "CLOCK$"}
+            if safe_title.upper() in _WIN_RESERVED:
+                safe_title = f"_{safe_title}"
+            if safe_site.upper() in _WIN_RESERVED:
+                safe_site = f"_{safe_site}"
             prefix = f"{safe_site}_{safe_title}"
 
             # Save tailored resume text

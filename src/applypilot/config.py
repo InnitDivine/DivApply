@@ -5,7 +5,7 @@ import platform
 import shutil
 from pathlib import Path
 
-# User data directory — all user-specific files live here
+# User data directory â€” all user-specific files live here
 APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
 
 # Core paths
@@ -52,18 +52,17 @@ def get_chrome_path() -> str:
             Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
             Path("/Applications/Chromium.app/Contents/MacOS/Chromium"),
         ]
-    else:  # Linux
+    else:
         candidates = []
         for name in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium"):
             found = shutil.which(name)
             if found:
                 candidates.append(Path(found))
 
-    for c in candidates:
-        if c and c.exists():
-            return str(c)
+    for candidate in candidates:
+        if candidate and candidate.exists():
+            return str(candidate)
 
-    # Fall back to PATH search
     for name in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium", "chrome"):
         found = shutil.which(name)
         if found:
@@ -79,33 +78,105 @@ def get_chrome_user_data() -> Path:
     system = platform.system()
     if system == "Windows":
         return Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "User Data"
-    elif system == "Darwin":
+    if system == "Darwin":
         return Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
-    else:
-        return Path.home() / ".config" / "google-chrome"
+    return Path.home() / ".config" / "google-chrome"
 
 
-def ensure_dirs():
+def ensure_dirs() -> None:
     """Create all required directories."""
-    for d in [APP_DIR, TAILORED_DIR, COVER_LETTER_DIR, LOG_DIR, CHROME_WORKER_DIR, APPLY_WORKER_DIR]:
-        d.mkdir(parents=True, exist_ok=True)
+    for directory in [APP_DIR, TAILORED_DIR, COVER_LETTER_DIR, LOG_DIR, CHROME_WORKER_DIR, APPLY_WORKER_DIR]:
+        directory.mkdir(parents=True, exist_ok=True)
 
 
 def load_profile() -> dict:
     """Load user profile from ~/.applypilot/profile.json."""
     import json
+
     if not PROFILE_PATH.exists():
         raise FileNotFoundError(
             f"Profile not found at {PROFILE_PATH}. Run `applypilot init` first."
         )
-    return json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+
+    # Hidden coursework knowledge is stored in SQLite so it can inform
+    # scoring/tailoring without being exposed in the generated resume text.
+    try:
+        from applypilot.database import get_coursework, load_coursework_seed
+
+        coursework = get_coursework()
+        if not coursework:
+            coursework = load_coursework_seed()
+    except Exception:
+        coursework = []
+
+    profile["coursework"] = coursework
+    profile["coursework_summary"] = _summarize_coursework(coursework)
+    profile["coursework_skills"] = _summarize_coursework_skills(coursework)
+    return profile
+
+
+def _summarize_coursework(coursework: list[dict]) -> list[str]:
+    """Condense coursework rows into a compact internal-only summary."""
+    if not coursework:
+        return []
+
+    grouped: dict[str, list[str]] = {}
+    for row in coursework:
+        school = (row.get("school") or "Unknown school").strip()
+        title = (row.get("course_title") or row.get("course_code") or "").strip()
+        subject = (row.get("subject_area") or "").strip()
+        if subject:
+            item = f"{title} [{subject}]" if title else subject
+        else:
+            raw = (row.get("raw_text") or "").strip()
+            if raw:
+                first_line = raw.splitlines()[0].strip()
+                item = title or (first_line[:120] + ("..." if len(first_line) > 120 else ""))
+            else:
+                item = title
+        if not item:
+            continue
+        grouped.setdefault(school, [])
+        if item not in grouped[school]:
+            grouped[school].append(item)
+
+    summary: list[str] = []
+    for school, items in grouped.items():
+        summary.append(f"{school}: {', '.join(items[:12])}")
+    return summary
+
+
+def _summarize_coursework_skills(coursework: list[dict]) -> list[str]:
+    """Aggregate coursework skill tags into a compact internal-only summary."""
+    if not coursework:
+        return []
+
+    grouped: dict[str, set[str]] = {}
+    for row in coursework:
+        school = (row.get("school") or "Unknown school").strip()
+        raw_skills = row.get("skills") or []
+        if isinstance(raw_skills, str):
+            try:
+                import json
+                raw_skills = json.loads(raw_skills)
+            except Exception:
+                raw_skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
+        if not isinstance(raw_skills, list):
+            continue
+        grouped.setdefault(school, set()).update(str(skill).strip() for skill in raw_skills if str(skill).strip())
+
+    summary: list[str] = []
+    for school, skills in grouped.items():
+        summary.append(f"{school}: {', '.join(sorted(skills))}")
+    return summary
 
 
 def load_search_config() -> dict:
     """Load search configuration from ~/.applypilot/searches.yaml."""
     import yaml
+
     if not SEARCH_CONFIG_PATH.exists():
-        # Fall back to package-shipped example
         example = CONFIG_DIR / "searches.example.yaml"
         if example.exists():
             return yaml.safe_load(example.read_text(encoding="utf-8"))
@@ -116,6 +187,7 @@ def load_search_config() -> dict:
 def load_sites_config() -> dict:
     """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
     import yaml
+
     path = CONFIG_DIR / "sites.yaml"
     if not path.exists():
         return {}
@@ -133,11 +205,7 @@ def is_manual_ats(url: str | None) -> bool:
 
 
 def load_blocked_sites() -> tuple[set[str], list[str]]:
-    """Load blocked sites and URL patterns from sites.yaml.
-
-    Returns:
-        (blocked_site_names, blocked_url_patterns)
-    """
+    """Load blocked sites and URL patterns from sites.yaml."""
     cfg = load_sites_config()
     blocked = cfg.get("blocked", {})
     sites = set(blocked.get("sites", []))
@@ -157,10 +225,6 @@ def load_base_urls() -> dict[str, str | None]:
     return cfg.get("base_urls", {})
 
 
-# ---------------------------------------------------------------------------
-# Default values — referenced across modules instead of magic numbers
-# ---------------------------------------------------------------------------
-
 DEFAULTS = {
     "min_score": 7,
     "max_apply_attempts": 3,
@@ -171,18 +235,14 @@ DEFAULTS = {
 }
 
 
-def load_env():
+def load_env() -> None:
     """Load environment variables from ~/.applypilot/.env if it exists."""
     from dotenv import load_dotenv
+
     if ENV_PATH.exists():
-        load_dotenv(ENV_PATH)
-    # Also try CWD .env as fallback
+        load_dotenv(ENV_PATH, override=True)
     load_dotenv()
 
-
-# ---------------------------------------------------------------------------
-# Tier system — feature gating by installed dependencies
-# ---------------------------------------------------------------------------
 
 TIER_LABELS = {
     1: "Discovery",
@@ -196,65 +256,117 @@ TIER_COMMANDS: dict[int, list[str]] = {
     3: ["apply"],
 }
 
+APPLY_AGENT_LABELS = {
+    "codex": "Codex CLI",
+    "claude": "Claude Code CLI",
+}
+
+APPLY_BROWSER_LABELS = {
+    "firefox": "Firefox",
+    "chrome": "Google Chrome",
+    "msedge": "Microsoft Edge",
+    "webkit": "WebKit",
+}
+
+
+def get_available_apply_backends() -> dict[str, str]:
+    """Return detected auto-apply agent CLIs keyed by backend name."""
+    backends: dict[str, str] = {}
+    for name, binary in (("codex", "codex"), ("claude", "claude")):
+        resolved = shutil.which(binary)
+        if resolved:
+            backends[name] = resolved
+    return backends
+
+
+def get_apply_backend(preferred: str | None = None) -> str | None:
+    """Resolve which apply backend to use."""
+    requested = preferred or os.environ.get("APPLYPILOT_APPLY_BACKEND")
+    available = get_available_apply_backends()
+    if requested:
+        requested = requested.strip().lower()
+        return requested if requested in available else None
+    for name in ("codex", "claude"):
+        if name in available:
+            return name
+    return None
+
+
+def get_apply_backend_label(backend: str | None) -> str:
+    """Return a human-readable label for the apply backend."""
+    if not backend:
+        return "Apply agent CLI"
+    return APPLY_AGENT_LABELS.get(backend, backend)
+
+
+def get_apply_browser(preferred: str | None = None) -> str:
+    """Resolve which Playwright MCP browser channel to use."""
+    requested = preferred or os.environ.get("APPLYPILOT_BROWSER", "firefox")
+    browser = requested.strip().lower()
+    return browser if browser in APPLY_BROWSER_LABELS else "firefox"
+
+
+def get_apply_browser_label(browser: str | None) -> str:
+    """Return a human-readable label for the apply browser."""
+    if not browser:
+        return "Browser"
+    return APPLY_BROWSER_LABELS.get(browser, browser)
+
 
 def get_tier() -> int:
-    """Detect the current tier based on available dependencies.
-
-    Tier 1 (Discovery):            Python + pip
-    Tier 2 (AI Scoring & Tailoring): + LLM API key
-    Tier 3 (Full Auto-Apply):       + Claude Code CLI + Chrome
-    """
+    """Detect the current tier based on available dependencies."""
     load_env()
 
-    has_llm = any(os.environ.get(k) for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL"))
+    has_llm = any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL"))
     if not has_llm:
         return 1
 
-    has_claude = shutil.which("claude") is not None
-    try:
-        get_chrome_path()
-        has_chrome = True
-    except FileNotFoundError:
-        has_chrome = False
+    has_apply_agent = get_apply_backend() is not None
+    browser = get_apply_browser()
+    has_browser = True
+    if browser == "chrome":
+        try:
+            get_chrome_path()
+        except FileNotFoundError:
+            has_browser = False
 
-    if has_claude and has_chrome:
+    if has_apply_agent and has_browser:
         return 3
 
     return 2
 
 
 def check_tier(required: int, feature: str) -> None:
-    """Raise SystemExit with a clear message if the current tier is too low.
-
-    Args:
-        required: Minimum tier needed (1, 2, or 3).
-        feature: Human-readable description of the feature being gated.
-    """
+    """Raise SystemExit with a clear message if the current tier is too low."""
     current = get_tier()
     if current >= required:
         return
 
     from rich.console import Console
-    _console = Console(stderr=True)
 
+    console = Console(stderr=True)
     missing: list[str] = []
-    if required >= 2 and not any(os.environ.get(k) for k in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
+
+    if required >= 2 and not any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
         missing.append("LLM API key — run [bold]applypilot init[/bold] or set GEMINI_API_KEY")
     if required >= 3:
-        if not shutil.which("claude"):
-            missing.append("Claude Code CLI — install from [bold]https://claude.ai/code[/bold]")
-        try:
-            get_chrome_path()
-        except FileNotFoundError:
-            missing.append("Chrome/Chromium — install or set CHROME_PATH")
+        if get_apply_backend() is None:
+            missing.append("Apply agent CLI — install Codex or Claude Code for auto-apply")
+        if shutil.which("npx") is None:
+            missing.append("Node.js / npx — install Node.js 18+ for Playwright MCP")
+        if get_apply_browser() == "chrome":
+            try:
+                get_chrome_path()
+            except FileNotFoundError:
+                missing.append("Chrome/Chromium — install or set CHROME_PATH")
 
-    _console.print(
+    console.print(
         f"\n[red]'{feature}' requires {TIER_LABELS.get(required, f'Tier {required}')} (Tier {required}).[/red]\n"
         f"Current tier: {TIER_LABELS.get(current, f'Tier {current}')} (Tier {current})."
     )
     if missing:
-        _console.print("\n[yellow]Missing:[/yellow]")
-        for m in missing:
-            _console.print(f"  - {m}")
-    _console.print()
+        console.print("\n[yellow]Missing:[/yellow]")
+        for item in missing:
+            console.print(f"  - {item}")
+    console.print()
     raise SystemExit(1)

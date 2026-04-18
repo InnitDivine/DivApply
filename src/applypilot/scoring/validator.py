@@ -113,10 +113,18 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     errors: list[str] = []
     warnings: list[str] = []
 
+    # none mode: accept whatever the LLM returned, no checks at all
+    if mode == "none":
+        return {"passed": True, "errors": [], "warnings": []}
+
     # Required keys — always checked regardless of mode
-    for key in ("title", "summary", "skills", "experience", "projects", "education"):
+    # education is injected by code (not LLM), projects can be empty []
+    for key in ("title", "summary", "skills", "experience"):
         if key not in data or not data[key]:
             errors.append(f"Missing required field: {key}")
+    # projects must exist but can be empty list
+    if "projects" not in data:
+        errors.append("Missing required field: projects")
     if errors:
         return {"passed": False, "errors": errors, "warnings": warnings}
 
@@ -132,18 +140,23 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
             if fake in skills_text:
                 errors.append(f"Fabricated skill: '{fake}'")
 
-    # Experience: preserved companies must be present (always enforced)
+    # Experience: check preserved companies (first 2 are required, rest are warnings)
     resume_facts = profile.get("resume_facts", {})
     preserved_companies = resume_facts.get("preserved_companies", [])
 
     if isinstance(data["experience"], list):
-        for company in preserved_companies:
+        for i, company in enumerate(preserved_companies):
             has_company = any(
-                company.lower() in str(e.get("header", "")).lower()
+                company.lower() in (
+                    str(e.get("header", "")) + " " + str(e.get("subtitle", ""))
+                ).lower()
                 for e in data["experience"]
             )
             if not has_company:
-                errors.append(f"Company '{company}' missing from experience")
+                if i < 2:  # First 2 companies are required (most recent)
+                    errors.append(f"Company '{company}' missing from experience")
+                else:
+                    warnings.append(f"Company '{company}' not in experience (may have been dropped for relevance)")
         for entry in data["experience"]:
             for b in entry.get("bullets", []):
                 all_text_parts.append(b)
@@ -154,12 +167,8 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
             for b in entry.get("bullets", []):
                 all_text_parts.append(b)
 
-    # Education: preserved school must be present (always enforced)
-    preserved_school = resume_facts.get("preserved_school", "")
-    if preserved_school:
-        edu = str(data.get("education", ""))
-        if preserved_school.lower() not in edu.lower():
-            errors.append(f"Education '{preserved_school}' missing")
+    # Education is now injected by code from profile, not LLM-generated.
+    # Skip validation of education in LLM output since it's always correct.
 
     # Bulk text checks
     all_text = " ".join(all_text_parts).lower()
@@ -219,20 +228,20 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     if full_name and full_name.lower() not in text_lower:
         warnings.append(f"Name '{full_name}' missing -- will be injected")
 
-    # 3. Check companies preserved
-    for company in resume_facts.get("preserved_companies", []):
+    # 3. Check companies preserved (first 2 required, rest are warnings)
+    for i, company in enumerate(resume_facts.get("preserved_companies", [])):
         if company.lower() not in text_lower:
-            errors.append(f"Company '{company}' missing -- cannot remove real experience")
+            if i < 2:
+                errors.append(f"Company '{company}' missing -- cannot remove real experience")
+            else:
+                warnings.append(f"Company '{company}' not in resume (may have been dropped for relevance)")
 
     # 4. Check projects preserved
     for project in resume_facts.get("preserved_projects", []):
         if project.lower() not in text_lower:
             warnings.append(f"Project '{project}' not found -- may have been renamed")
 
-    # 5. Check school preserved
-    preserved_school = resume_facts.get("preserved_school", "")
-    if preserved_school and preserved_school.lower() not in text_lower:
-        errors.append(f"Education '{preserved_school}' missing")
+    # 5. Education injected by code — skip school check on LLM text
 
     # 6. Check contact info preserved (warn, don't error -- we can inject)
     email = personal.get("email", "")
@@ -284,6 +293,20 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
         if count > 1:
             errors.append(f"Section '{section_name}' appears {count} times.")
 
+    # 13. One-page length guardrail
+    body_lines = [
+        line.strip() for line in text.splitlines()
+        if line.strip()
+        and "@" not in line
+        and "linkedin.com" not in line.lower()
+        and "github.com" not in line.lower()
+    ]
+    words = sum(len(line.split()) for line in body_lines)
+    if words > 650:
+        errors.append(f"Resume too long ({words} words). Target a one-page resume.")
+    elif words > 575:
+        warnings.append(f"Resume is getting long ({words} words). May spill onto a second page.")
+
     return {
         "passed": len(errors) == 0,
         "errors": errors,
@@ -308,6 +331,11 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
     """
     errors: list[str] = []
     warnings: list[str] = []
+
+    # none mode: accept everything
+    if mode == "none":
+        return {"passed": True, "errors": [], "warnings": []}
+
     text_lower = text.lower()
 
     # 1. Em dashes — always an error (sanitize_text should have caught these)

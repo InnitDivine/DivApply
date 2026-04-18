@@ -1,0 +1,560 @@
+[
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "BUS 109",
+    "course_title": "NevadaFIT",
+    "term": "2019 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["college readiness", "orientation", "self-management", "academic planning"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 101",
+    "course_title": "Introduction to Community Health",
+    "term": "2019 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["community health", "public health", "human services", "program support"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "ENG 101",
+    "course_title": "Composition I",
+    "term": "2019 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["writing", "communication", "documentation", "professional writing"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "MATH 126",
+    "course_title": "Precalculus I",
+    "term": "2019 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["quantitative reasoning", "problem solving", "numeracy", "analytical thinking"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "PSY 101",
+    "course_title": "General Psychology",
+    "term": "2019 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["behavioral insight", "interpersonal communication", "human behavior", "customer understanding"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "SOTA 101",
+    "course_title": "Introduction to the Arts",
+    "term": "2019 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["cultural awareness", "critical thinking", "communication", "context awareness"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHEM 121A",
+    "course_title": "General Chemistry I",
+    "term": "2020 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["scientific reasoning", "lab methods", "quantitative reasoning", "attention to detail"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHEM 121L",
+    "course_title": "General Chemistry Lab I",
+    "term": "2020 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["lab methods", "measurement", "documentation", "attention to detail"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 102",
+    "course_title": "Personal Health and Wellness",
+    "term": "2020 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["wellness", "health literacy", "community health", "self-management"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 280",
+    "course_title": "Introduction to Biostatistics in Public Health",
+    "term": "2020 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["data analysis", "statistics", "public health", "research literacy"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "ENG 102",
+    "course_title": "Composition II",
+    "term": "2020 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["writing", "communication", "documentation", "argumentation"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "MATH 127",
+    "course_title": "Precalculus II",
+    "term": "2020 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["quantitative reasoning", "problem solving", "numeracy", "analytical thinking"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "ACC 201",
+    "course_title": "Financial Accounting",
+    "term": "2021 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["accounting", "financial records", "reconciliation", "attention to detail"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "BUS 101",
+    "course_title": "Introduction to Business",
+    "term": "2021 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["business operations", "professional communication", "organization", "customer awareness"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CH 203",
+    "course_title": "American Experience and Constitutional Change",
+    "term": "2021 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["civic literacy", "historical context", "policy awareness", "critical thinking"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "IS 101",
+    "course_title": "Introduction to Information Systems",
+    "term": "2021 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["information systems", "digital workflows", "business software", "data management"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "MKT 210",
+    "course_title": "Marketing Principles",
+    "term": "2021 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["marketing", "communication", "customer awareness", "presentation"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "BIOL 189A",
+    "course_title": "Fundamentals of Life Science",
+    "term": "2022 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["scientific reasoning", "biology", "lab methods", "quantitative reasoning"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 211",
+    "course_title": "Technical Writing for Health Sciences",
+    "term": "2022 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["technical writing", "documentation", "communication", "health literacy"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 310",
+    "course_title": "Health and Wellness Communication",
+    "term": "2022 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["communication", "health education", "wellness", "public health"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 360",
+    "course_title": "Disability Issues",
+    "term": "2022 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["human services", "community awareness", "equity", "interpersonal communication"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "PEX 107",
+    "course_title": "Swimming",
+    "term": "2022 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["physical fitness", "discipline", "wellness", "teamwork"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "PEX 180",
+    "course_title": "Strength Training",
+    "term": "2022 Fall",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["physical fitness", "discipline", "wellness", "goal setting"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CH 201",
+    "course_title": "Ancient and Medieval Culture",
+    "term": "2022 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["cultural awareness", "historical context", "critical thinking", "communication"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 111",
+    "course_title": "Medical Terminology",
+    "term": "2022 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["medical terminology", "health literacy", "communication", "human services"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "CHS 200",
+    "course_title": "Introduction to Public Health",
+    "term": "2022 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["public health", "community services", "program support", "health education"]
+  },
+  {
+    "school": "University of Nevada, Reno",
+    "course_code": "NUTR 121",
+    "course_title": "Human Nutrition",
+    "term": "2022 Spring",
+    "status": "completed",
+    "source": "UNR transcript",
+    "skills": ["nutrition", "wellness", "health education", "counseling awareness"]
+  },
+  {
+    "school": "Truckee Meadows Community College",
+    "course_code": "BIOL 190L",
+    "course_title": "Introduction to Cell and Molecular Biology Lab",
+    "term": "2023 Spring",
+    "status": "completed",
+    "source": "TMCC transcript",
+    "skills": ["lab methods", "biology", "scientific reasoning", "documentation"]
+  },
+  {
+    "school": "Truckee Meadows Community College",
+    "course_code": "BIOL 223",
+    "course_title": "Human Anatomy and Physiology I",
+    "term": "2023 Fall",
+    "status": "completed",
+    "source": "TMCC transcript",
+    "skills": ["anatomy", "physiology", "health science", "scientific reasoning"]
+  },
+  {
+    "school": "Truckee Meadows Community College",
+    "course_code": "ACC 105",
+    "course_title": "Taxation of Individuals",
+    "term": "2024 Spring",
+    "status": "completed",
+    "source": "TMCC transcript",
+    "skills": ["taxation", "accounting", "financial records", "attention to detail"]
+  },
+  {
+    "school": "Truckee Meadows Community College",
+    "course_code": "BUS 106",
+    "course_title": "Business English",
+    "term": "2024 Spring",
+    "status": "completed",
+    "source": "TMCC transcript",
+    "skills": ["business communication", "writing", "documentation", "professional communication"]
+  },
+  {
+    "school": "Truckee Meadows Community College",
+    "course_code": "ENT 200",
+    "course_title": "Fundamentals of Entrepreneurship",
+    "term": "2024 Spring",
+    "status": "completed",
+    "source": "TMCC transcript",
+    "skills": ["entrepreneurship", "business operations", "planning", "initiative"]
+  },
+  {
+    "school": "Truckee Meadows Community College",
+    "course_code": "NUTR 223",
+    "course_title": "Principles of Nutrition",
+    "term": "2024 Spring",
+    "status": "completed",
+    "source": "TMCC transcript",
+    "skills": ["nutrition", "wellness", "health education", "human services"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "OREN 120",
+    "course_title": "Welcome to UC",
+    "term": "2025 Fall",
+    "status": "completed",
+    "source": "academic progress",
+    "skills": ["orientation", "college readiness", "self-management", "academic planning"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "MSMN 136",
+    "course_title": "Exploring the New Testament",
+    "term": "2025 Fall",
+    "status": "completed",
+    "source": "academic progress",
+    "skills": ["cultural awareness", "critical thinking", "communication", "historical context"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "ENGL 131",
+    "course_title": "English Composition I",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["writing", "communication", "documentation", "professional writing"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "ENGL 132",
+    "course_title": "English Composition II",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["writing", "communication", "documentation", "argumentation"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BIOL 133",
+    "course_title": "Introduction to Population Biology",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["biology", "scientific reasoning", "population health", "data literacy"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "CHEM 132",
+    "course_title": "General Chemistry I",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["scientific reasoning", "lab methods", "quantitative reasoning", "attention to detail"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "CHEM 111",
+    "course_title": "General Chemistry Lab I",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["lab methods", "measurement", "documentation", "attention to detail"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HIST 137",
+    "course_title": "World Civilization to 1648",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["historical context", "cultural awareness", "critical thinking", "communication"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "PSYC 131",
+    "course_title": "Basic Psychology",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["behavioral insight", "interpersonal communication", "human behavior", "customer understanding"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HLTH 236",
+    "course_title": "Health and Wellness",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["health literacy", "wellness", "community health", "self-management"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 133",
+    "course_title": "Introduction to Business",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["business operations", "organization", "professional communication", "customer awareness"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HESS 333",
+    "course_title": "Nutrition",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["nutrition", "wellness", "health education", "human services"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HLTH 130",
+    "course_title": "Foundations of Health Science",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["health science", "public health", "program support", "health literacy"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BIOL 243",
+    "course_title": "Introduction to Human Anatomy",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["anatomy", "health science", "scientific reasoning", "lab methods"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BIOL 244",
+    "course_title": "Human Physiology",
+    "term": "2025 Fall",
+    "status": "completed",
+    "source": "academic progress",
+    "skills": ["physiology", "health science", "scientific reasoning", "analysis"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 330",
+    "course_title": "Legal Environment of Business",
+    "term": "2026 Spring",
+    "status": "completed",
+    "source": "academic progress",
+    "skills": ["compliance", "policy awareness", "business operations", "critical thinking"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HLTH 335",
+    "course_title": "Introduction to the Study of Disease",
+    "term": "2026 Spring",
+    "status": "completed",
+    "source": "academic progress",
+    "skills": ["public health", "disease", "data literacy", "health education"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HLTH 336",
+    "course_title": "Epidemiology",
+    "term": "2026 Spring",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["epidemiology", "data analysis", "public health", "research literacy"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 313",
+    "course_title": "Operations Management",
+    "term": "2026 Spring",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["operations", "process improvement", "workflow analysis", "business operations"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HESS 430",
+    "course_title": "Substance Abuse",
+    "term": "2026 Summer",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["public health", "health education", "community services", "human services"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 401",
+    "course_title": "Personal Finance",
+    "term": "2026 Summer",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["budgeting", "financial literacy", "planning", "analysis"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HLTH 431",
+    "course_title": "Public Health Administration",
+    "term": "2026 Fall",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["public health", "program administration", "operations", "policy awareness"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "HLTH 432",
+    "course_title": "Community and Environmental Health",
+    "term": "2026 Fall",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["community health", "environmental health", "public health", "program support"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BACC 130",
+    "course_title": "Fundamentals of Accounting",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["accounting", "financial records", "reconciliation", "attention to detail"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BACC 131",
+    "course_title": "Principles of Accounting I",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["accounting", "financial records", "reconciliation", "attention to detail"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 334",
+    "course_title": "Principles of Marketing",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["marketing", "customer awareness", "communication", "presentation"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 402",
+    "course_title": "Business Communications",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["business communication", "writing", "documentation", "professional communication"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "BADM 431",
+    "course_title": "Entrepreneurship",
+    "term": "transfer credit",
+    "status": "transfer",
+    "source": "academic progress",
+    "skills": ["entrepreneurship", "business operations", "initiative", "planning"]
+  },
+  {
+    "school": "University of the Cumberlands",
+    "course_code": "MUSC 130",
+    "course_title": "Music Appreciation",
+    "term": "2026 Summer",
+    "status": "in-progress",
+    "source": "academic progress",
+    "skills": ["cultural awareness", "critical thinking", "communication", "context awareness"]
+  }
+]

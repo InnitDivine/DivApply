@@ -23,9 +23,9 @@ def _build_profile_summary(profile: dict) -> str:
     human-readable multi-line summary for the agent.
     """
     p = profile
-    personal = p["personal"]
-    work_auth = p["work_authorization"]
-    comp = p["compensation"]
+    personal = p.get("personal", {})
+    work_auth = p.get("work_authorization", {})
+    comp = p.get("compensation", {})
     exp = p.get("experience", {})
     avail = p.get("availability", {})
     eeo = p.get("eeo_voluntary", {})
@@ -88,6 +88,45 @@ def _build_profile_summary(profile: dict) -> str:
     lines.append(f"Race: {eeo.get('race_ethnicity', 'Decline to self-identify')}")
     lines.append(f"Veteran: {eeo.get('veteran_status', 'I am not a protected veteran')}")
     lines.append(f"Disability: {eeo.get('disability_status', 'I do not wish to answer')}")
+
+    # Education schools
+    edu_schools = p.get("education_schools", [])
+    if edu_schools:
+        lines.append("\n== EDUCATION (list ALL schools in this order on forms) ==")
+        for i, sch in enumerate(edu_schools, 1):
+            degree_status = "Yes" if sch.get("degree_received") else "No (in progress)" if sch.get("end_year") == "present" else "No"
+            lines.append(
+                f"School {i}: {sch['school']} | {sch['city_state']} | "
+                f"Major: {sch['major']} | Minor: {sch.get('minor','N/A')} | "
+                f"Degree: {sch['degree']} | Received: {degree_status} | "
+                f"Units: {sch['units']} {sch.get('units_type','Semester')} | GPA: {sch.get('gpa','N/A')} | "
+                f"{sch['start_year']}–{sch['end_year']}"
+            )
+        school_names = ", ".join(s["school"] for s in edu_schools)
+        lines.append(f"IMPORTANT: Always enter ALL {len(edu_schools)} schools ({school_names}). Add schools if needed using 'Add Another School'.")
+
+    # Employer addresses
+    emp_addrs = p.get("employer_addresses", {})
+    if emp_addrs:
+        lines.append("\n== EMPLOYER ADDRESSES (use when work history forms require an address) ==")
+        for employer, addr in emp_addrs.items():
+            lines.append(f"{employer}: {addr}")
+
+    # Supplemental answers
+    supplemental = p.get("supplemental_answers", {})
+    if supplemental:
+        lines.append("\n== PRE-WRITTEN ANSWERS (use these verbatim for matching questions) ==")
+        for key, val in supplemental.items():
+            lines.append(f"{key}: {val}")
+
+    # Question bank — covers common government/ATS questions
+    qbank = p.get("question_bank", {})
+    if qbank:
+        lines.append("\n== QUESTION BANK (use for any question that matches) ==")
+        lines.append("When you encounter any supplemental, screening, or agency question, find the closest match below and use that answer. Do not leave questions blank or guess randomly.")
+        for key, val in qbank.items():
+            label = key.replace("_", " ").title()
+            lines.append(f"{label}: {val}")
 
     return "\n".join(lines)
 
@@ -180,9 +219,226 @@ Hard facts -> answer truthfully from the profile. No guessing. This includes:
 
 Skills and tools -> be confident. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?" and it's in the same domain (DevOps, backend, ML, cloud, automation), answer YES. Software engineers learn tools fast. Don't sell short.
 
-Open-ended questions ("Why do you want this role?", "Tell us about yourself", "What interests you?") -> Write 2-3 sentences. Be specific to THIS job. Reference something from the job description. Connect it to a real achievement from the resume. No generic fluff. No "I am passionate about..." -- sound like a real person.
+ABSOLUTE RULE: NEVER leave ANY required field blank. NEVER click Next or Submit with unanswered required fields.
+  - If a field has "Error: This field is required" or an asterisk (*), it MUST be filled before proceeding.
+  - If you don't know the exact answer, use the closest match from the profile/question bank.
+  - If you genuinely have no relevant experience for a question, say so honestly but connect transferable skills.
 
-EEO/demographics -> "Decline to self-identify" or "Prefer not to say" for everything."""
+Open-ended / essay questions -> NEVER leave a required text field blank. You MUST write an answer. Rules:
+  1. Read the question carefully. Write 2-4 sentences directly answering it.
+  2. Draw from the resume and job description. Be specific -- name real experiences.
+  3. No generic fluff. No "I am passionate about..." Start with a fact or action.
+  4. If the question is about an area where the candidate has direct experience, lead with that.
+  5. If the question is about an area where experience is indirect, connect transferable skills honestly.
+  6. If the candidate has NO experience in the area asked, be honest but frame it constructively: "While I do not have direct [X] experience, I bring [transferable skill] from [real experience]." NEVER leave it blank.
+
+BACKGROUND FOR COMMUNITY/RECREATION/SENIOR PROGRAM QUESTIONS:
+  - Candidate currently works at City of Roseville Parks, Recreation & Libraries -- direct public recreation experience
+  - Serves the public daily at a high-volume municipal counter across Parks, Recreation, and Libraries divisions
+  - Has processed program registrations, facility permits, and fee payments for recreation programs
+  - Public Health degree (in progress) includes coursework relevant to community health and services
+  - Government operations experience spans multiple departments and age groups
+  Use this context when answering questions about senior programs, recreation coordination, community engagement, or working with the public.
+
+CalPERS questions -> "Are you a CalPERS member?" = No. "Are you a CalPERS retiree?" = No.
+Previously employed here -> No (unless the job site matches current/former employers in the profile).
+Related to employee -> No.
+Under 18 / work permit -> N/A (candidate is an adult).
+Acknowledge salary / background check checkboxes -> Always check/acknowledge these.
+
+RADIO BUTTON + CONDITIONAL TEXT BOX PATTERN (extremely common on government forms):
+Many questions are a Yes/No radio followed by a text box. The text box may say "If yes, explain", "If no, put N/A", or it may say NOTHING at all — just a blank text box sitting below the radio.
+RULES:
+  - ALWAYS select a radio button. Never leave a radio group unselected.
+  - After selecting a radio, look at ANY text box immediately below it and fill it:
+      * Selected NO + text box present (regardless of what the label says) -> type N/A
+      * Selected YES + text box present -> fill with the real relevant information
+  - Do NOT assume a text box is optional just because it doesn't say "required" — fill it anyway
+  - Even if the text box appears grayed out or is not marked required, fill it with N/A when you answered No
+  - The text box may be on the NEXT line, indented, or appear after a follow-up question number — scroll carefully and check every field after each radio answer
+
+COMMON RADIO ANSWERS for government applications:
+  - "Have you ever been employed here before?" -> No -> text box = N/A
+  - "Are you related to a current employee?" -> No -> text box = N/A
+  - "Are you a CalPERS member/retiree?" -> No
+  - "Are you under 18?" -> No (or N/A on permit field)
+  - "Do you have a valid driver's license?" -> Yes (candidate has a license)
+  - "Are you willing to work overtime?" -> Yes
+  - "Are you willing to work weekends/evenings?" -> Yes
+  - Shift availability checkboxes -> Check ALL options available: Day ✅, Evening ✅, Nights ✅, Weekends ✅, Holidays ✅ — select everything, candidate is fully flexible
+  - "Where did you hear about this position?" -> GovernmentJobs Website / Internet / Other (pick whichever matches the site)
+
+EEO / Voluntary Self-Identification / Agency Questions -> Use the REAL answers below. Do NOT select "Decline to state" or "Prefer not to say":
+  - Gender: Male
+  - Preferred Pronoun: he/him
+  - Race/Ethnicity: White (Not Hispanic or Latino) — pick whichever option matches "White" and is NOT Hispanic/Latino
+  - Veteran status: I am not a protected veteran / Not a veteran / No (select whatever option means not a veteran)
+  - Disability status: I do not have a disability / No disability (do NOT select "Decline to state" or "I don't wish to answer")
+  - Related to employee at this agency: No -> text box = N/A
+  - Currently employed at this agency: No
+  - How did you hear about this position: GovernmentJobs.com (or closest match like "Internet", "Online Job Board", "Government Jobs Website")
+  - If "Other" for how heard: leave blank or type "Online Job Board"
+  - Tribal affiliation: N/A
+  These are voluntary disclosures — always fill them with the real answer, never decline.
+  CRITICAL: Agency Questions sections often appear BEFORE supplemental questions. Fill ALL of them. Do not skip any.
+
+EDUCATION FORM RULES (applies to all ATS / government application education sections):
+  The candidate's education path: UNR (first) → TMCC (transferred, got Associate's) → University of the Cumberlands (current/highest, pursuing Bachelor's).
+  "Highest education" = University of the Cumberlands (B.S. in progress). On dropdowns, select "Bachelor's Degree" or "Some College" — never stop at "Associate's" even though that's the highest completed.
+  Always enter all THREE schools, most recent first:
+    1. University of the Cumberlands — Williamsburg, KY — Major: Public Health — Minor: Business — Degree: Bachelor of Science (in progress) — Degree received: No — ~101 semester units — GPA 3.692 — 2024–present
+    2. Truckee Meadows Community College — Reno, NV — Major: General Studies — Minor: Business — Degree: Associate of General Studies — Degree received: Yes (May 2024) — 17 semester units — GPA 2.92 — 2023–2024
+    3. University of Nevada, Reno — Reno, NV — Major: Community Health Sciences — Minor: Business — Degree: Bachelor of Science (not completed) — Degree received: No — 71 semester units — GPA 3.358 — 2019–2022
+  If the form only allows 2 schools, enter #1 and #2 and skip #3.
+  If the form has an "Add Another School" or "+ Add Education" button, click it to add the third entry.
+  Never leave UNR out if there is room for it.
+
+CIVIL SERVICE / GOVERNMENT SUPPLEMENTAL QUESTIONNAIRE RULES:
+Government agencies (NEOGOV, GovernmentJobs, Workday government portals) often have a dedicated "Supplemental Questions" page. These are MANDATORY — you cannot submit without answering all of them.
+
+== SPEED STRATEGY: DO THIS IN 3 BROWSER ACTIONS, NOT 50 ==
+
+ACTION 1 — READ THE WHOLE PAGE AT ONCE:
+Use browser_evaluate to extract ALL question text and ALL option text in one shot:
+browser_evaluate function: () => {{
+  const out = [];
+  document.querySelectorAll('input[type=checkbox],input[type=radio],textarea,select').forEach(el => {{
+    const lbl = el.labels?.[0]?.textContent?.trim() || el.closest('label')?.textContent?.trim() || el.name || el.id;
+    out.push({{ type: el.type || el.tagName, name: el.name, id: el.id, label: lbl, value: el.value }});
+  }});
+  return out;
+}}
+Read the result. Now you know EVERY input on the page with its id/name. Plan all answers before touching anything.
+
+ACTION 2 — RUN THIS EXACT JavaScript (browser_evaluate) — it handles ALL checkboxes and ALL text areas on the page in one call:
+browser_evaluate function: () => {{
+  const results = {{}};
+  // --- CHECKBOX HELPER: click any checkbox whose label contains any of the given strings ---
+  function checkAll(partials) {{
+    let n = 0;
+    document.querySelectorAll('input[type=checkbox]').forEach(el => {{
+      const lbl = (el.labels?.[0]?.textContent || el.closest('label')?.textContent || document.querySelector('label[for="'+el.id+'"]')?.textContent || '').toLowerCase();
+      if (partials.some(p => lbl.includes(p.toLowerCase())) && !el.checked) {{ el.click(); n++; }}
+    }});
+    return n;
+  }}
+  // --- RADIO HELPER: click radio whose label best matches ---
+  function clickRadio(partial) {{
+    for (const el of document.querySelectorAll('input[type=radio]')) {{
+      const lbl = (el.labels?.[0]?.textContent || el.closest('label')?.textContent || '').toLowerCase();
+      if (lbl.includes(partial.toLowerCase()) && !el.checked) {{ el.click(); return true; }}
+    }}
+    return false;
+  }}
+  // --- TEXTAREA HELPER: fill first textarea whose id/name/nearby-label contains partial ---
+  function fillArea(partial, text) {{
+    for (const el of document.querySelectorAll('textarea')) {{
+      const key = (el.id + ' ' + el.name + ' ' + (el.closest('[class*="question"],[class*="Question"],[class*="item"]')?.textContent||'')).toLowerCase();
+      if (key.includes(partial.toLowerCase())) {{
+        el.value = text; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return true;
+      }}
+    }}
+    // fallback: fill first empty textarea
+    for (const el of document.querySelectorAll('textarea')) {{ if (!el.value.trim()) {{ el.value = text; el.dispatchEvent(new Event('input',{{bubbles:true}})); el.dispatchEvent(new Event('change',{{bubbles:true}})); return true; }} }}
+    return false;
+  }}
+
+  // === IT ENVIRONMENTS / TOOLS (Q04 equivalent — 21 options) ===
+  results.it_env = checkAll(['applications development','cloud applications','computer hardware','desktop operating system','enterprise resource planning','help desk','service desk','i.t. security','it security','microsoft office','network connectivity','remote assistance','server applications','server operating system','training end users','other']);
+
+  // === IT SUPPORT EXPERIENCE (Q05 equivalent) ===
+  results.it_support = checkAll(['deploying devices','end user technical support','installing','configuring','monitoring applications','monitoring devices','file backup','service request','user account administration']);
+
+  // === FORMAL TRAINING (Q03 equivalent) ===
+  results.training = checkAll(['business software','computer hardware diagnostic','computer operating system','computer programming','customer service','cybersecurity','enterprise resource planning','network operations','server operations','other']);
+
+  // === DOCUMENTATION EXPERIENCE (Q07 equivalent) ===
+  results.docs = checkAll(['application software operation','equipment operating','program documentation','training materials','troubleshooting procedure','other']);
+
+  // === YEARS EXPERIENCE RADIO — pick "3 years or more" or highest bracket ===
+  results.yrs = clickRadio('3 years or more') || clickRadio('3 or more') || clickRadio('more than 2');
+
+  // === ACKNOWLEDGMENTS — drug test, read requirements, "I have read" ===
+  results.ack = checkAll(['i have read','i understand']) + (clickRadio('yes') ? 1 : 0);
+
+  // === CAREER FAIR RADIO ===
+  results.fair = clickRadio('have not attended') || clickRadio('not attended');
+
+  // === CAREER FAIR TEXT ===
+  results.fairText = fillArea('career fair', 'None') || fillArea('name of event', 'None') || fillArea('event', 'None');
+
+  // === ESSAY / NARRATIVE (Q08) — fill with candidate experience ===
+  const essay = `Job Title: Customer Service Specialist
+Employer: City of Roseville
+Department/Unit: Parks, Recreation & Libraries
+Dates: September 2025 – Present
+Duties: Tier 1 IT support for public kiosks and payment terminals via SSH and remote desktop tools. Active Directory user and group account administration. Documented recurring technical issues and authored a troubleshooting reference guide for front desk staff, reducing repeat IT escalations. High-volume transaction processing and real-time system error resolution at public counter.
+
+Job Title: Senior Accounting Assistant
+Employer: Nevada County Treasurer-Tax Collector
+Department/Unit: Treasurer-Tax Collector
+Dates: January 2025 – May 2025
+Duties: Operated Megabyte Property Tax System and Workday ERP to process property tax transactions and vendor payments. Researched and resolved data discrepancies in the automated system. Maintained audit-ready documentation of financial workflows. Assisted staff with ERP navigation, data entry procedures, and issue resolution.
+
+Self-Directed IT Training – Home Lab Administration (3+ years, ongoing):
+Administer Oracle Cloud Infrastructure running Ubuntu and Oracle Linux 9 servers with Docker containerization. Configure DNS, DHCP, SSH tunnels, port forwarding, and firewall rules. Deploy and monitor web server, media server, and application server environments. File backup and recovery via NAS. Python and Bash automation scripting. PC hardware builds, POST diagnostics, BIOS recovery. Active Directory user account management.
+
+Education:
+- B.S. Public Health (Business Administration minor) — University of the Cumberlands, GPA 3.692, in progress (2024–present)
+- A.A. General Studies — Truckee Meadows Community College (May 2024)
+- 71 semester credits — University of Nevada, Reno (2019–2022)`;
+  results.essay = fillArea('describe', essay) || fillArea('detail', essay) || fillArea('experience', essay) || fillArea('education', essay);
+
+  return results;
+}}
+
+ACTION 3 — browser_take_screenshot to verify checkboxes are selected. If any results show 0 or false, re-run that specific section. Then scroll full page to find any remaining "Error: This field is required" messages and fix them before clicking Next.
+
+== WHAT TO ANSWER FOR EACH QUESTION TYPE ==
+
+ACKNOWLEDGMENT / "I have read..." -> clickByLabel("I have read") or select the only checkbox/radio.
+
+MINIMUM QUALIFICATIONS (single radio — pick best fit):
+  Select the option that is strictly supported by the profile and job history. Do not exaggerate experience or education.
+
+"SELECT ALL THAT APPLY" checkbox questions — NEVER assume a group is "partially complete". Always select every applicable box.
+CRITICAL: Do NOT skip a question because it appears to have some boxes checked. Verify and complete it.
+
+  IT ENVIRONMENTS / TOOLS / TRAINING — YES only when explicitly supported by the profile or transcript knowledge. If uncertain, leave it as NO.
+
+  IT SUPPORT EXPERIENCE (common question type about what support tasks you have done) — YES only for tasks explicitly supported by the profile, transcripts, or resume. Otherwise NO.
+
+  NO for all checkbox questions: any skill, system, or certification that is not supported by the profile. "None of the above" only if it is the best factual choice.
+
+YEARS OF EXPERIENCE radios:
+  IT-specific: 3+ years -> select "3 years or more" or highest bracket
+  General experience: 8 years -> select highest available bracket
+
+NARRATIVE / ESSAY text areas — write inline, do NOT leave blank:
+  City of Roseville, Parks Recreation & Libraries | Customer Service Specialist | Sept 2025–Present:
+  Tier 1 IT support for public kiosks and payment terminals via SSH and remote tools. Active Directory user/group administration. Documented recurring issues; authored troubleshooting reference guide for front desk staff. High-volume transaction processing and real-time system error resolution.
+
+  Nevada County Treasurer-Tax Collector | Senior Accounting Assistant | Jan–May 2025:
+  Operated Megabyte Property Tax System and Workday ERP for property tax processing and vendor payments. Researched and resolved discrepancies in automated financial system records. Maintained audit-ready documentation of workflows. Assisted staff with ERP navigation and data entry.
+
+  Self-Directed Home Lab (3+ years ongoing):
+  Administer Oracle Cloud Infrastructure running Ubuntu/Oracle Linux 9 servers with Docker containers. Configure DNS, DHCP, SSH tunnels, port forwarding, and firewall rules. Deploy and monitor applications (web server, Jellyfin, game servers). NAS backup and recovery. Python/Bash automation scripting. PC builds, POST diagnostics, BIOS recovery.
+
+  Education: B.S. Public Health (Business minor) — University of the Cumberlands (GPA 3.692, in progress). A.A. General Studies — TMCC (May 2024). 71 credits — UNR (2019–2022).
+
+DRUG TEST / BACKGROUND CHECK acknowledgment -> ALWAYS "Yes". This is required and is often near the bottom of the page.
+GENERAL REQUIREMENTS / "I have read the job announcement" acknowledgment -> ALWAYS select/check it. Required.
+CAREER FAIR ATTENDANCE -> "Have not attended a career fair and/or job event." -> follow-up text = None.
+HOW DID YOU HEAR -> GovernmentJobs Website / Online Job Board.
+
+BEFORE CLICKING PROCEED/NEXT — MANDATORY VERIFICATION:
+1. Scroll to the TOP of the page.
+2. Use browser_evaluate to find every element with error text: document.querySelectorAll('[class*="error"],[class*="Error"]').forEach(e => console.log(e.textContent))
+3. Scroll slowly to the BOTTOM. Count every numbered question. Check that EACH one has a selected radio, checked checkbox, or filled text.
+4. Questions commonly missed: drug test agreement (Yes), "I have read..." acknowledgment, career fair attendance radio, career fair details text box.
+5. Only click Proceed/Next when ZERO errors are visible and EVERY question has an answer.
+
+ERROR MESSAGES after clicking Proceed/Next: scroll to TOP, find red error messages, fix each one. Do not click Proceed again until all are cleared."""
 
 
 def _build_hard_rules(profile: dict) -> str:
@@ -297,25 +553,16 @@ Result actions:
 - "turnstile_script_only" -> browser_wait_for time: 3, re-run detect.
 - Any other type -> proceed to CAPTCHA SOLVE below.
 
---- CAPTCHA SOLVE ---
-Three steps: createTask -> poll -> inject. Do each as a separate browser_evaluate call.
+⚠ DO NOT CLICK THE CAPTCHA WIDGET. Do NOT click "I'm not a robot", do NOT click the checkbox, do NOT interact with the CAPTCHA visually AT ALL before or during API solving. Clicking it triggers the interactive visual/audio challenge which you cannot solve. The API returns a token you inject silently — the visual widget never gets clicked.
 
-STEP 1 -- CREATE TASK (copy this exactly, fill in the 3 placeholders):
-browser_evaluate function: async () => {{{{
-  const r = await fetch('https://api.capsolver.com/createTask', {{{{
-    method: 'POST',
-    headers: {{{{'Content-Type': 'application/json'}}}},
-    body: JSON.stringify({{{{
-      clientKey: '{capsolver_key}',
-      task: {{{{
-        type: 'TASK_TYPE',
-        websiteURL: 'PAGE_URL',
-        websiteKey: 'SITE_KEY'
-      }}}}
-    }}}})
-  }}}});
-  return await r.json();
-}}}}
+--- CAPTCHA SOLVE ---
+Three steps: createTask -> poll -> inject.
+Steps 1 and 2 use Bash (curl) — NOT browser_evaluate. This bypasses site CSP which would block the fetch.
+
+STEP 1 -- CREATE TASK (run as a Bash command, fill in TASK_TYPE, PAGE_URL, SITE_KEY):
+curl -s -X POST https://api.capsolver.com/createTask \
+  -H "Content-Type: application/json" \
+  -d '{{"clientKey":"{capsolver_key}","task":{{"type":"TASK_TYPE","websiteURL":"PAGE_URL","websiteKey":"SITE_KEY"}}}}'
 
 TASK_TYPE values (use EXACTLY these strings):
   hcaptcha     -> HCaptchaTaskProxyLess
@@ -325,27 +572,19 @@ TASK_TYPE values (use EXACTLY these strings):
   funcaptcha   -> FunCaptchaTaskProxyLess
 
 PAGE_URL = the url from detect result. SITE_KEY = the sitekey from detect result.
-For recaptchav3: add "pageAction": "submit" to the task object (or the actual action found in page scripts).
-For turnstile: add "metadata": {{"action": "...", "cdata": "..."}} if those were in detect result.
+For recaptchav3: add ,"pageAction":"submit" inside the task object (or the actual action from page scripts).
+For turnstile: add ,"metadata":{{"action":"...","cdata":"..."}} inside task if those were in detect result.
 
 Response: {{"errorId": 0, "taskId": "abc123"}} on success.
 If errorId > 0 -> CAPTCHA SOLVE failed. Go to MANUAL FALLBACK.
 
-STEP 2 -- POLL (replace TASK_ID with the taskId from step 1):
-Loop: browser_wait_for time: 3, then run:
-browser_evaluate function: async () => {{{{
-  const r = await fetch('https://api.capsolver.com/getTaskResult', {{{{
-    method: 'POST',
-    headers: {{{{'Content-Type': 'application/json'}}}},
-    body: JSON.stringify({{{{
-      clientKey: '{capsolver_key}',
-      taskId: 'TASK_ID'
-    }}}})
-  }}}});
-  return await r.json();
-}}}}
+STEP 2 -- POLL (run as a Bash command, replace TASK_ID with taskId from step 1):
+Loop: sleep 3 between polls. Max 10 polls (30s total).
+curl -s -X POST https://api.capsolver.com/getTaskResult \
+  -H "Content-Type: application/json" \
+  -d '{{"clientKey":"{capsolver_key}","taskId":"TASK_ID"}}'
 
-- status "processing" -> wait 3s, poll again. Max 10 polls (30s).
+- status "processing" -> sleep 3, poll again.
 - status "ready" -> extract token:
     reCAPTCHA: solution.gRecaptchaResponse
     hCaptcha:  solution.gRecaptchaResponse
@@ -394,14 +633,7 @@ browser_evaluate function: () => {{{{
   return 'injected';
 }}}}
 
-For FunCaptcha:
-browser_evaluate function: () => {{{{
-  const token = 'THE_TOKEN';
-  const inp = document.querySelector('#FunCaptcha-Token, input[name="fc-token"]');
-  if (inp) inp.value = token;
-  if (window.ArkoseEnforcement) try {{{{ window.ArkoseEnforcement.setConfig({{{{data: {{{{blob: token}}}}}}}}) }}}} catch(e) {{{{}}}}
-  return 'injected';
-}}}}
+For FunCaptcha: inject token into #FunCaptcha-Token or input[name="fc-token"], call window.ArkoseEnforcement.setConfig({{{{data:{{{{blob:token}}}}}}}})) if present.
 
 After injecting: browser_wait_for time: 2, then snapshot.
 - Widget gone or green check -> success. Click Submit if needed.
@@ -502,6 +734,19 @@ def build_prompt(job: dict, tailored_resume: str,
     from applypilot.config import load_blocked_sso
     blocked_sso = load_blocked_sso()
 
+    # Site-specific credentials (overrides personal.password for specific domains)
+    site_creds = profile.get("site_credentials", {})
+    site_creds_lines = []
+    for domain, creds in site_creds.items():
+        site_creds_lines.append(
+            f"  - {domain}: username={creds.get('username', personal['email'])}  password={creds.get('password', '')}"
+        )
+    site_creds_block = (
+        "SITE-SPECIFIC LOGINS (use these instead of the default password for these domains):\n"
+        + "\n".join(site_creds_lines)
+        if site_creds_lines else ""
+    )
+
     # Preferred display name
     preferred_name = personal.get("preferred_name", full_name.split()[0])
     last_name = full_name.split()[-1] if " " in full_name else ""
@@ -511,9 +756,35 @@ def build_prompt(job: dict, tailored_resume: str,
     if dry_run:
         submit_instruction = "IMPORTANT: Do NOT click the final Submit/Apply button. Review the form, verify all fields, then output RESULT:APPLIED with a note that this was a dry run."
     else:
-        submit_instruction = "BEFORE clicking Submit/Apply, take a snapshot and review EVERY field on the page. Verify all data matches the APPLICANT PROFILE and TAILORED RESUME -- name, email, phone, location, work auth, resume uploaded, cover letter if applicable. If anything is wrong or missing, fix it FIRST. Only click Submit after confirming everything is correct."
+        submit_instruction = """BEFORE clicking Submit/Apply, run a mandatory pre-submit check:
+  1. Scroll to the top of the page. Take a snapshot.
+  2. Scan every visible field. Look specifically for:
+     - Any text area or input that is empty or says "Answer" / placeholder text (not filled in)
+     - Any required field (*) that is blank
+     - Any radio group with nothing selected
+     - Any required checkbox that is unchecked
+  3. For EVERY empty required text field you find: write a real answer based on the job description and resume. NEVER leave a required field blank. If you don't have a pre-written answer, compose one from context.
+  4. Scroll down and repeat until you have checked every page section.
+  5. Only after ALL fields are filled and all required items are answered: click Submit/Apply.
+  6. Verify all data matches the APPLICANT PROFILE and TAILORED RESUME -- name, email, phone, location, work auth, resume uploaded, cover letter if applicable."""
 
-    prompt = f"""You are an autonomous job application agent. Your ONE mission: get this candidate an interview. You have all the information and tools. Think strategically. Act decisively. Submit the application.
+    prompt = f"""You are an autonomous job application agent running in HIGH EFFORT mode. Your ONE mission: submit a complete, accurate application and get this candidate an interview. You have all the information and tools needed. Never give up on solvable obstacles — CAPTCHAs get solved via API, supplemental questions get answered from profile data, login walls get bypassed with provided credentials. Think strategically. Act decisively. Use every tool available. The only acceptable reason to stop early is a hard blocker explicitly listed in RESULT CODES (expired job, permanent auth wall, unsafe site). Everything else: push through and submit.
+
+== BROWSER TOOLS — CRITICAL ==
+You control a dedicated browser via the Playwright MCP. Use ONLY these tool prefixes:
+  mcp__playwright__*  (browser_navigate, browser_click, browser_fill, browser_snapshot, etc.)
+Do NOT use any alternate browser tool namespace. Those connect to a different browser and will break the application. Every browser action must go through the playwright MCP tools only.
+
+JAVASCRIPT AND PLAYWRIGHT CODE IN THE BROWSER:
+Two valid tools for browser interaction — use whichever is faster for the task:
+  browser_evaluate  → runs JavaScript directly in the page (best for reading DOM, setting .value, bulk-checking checkboxes)
+  browser_run_code  → runs Playwright Python API code (best for click, fill, select by label/role)
+NEVER use plain Bash or computer tool to interact with the page — those run outside the browser entirely.
+
+SCROLLING — USE browser_scroll, NEVER browser_press_key for scrolling:
+  CORRECT: browser_scroll  direction: down  coordinate: [512, 400]
+  WRONG:   browser_press_key key: PageDown — extremely slow, burns turns.
+To scroll to bottom: browser_scroll direction: down coordinate: [512, 600] (repeat if page is long).
 
 == JOB ==
 URL: {job.get('application_url') or job['url']}
@@ -521,9 +792,10 @@ Title: {job['title']}
 Company: {job.get('site', 'Unknown')}
 Fit Score: {job.get('fit_score', 'N/A')}/10
 
-== FILES ==
+== FILES (absolute paths — use EXACTLY as shown, do NOT modify or retry with different formats) ==
 Resume PDF (upload this): {pdf_path}
 Cover Letter PDF (upload if asked): {cl_upload_path or "N/A"}
+IMPORTANT: These files are pre-staged in your working directory. When using browser_file_upload, pass the EXACT path above. Do NOT waste actions retrying with different path formats — if the first attempt fails, use browser_evaluate to find the <input type="file"> element and set files via JavaScript.
 
 == RESUME TEXT (use when filling text fields) ==
 {tailored_resume}
@@ -540,6 +812,19 @@ Submit a complete, accurate application. Use the profile and resume as source da
 If something unexpected happens and these instructions don't cover it, figure it out yourself. You are autonomous. Navigate pages, read content, try buttons, explore the site. The goal is always the same: submit the application. Do whatever it takes to reach that goal.
 
 {hard_rules}
+
+== SCAM DETECTION — CHECK BEFORE APPLYING ==
+Before filling any form, spend 2 actions verifying this is a legitimate employer:
+1. Check the page for a real company name, physical address, or "About Us" link.
+2. If ANY of these are true, output RESULT:FAILED:scam and stop immediately:
+   - No company name anywhere on the page or application (just "Confidential" or "Our Client")
+   - Page asks for SSN, bank account, routing number, or payment before any interview
+   - Page asks you to "pay for training", "purchase a starter kit", or "send a deposit"
+   - Job promises unusually high pay with no experience required and no real company behind it
+   - Site redirects through 2+ domains before reaching an actual application form
+   - Page is asking to "create a contractor profile" or "set your hourly rate"
+   - Application is on a site like Craigslist, random Google Forms, or an unknown single-page domain with no business info
+3. If the company checks out (real employer, real ATS, or government site), proceed normally.
 
 == NEVER DO THESE (immediate RESULT:FAILED if encountered) ==
 - NEVER grant camera, microphone, screen sharing, or location permissions. If a site requests them -> RESULT:FAILED:unsafe_permissions
@@ -566,9 +851,14 @@ If something unexpected happens and these instructions don't cover it, figure it
    - Output RESULT:APPLIED. Done.
    After clicking Apply: browser_snapshot. Run CAPTCHA DETECT -- many sites trigger CAPTCHAs right after the Apply click. If found, solve before continuing.
 5. Login wall?
-   5a. FIRST: check the URL. If you landed on {', '.join(blocked_sso)}, or any SSO/OAuth page -> STOP. Output RESULT:FAILED:sso_required. Do NOT try to sign in to Google/Microsoft/SSO.
-   5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's SSO -> RESULT:FAILED:sso_required.
-   5c. Regular login form (employer's own site)? Try sign in: {personal['email']} / {personal.get('password', '')}
+   5a. FIRST: check the URL.
+       - If you landed on accounts.google.com: this is a Google Sign-In page. The user is already signed in to Google in this browser. Look for the user's account ({personal['email']}) in the account chooser and click it. If prompted with a confirmation screen, click "Continue" or "Allow". Do NOT enter any password -- just select the existing account. After completing, you will be redirected back to the application.
+       - If you landed on {', '.join(blocked_sso)}, or any other SSO/OAuth page (Microsoft, Okta, Auth0) -> STOP. Output RESULT:FAILED:sso_required.
+   5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's accounts.google.com, select the existing Google account ({personal['email']}) and click Continue. If it's {', '.join(blocked_sso)} -> RESULT:FAILED:sso_required.
+   5c. Regular login form (employer's own site)?
+       {site_creds_block}
+       Check the current URL domain. If it matches a domain in SITE-SPECIFIC LOGINS above, use those credentials.
+       Otherwise use default: {personal['email']} / {personal.get('password', '')}
    5d. After clicking Login/Sign-in: run CAPTCHA DETECT. Login pages frequently have invisible CAPTCHAs that silently block form submissions. If found, solve it then retry login.
    5e. Sign in failed? Try sign up with same email and password.
    5f. Need email verification? Use search_emails + read_email to get the code.
@@ -576,9 +866,10 @@ If something unexpected happens and these instructions don't cover it, figure it
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
 6. Upload resume. ALWAYS upload fresh -- delete any existing resume first, then browser_file_upload with the PDF path above. This is the tailored resume for THIS job. Non-negotiable.
 7. Upload cover letter if there's a field for it. Text field -> paste the cover letter text. File upload -> use the cover letter PDF path.
-8. Check ALL pre-filled fields. ATS systems parse your resume and auto-fill -- it's often WRONG.
+8. Check pre-filled fields but be STRATEGIC about edits. ATS systems auto-fill from your profile -- only fix things that MATTER:
    - "Current Job Title" or "Most Recent Title" -> use the title from the TAILORED RESUME summary, NOT whatever the parser guessed.
-   - Compare every other field to the APPLICANT PROFILE. Fix mismatches. Fill empty fields.
+   - Fix WRONG data (wrong degree type, wrong employer, wrong job title). Fill EMPTY required fields.
+   - Do NOT waste actions on trivial differences (units 103 vs 101, minor date variations, formatting differences). These won't affect your application.
 9. Answer screening questions using the rules above.
 10. {submit_instruction}
 11. After submit: browser_snapshot. Run CAPTCHA DETECT -- submit buttons often trigger invisible CAPTCHAs. If found, solve it (the form will auto-submit once the token clears, or you may need to click Submit again). Then check for new tabs (browser_tabs action: "list"). Switch to newest, close old. Snapshot to confirm submission. Look for "thank you" or "application received".
@@ -593,19 +884,43 @@ RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote
 RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
 RESULT:FAILED:reason -- any other failure (brief reason)
 
-== BROWSER EFFICIENCY ==
-- browser_snapshot ONCE per page to understand it. Then use browser_take_screenshot to check results (10x less memory).
-- Only snapshot again when you need element refs to click/fill.
-- Multi-page forms (Workday, Taleo, iCIMS): snapshot each new page, fill all fields, click Next/Continue. Repeat until final review page.
-- Fill ALL fields in ONE browser_fill_form call. Not one at a time.
-- Keep your thinking SHORT. Don't repeat page structure back.
-- CAPTCHA AWARENESS: After any navigation, Apply/Submit/Login click, or when a page feels stuck -- run CAPTCHA DETECT (see CAPTCHA section). Invisible CAPTCHAs (Turnstile, reCAPTCHA v3) show NO visual widget but block form submissions silently. The detect script finds them even when invisible.
+== BROWSER EFFICIENCY — MINIMIZE ACTIONS AND TOKENS ==
+GOLDEN RULES — every action costs tokens, every screenshot costs tokens:
+
+- browser_snapshot: use ONCE per new page to get element refs. Re-snapshot only when navigating to a new page.
+- browser_take_screenshot: use ONLY when you need to visually verify an error or unexpected state. NOT after every action.
+- Trust browser_evaluate return values. If checkAll() returns 9, those 9 boxes are checked — no screenshot needed to verify.
+- Fill ALL fields in ONE call. Never one field at a time.
+- Think SHORT. Do not narrate what you see. Do not list what you just did. Act → move on.
+- Multi-page forms: snapshot once per new page, fill everything, click Next. No mid-page re-snapshots.
+- SCROLLING: use browser_evaluate: () => window.scrollTo(0, document.body.scrollHeight) to jump to bottom instantly. Use browser_scroll for moderate scrolls. NEVER use browser_press_key for scrolling.
+- CAPTCHA AWARENESS: run CAPTCHA DETECT after navigation and Apply/Submit/Login clicks. Invisible CAPTCHAs block silently.
 
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
 - "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Click "Select file" or the upload area, then browser_file_upload with the resume PDF path. Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- File upload not working? Try: (1) browser_click the upload button/area, (2) browser_file_upload with the path. If still failing, look for a hidden file input or a "Select file" link and click that first.
-- Dropdown won't fill? browser_click to open it, then browser_click the option.
+- NEOGOV / GovernmentJobs applications — FAST TRACK (saves 60+ actions):
+  GovernmentJobs pre-fills Work, Education, References, and Preferences from the saved account. DO NOT read, review, or try to edit these sections. Skip straight to what matters.
+
+  NEOGOV OPTIMAL FLOW (follow this order, use left-nav tabs to jump directly):
+  1. After login: click "Attachments" tab in the left navigation menu.
+  2. On Attachments page: upload Resume and Cover Letter (two-step flow below).
+     → browser_take_screenshot to confirm both filenames appear. Then click Next.
+  3. Click "Questions" tab. Run the bulk JS from CIVIL SERVICE section to fill ALL supplemental questions in one call.
+     → browser_take_screenshot to confirm checkboxes are checked and essay is filled. Fix anything missing. Then click Proceed/Next.
+  4. Click "Review" tab. Scroll to bottom: browser_evaluate: () => window.scrollTo(0, document.body.scrollHeight)
+     → browser_take_screenshot to confirm "Proceed to Certify and Submit" button is visible and no red errors. Then click it.
+  5. On Certify page: browser_take_screenshot to confirm certification text loaded. Click "Accept & Submit". Done.
+
+  NEOGOV Attachments upload (two-step flow):
+  STEP 1: Click "Add supplemental attachment". A dropdown "Choose attachment type" appears.
+  STEP 2: Set dropdown to "Resume" via JS: browser_evaluate: () => {{ const s = document.querySelector('select[name*="attach"], select[id*="attach"], select'); const opt = [...s.options].find(o => o.text.trim() === 'Resume'); if(opt) {{ s.value = opt.value; s.dispatchEvent(new Event('change',{{bubbles:true}})); }} }}
+  STEP 3: Click the "Upload" button that appears. browser_file_upload with exact resume path.
+  STEP 4: Wait for filename to confirm. Then repeat steps 1-3 for Cover Letter if available.
+  STEP 5: Click Next.
+  If browser_file_upload fails: browser_evaluate: () => {{ const i=document.querySelector('input[type=file]'); if(i) i.style.display='block'; }} then retry.
+- File upload not working? Unhide the input: browser_evaluate function: () => {{ const i=document.querySelector('input[type=file]'); if(i) i.style.display='block'; }} then browser_file_upload again.
+- Dropdown won't fill? Try browser_select first. If that fails: browser_click to open, then browser_click the option. If that fails: use browser_evaluate to set .value and fire a change event.
 - Checkbox won't check via fill_form? Use browser_click on it instead. Snapshot to verify.
 - Phone field with country prefix: just type digits {phone_digits}
 - Date fields: {datetime.now().strftime('%m/%d/%Y')}
@@ -615,10 +930,12 @@ RESULT:FAILED:reason -- any other failure (brief reason)
 
 {captcha_section}
 
-== WHEN TO GIVE UP ==
+== WHEN TO GIVE UP (fail fast, don't waste turns) ==
 - Same page after 3 attempts with no progress -> RESULT:FAILED:stuck
+- Same action failing 3 times in a row (upload, click, fill) -> try ONE alternative approach, then RESULT:FAILED:stuck
 - Job is closed/expired/page says "no longer accepting" -> RESULT:EXPIRED
 - Page is broken/500 error/blank -> RESULT:FAILED:page_error
+- Login loop (redirected back to login after signing in 2+ times) -> RESULT:FAILED:login_issue
 Stop immediately. Output your RESULT code. Do not loop."""
 
     return prompt

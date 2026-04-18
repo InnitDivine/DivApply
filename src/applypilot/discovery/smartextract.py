@@ -45,6 +45,27 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
+# Selector cache — stores winning extraction plans so LLM discovery is skipped on re-runs
+_PLAN_CACHE_PATH = config.APP_DIR / "selector_cache.json"
+
+
+def _load_plan_cache() -> dict:
+    """Load cached extraction plans from disk."""
+    if _PLAN_CACHE_PATH.exists():
+        try:
+            return json.loads(_PLAN_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+    return {}
+
+
+def _save_plan_cache(cache: dict) -> None:
+    """Persist extraction plans to disk."""
+    try:
+        _PLAN_CACHE_PATH.write_text(json.dumps(cache, indent=2), encoding="utf-8")
+    except Exception as e:
+        log.warning("Could not save plan cache: %s", e)
+
 
 # -- Location filtering -------------------------------------------------------
 
@@ -73,6 +94,21 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
     return False
 
 
+def _load_title_excludes(search_cfg: dict | None = None) -> list[str]:
+    """Load title exclusion patterns from search config (case-insensitive)."""
+    if search_cfg is None:
+        search_cfg = config.load_search_config()
+    return [t.lower() for t in search_cfg.get("exclude_titles", [])]
+
+
+def _title_ok(title: str | None, excludes: list[str]) -> bool:
+    """Return False if title matches any exclude pattern."""
+    if not title or not excludes:
+        return True
+    t = title.lower()
+    return not any(ex in t for ex in excludes)
+
+
 # -- Site configuration from YAML --------------------------------------------
 
 def load_sites() -> list[dict]:
@@ -92,12 +128,14 @@ def _store_jobs_filtered(
     strategy: str,
     accept_locs: list[str],
     reject_locs: list[str],
+    title_excludes: list[str] | None = None,
 ) -> tuple[int, int]:
-    """Store jobs with location filtering. Returns (new, existing)."""
+    """Store jobs with location and title filtering. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
     filtered = 0
+    filtered_title = 0
 
     for job in jobs:
         url = job.get("url")
@@ -105,6 +143,9 @@ def _store_jobs_filtered(
             continue
         if not _location_ok(job.get("location"), accept_locs, reject_locs):
             filtered += 1
+            continue
+        if title_excludes and not _title_ok(job.get("title"), title_excludes):
+            filtered_title += 1
             continue
         try:
             conn.execute(
@@ -119,6 +160,8 @@ def _store_jobs_filtered(
 
     if filtered:
         log.info("Filtered %d jobs (wrong location)", filtered)
+    if filtered_title:
+        log.info("Filtered %d jobs (excluded title)", filtered_title)
     conn.commit()
     return new, existing
 
@@ -167,7 +210,11 @@ def collect_page_intelligence(url: str, headless: bool = True) -> dict:
         page.on("response", on_response)
 
         page.goto(url, timeout=60000)
-        page.wait_for_load_state("networkidle")
+        try:
+            page.wait_for_load_state("networkidle", timeout=60000)
+        except Exception:
+            # networkidle timeout is non-fatal — use whatever was captured
+            pass
 
         intel["page_title"] = page.title()
 
@@ -359,8 +406,28 @@ or
 No explanation, no markdown, no thinking."""
 
 
+# URL patterns that are NEVER job data -- skip LLM entirely for these
+_JUDGE_SKIP_PATTERNS = [
+    "isCaptchaRequired", "isLoggedIn", "sessionExpirationData",
+    "GetSignInTemplates", "attribution_trigger", "chatbase.co",
+    "px.ads.linkedin.com", "analytics", "telemetry", "tracking",
+    "gtm.", "google-analytics", "doubleclick", "/heartbeat",
+    "/ping", "/health", "/metrics", "cookieconsent", "gdpr",
+    "isCaptchaRequiredFor", "authenticate/isLogged", "HtmlTemplates/Get",
+    "definitions/session", "/auth/", "/oauth/", "/login", "/logout",
+    "recaptcha", "captcha", "csrf", "xsrf",
+]
+
+
+def _is_obvious_non_job(url: str) -> bool:
+    """Return True if URL matches known non-job patterns -- skip LLM for these."""
+    url_lower = url.lower()
+    return any(p.lower() in url_lower for p in _JUDGE_SKIP_PATTERNS)
+
+
 def judge_api_responses(api_responses: list[dict]) -> list[dict]:
-    """Use the LLM to filter API responses, keeping only job-relevant ones."""
+    """Use the LLM to filter API responses, keeping only job-relevant ones.
+    Pre-filters obvious auth/tracking URLs without calling the LLM."""
     if not api_responses:
         return []
 
@@ -368,6 +435,11 @@ def judge_api_responses(api_responses: list[dict]) -> list[dict]:
     relevant: list[dict] = []
 
     for resp in api_responses:
+        # Fast pre-filter: skip obvious non-job endpoints without LLM call
+        resp_url = resp.get("url", "")
+        if _is_obvious_non_job(resp_url):
+            log.debug("Judge skip (pattern match): %s", resp_url[:80])
+            continue
         fields = ""
         sample = ""
         resp_type = resp.get("type", "unknown")
@@ -845,9 +917,43 @@ def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
     return selectors, jobs
 
 
+def apply_css_selectors_cached(intel: dict, selectors: dict) -> list[dict]:
+    """Apply pre-cached CSS selectors to page HTML — no LLM call needed."""
+    full_html = intel.get("full_html", "")
+    if not full_html:
+        return []
+    soup = BeautifulSoup(full_html, "html.parser")
+    card_sel = selectors.get("job_card", "NONE")
+    try:
+        cards = soup.select(card_sel)
+    except Exception as e:
+        log.error("Invalid cached card selector '%s': %s", card_sel, e)
+        return []
+    log.info("Cached selectors matched %d cards", len(cards))
+    jobs: list[dict] = []
+    for card in cards:
+        job: dict = {}
+        for field in ["title", "salary", "description", "location", "url"]:
+            sel = selectors.get(field)
+            if not sel or sel == "null":
+                job[field] = None
+                continue
+            try:
+                el = card.select_one(sel)
+            except Exception:
+                job[field] = None
+                continue
+            if el:
+                job[field] = el.get("href") if field == "url" else el.get_text(strip=True)
+            else:
+                job[field] = None
+        jobs.append(job)
+    return jobs
+
+
 # -- Main per-site extraction ------------------------------------------------
 
-def _run_one_site(name: str, url: str) -> dict:
+def _run_one_site(name: str, url: str, cached_plan: dict | None = None) -> dict:
     """Run full smart extraction pipeline on one site URL."""
     log.info("=" * 60)
     log.info("%s: %s", name, url)
@@ -855,7 +961,12 @@ def _run_one_site(name: str, url: str) -> dict:
     # Step 1: Collect intelligence
     log.info("[1] Collecting page intelligence...")
     t0 = time.time()
-    intel = collect_page_intelligence(url)
+    try:
+        intel = collect_page_intelligence(url)
+    except Exception as e:
+        log.warning("Page load failed for %s: %s — skipping", url[:80], e)
+        return {"name": name, "status": "SKIP", "error": str(e), "total": 0,
+                "titles": 0, "jobs": [], "plan": None, "cache_hit": False}
     collect_time = time.time() - t0
     log.info("Done in %.1fs | JSON-LD: %d | API: %d | testids: %d | cards: %d",
              collect_time, len(intel["json_ld"]), len(intel["api_responses"]),
@@ -876,34 +987,40 @@ def _run_one_site(name: str, url: str) -> dict:
     elif _is_captcha:
         log.warning("CAPTCHA/rate-limit detected -- skipping headful retry")
 
-    # Step 1.5: Judge filters API responses
-    if intel["api_responses"]:
-        log.info("[1.5] Judge filtering API responses...")
-        intel["api_responses"] = judge_api_responses(intel["api_responses"])
-        log.info("Kept %d relevant responses", len(intel["api_responses"]))
+    if cached_plan:
+        # Cache hit — skip all LLM calls, apply stored strategy directly
+        plan = cached_plan
+        strategy = plan.get("strategy", "?")
+        log.info("[CACHE HIT] strategy=%s — skipping LLM discovery", strategy)
+    else:
+        # Step 1.5: Judge filters API responses
+        if intel["api_responses"]:
+            log.info("[1.5] Judge filtering API responses...")
+            intel["api_responses"] = judge_api_responses(intel["api_responses"])
+            log.info("Kept %d relevant responses", len(intel["api_responses"]))
 
-    # Step 2: Strategy selection
-    briefing = format_strategy_briefing(intel)
-    log.info("[2] Phase 1: Strategy selection (%s chars briefing)", f"{len(briefing):,}")
+        # Step 2: Strategy selection
+        briefing = format_strategy_briefing(intel)
+        log.info("[2] Phase 1: Strategy selection (%s chars briefing)", f"{len(briefing):,}")
 
-    prompt = STRATEGY_PROMPT.format(briefing=briefing)
-    try:
-        raw, elapsed, meta = ask_llm(prompt)
-    except Exception as e:
-        log.error("LLM_ERROR: %s", e)
-        return {"name": name, "status": "LLM_ERROR", "error": str(e)}
+        prompt = STRATEGY_PROMPT.format(briefing=briefing)
+        try:
+            raw, elapsed, meta = ask_llm(prompt)
+        except Exception as e:
+            log.error("LLM_ERROR: %s", e)
+            return {"name": name, "status": "LLM_ERROR", "error": str(e)}
 
-    log.info("LLM: %d chars, %.1fs", meta["response_chars"], elapsed)
+        log.info("LLM: %d chars, %.1fs", meta["response_chars"], elapsed)
 
-    try:
-        plan = extract_json(raw)
-    except Exception as e:
-        log.error("PARSE_ERROR: %s | raw: %s", e, raw[:500])
-        return {"name": name, "status": "PARSE_ERROR", "error": str(e), "raw": raw}
+        try:
+            plan = extract_json(raw)
+        except Exception as e:
+            log.error("PARSE_ERROR: %s | raw: %s", e, raw[:500])
+            return {"name": name, "status": "PARSE_ERROR", "error": str(e), "raw": raw}
 
-    strategy = plan.get("strategy", "?")
-    reasoning = plan.get("reasoning", "?")
-    log.info("Strategy: %s | Reasoning: %s", strategy, reasoning)
+        strategy = plan.get("strategy", "?")
+        reasoning = plan.get("reasoning", "?")
+        log.info("Strategy: %s | Reasoning: %s", strategy, reasoning)
 
     # Step 3: Execute
     log.info("[3] Executing %s...", strategy)
@@ -915,9 +1032,14 @@ def _run_one_site(name: str, url: str) -> dict:
             log.info("Extraction plan: %s", json.dumps(plan.get("extraction", {}))[:300])
             jobs = execute_api_response(intel, plan)
         elif strategy == "css_selectors":
-            log.info("-> Phase 2: Generating selectors from card examples...")
-            selectors, jobs = execute_css_selectors(intel)
-            plan["extraction"] = selectors
+            if cached_plan:
+                log.info("Applying cached CSS selectors...")
+                jobs = apply_css_selectors_cached(intel, cached_plan.get("extraction", {}))
+                plan["extraction"] = cached_plan.get("extraction", {})
+            else:
+                log.info("-> Phase 2: Generating selectors from card examples...")
+                selectors, jobs = execute_css_selectors(intel)
+                plan["extraction"] = selectors
         else:
             log.warning("Unknown strategy: %s", strategy)
             jobs = []
@@ -951,6 +1073,7 @@ def _run_one_site(name: str, url: str) -> dict:
         "plan": plan,
         "jobs": jobs,
         "sample": jobs[:5],
+        "cache_hit": cached_plan is not None,
     }
 
 
@@ -1016,6 +1139,7 @@ def _run_all(
     targets: list[dict],
     accept_locs: list[str],
     reject_locs: list[str],
+    title_excludes: list[str] | None = None,
     workers: int = 1,
 ) -> dict:
     """Run smart extract on all targets.
@@ -1028,6 +1152,11 @@ def _run_all(
     log.info("Database: %d jobs already stored, %d pending detail scrape",
              pre_stats["total"], pre_stats["pending_detail"])
 
+    import threading
+    cache = _load_plan_cache()
+    cache_lock = threading.Lock()
+    log.info("Selector cache: %d sites cached", len(cache))
+
     results: list[dict] = []
     total_new = 0
     total_existing = 0
@@ -1038,16 +1167,35 @@ def _run_all(
         if jobs:
             new, existing = _store_jobs_filtered(conn, jobs, target["name"],
                                                   r.get("strategy", "?"),
-                                                  accept_locs, reject_locs)
+                                                  accept_locs, reject_locs,
+                                                  title_excludes)
             total_new += new
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
+        # Save successful plan to cache immediately (thread-safe) so parallel
+        # workers for the same site can reuse it right away
+        if r["status"] in ("PASS", "PARTIAL") and r.get("plan"):
+            with cache_lock:
+                cache[target["name"]] = r["plan"]
+                _save_plan_cache(cache)
+
+    def _run_with_cache(target: dict) -> dict:
+        """Run site extraction, falling back to full discovery if cache returns 0 jobs."""
+        with cache_lock:
+            cached = cache.get(target["name"])
+        r = _run_one_site(target["name"], target["url"], cached_plan=cached)
+        if r.get("cache_hit") and r["status"] == "FAIL":
+            log.info("Cache invalid for %s — re-discovering", target["name"])
+            with cache_lock:
+                cache.pop(target["name"], None)
+            r = _run_one_site(target["name"], target["url"])
+        return r
 
     if workers > 1 and len(targets) > 1:
         # Parallel mode
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
             future_to_target = {
-                pool.submit(_run_one_site, target["name"], target["url"]): target
+                pool.submit(_run_with_cache, target): target
                 for target in targets
             }
             for future in as_completed(future_to_target):
@@ -1063,7 +1211,7 @@ def _run_all(
                 label = f"{target['name']} [{target['query']}]"
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
-            r = _run_one_site(target["name"], target["url"])
+            r = _run_with_cache(target)
             results.append(r)
             _process_result(r, target)
 
@@ -1103,6 +1251,7 @@ def run_smart_extract(
     """
     search_cfg = config.load_search_config()
     accept_locs, reject_locs = _load_location_filter(search_cfg)
+    title_excludes = _load_title_excludes(search_cfg)
 
     targets = build_scrape_targets(sites=sites, search_cfg=search_cfg)
 
@@ -1115,4 +1264,4 @@ def run_smart_extract(
     log.info("Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
              search_sites, static_sites, len(targets), workers)
 
-    return _run_all(targets, accept_locs, reject_locs, workers=workers)
+    return _run_all(targets, accept_locs, reject_locs, title_excludes, workers=workers)

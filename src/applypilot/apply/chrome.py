@@ -11,6 +11,8 @@ import shutil
 import subprocess
 import threading
 import time
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 from applypilot import config
@@ -23,6 +25,14 @@ BASE_CDP_PORT = 9222
 # Track Chrome processes per worker for cleanup
 _chrome_procs: dict[int, subprocess.Popen] = {}
 _chrome_lock = threading.Lock()
+
+
+def get_worker_browser_profile_dir(worker_id: int, browser: str = "chrome") -> Path:
+    """Return the persistent browser profile directory for a worker."""
+    safe_browser = browser.lower()
+    if safe_browser == "chrome":
+        return config.CHROME_WORKER_DIR / f"worker-{worker_id}"
+    return config.APPLY_WORKER_DIR / f"{safe_browser}-profile-{worker_id}"
 
 
 # ---------------------------------------------------------------------------
@@ -97,20 +107,24 @@ def _kill_on_port(port: int) -> None:
 # Worker profile management
 # ---------------------------------------------------------------------------
 
-def setup_worker_profile(worker_id: int) -> Path:
-    """Create an isolated Chrome profile for a worker.
+def setup_worker_profile(worker_id: int, browser: str = "chrome") -> Path:
+    """Create an isolated browser profile for a worker.
 
-    On first run, clones from an existing worker profile (preferred, since
-    it already has session cookies) or from the user's real Chrome profile.
-    Subsequent runs reuse the existing worker profile.
+    Chrome profiles are cloned from an existing worker or the user's local
+    Chrome profile to preserve cookies. Other browsers use a dedicated
+    persistent Playwright profile directory per worker.
 
     Args:
         worker_id: Numeric worker identifier.
 
     Returns:
-        Path to the worker's Chrome user-data directory.
+        Path to the worker's browser user-data directory.
     """
-    profile_dir = config.CHROME_WORKER_DIR / f"worker-{worker_id}"
+    profile_dir = get_worker_browser_profile_dir(worker_id, browser)
+    if browser.lower() != "chrome":
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        return profile_dir
+
     if (profile_dir / "Default").exists():
         return profile_dir  # Already initialized
 
@@ -245,11 +259,35 @@ def launch_chrome(worker_id: int, port: int | None = None,
     with _chrome_lock:
         _chrome_procs[worker_id] = proc
 
-    # Give Chrome time to start and open the debug port
-    time.sleep(3)
+    # Wait for Chrome to open the CDP debug port (up to 15s)
+    _wait_for_cdp(port, timeout=15, worker_id=worker_id)
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
     return proc
+
+
+def _wait_for_cdp(port: int, timeout: int = 15, worker_id: int = 0) -> None:
+    """Poll http://localhost:{port}/json/version until Chrome is ready.
+
+    Raises RuntimeError if Chrome doesn't respond within timeout seconds.
+    This prevents @playwright/mcp from falling back to headless Chromium
+    (which has no cookies) when Chrome is slow to start.
+    """
+    url = f"http://localhost:{port}/json/version"
+    deadline = time.time() + timeout
+    last_err = None
+    while time.time() < deadline:
+        try:
+            with urllib.request.urlopen(url, timeout=2) as resp:
+                if resp.status == 200:
+                    logger.info("[worker-%d] CDP ready on port %d", worker_id, port)
+                    return
+        except Exception as e:
+            last_err = e
+        time.sleep(0.5)
+    raise RuntimeError(
+        f"[worker-{worker_id}] Chrome CDP port {port} not ready after {timeout}s: {last_err}"
+    )
 
 
 def cleanup_worker(worker_id: int, process: subprocess.Popen | None) -> None:

@@ -29,6 +29,89 @@ from applypilot.llm import get_client
 
 log = logging.getLogger(__name__)
 
+# ── Title-based pre-filter ──────────────────────────────────────────────
+# Jobs whose titles match these patterns are clearly irrelevant and should
+# be skipped before wasting LLM tokens or scrape time on them.
+# Case-insensitive substring matching.
+_TITLE_REJECT_KEYWORDS = [
+    # Public safety / sworn
+    "police", "firefighter", "fire fighter", "fire chief", "fire captain",
+    "fire engineer", "fire marshal", "dispatcher", "911",
+    "correctional officer", "probation officer", "deputy sheriff",
+    "detention", "sworn",
+    # Engineering (civil, structural, electrical, etc.) — not IT
+    "civil engineer", "structural engineer", "electrical engineer",
+    "mechanical engineer", "traffic engineer", "city engineer",
+    "water engineer", "environmental engineer", "transportation engineer",
+    # Trades / heavy labor
+    "plumber", "electrician", "hvac", "welder", "carpenter",
+    "heavy equipment operator", "equipment mechanic",
+    "lineworker", "line worker",
+    # Medical / clinical
+    "registered nurse", "licensed vocational nurse", "lvn", "rn ",
+    "physician", "dentist", "pharmacist", "paramedic", "emt",
+    "medical doctor", "surgeon", "psychiatrist", "psychologist",
+    "veterinarian", "clinical",
+    # Legal
+    "attorney", "judge", "magistrate", "court administrator",
+    "public defender", "district attorney", "paralegal",
+    # Senior / director / executive (user says not qualified)
+    "senior ", "sr ", "director", "chief ", "superintendent",
+    "deputy director", "assistant director", "division manager",
+    "principal ", "lead ",
+    # Specialized certifications user doesn't have
+    "licensed architect", "surveyor", "appraiser", "real estate",
+    "building inspector", "plans examiner", "code enforcement",
+    # Trades / parks / maintenance / food / childcare
+    "camp chef", "camp caretaker", "cook ", "custodian",
+    "aquatics", "lifeguard", "swim ", "pool ",
+    "animal control", "animal care", "animal services",
+    "horticulture", "arborist", "tree trimmer",
+    "soccer official", "sports official", "referee",
+    "fitness instructor", "recreation leader", "child care",
+    "ballfield", "gym attendant",
+    # Finance / accounting (specialized)
+    "accountant", "auditor", "treasurer",
+    # Seasonal / temporary labor
+    "seasonal helper", "seasonal worker", "seasonal ",
+    # Other clearly irrelevant
+    "librarian", "museum ", "interpretive",
+    "landscape architect", "golf course",
+    # Scam / data harvesting job titles
+    "brand ambassador", "mystery shopper", "secret shopper",
+    "product tester", "amazon reviewer", "social media evaluator",
+    "chat agent", "chat support agent", "virtual assistant" ,
+    "data collector", "survey taker", "online rater",
+    "work from home assembl", "assembly work",
+    "make money", "earn money", "earn from home",
+    "envelope stuffer", "envelope stuffing",
+]
+
+# Titles containing these indicate IT/admin/clerical roles we DO want
+_TITLE_ALLOW_KEYWORDS = [
+    "it ", "information technology", "technician", "tech support",
+    "help desk", "helpdesk", "desktop support", "support specialist",
+    "system", "network", "database", "analyst", "clerk",
+    "administrative", "admin ", "office ", "customer service",
+    "program ", "coordinator", "specialist", "assistant",
+    "data ", "computer", "cyber", "security",
+    "telecommunications", "telecom",
+]
+
+
+def _title_is_irrelevant(title: str) -> bool:
+    """Return True if the job title is clearly irrelevant for the candidate."""
+    t = title.lower().strip()
+    # If it matches an allow keyword, never reject it
+    for allow in _TITLE_ALLOW_KEYWORDS:
+        if allow in t:
+            return False
+    # If it matches a reject keyword, skip it
+    for reject in _TITLE_REJECT_KEYWORDS:
+        if reject in t:
+            return True
+    return False
+
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # Sites that block scraping -- skip detail extraction entirely
@@ -710,6 +793,31 @@ def _run_detail_scraper(
 
     if not rows:
         log.info("No pending jobs to scrape.")
+        return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
+
+    # ── Title pre-filter: skip obviously irrelevant jobs ──────────────
+    filtered_rows = []
+    skipped = 0
+    for row in rows:
+        url, title, site = row[0], row[1], row[2]
+        if _title_is_irrelevant(title):
+            # Mark as scraped with score 1 so it never comes back
+            conn.execute(
+                "UPDATE jobs SET detail_scraped_at = ?, fit_score = 1, "
+                "score_reasoning = 'Title pre-filtered as irrelevant' "
+                "WHERE url = ?",
+                (datetime.now(timezone.utc).isoformat(), url),
+            )
+            skipped += 1
+        else:
+            filtered_rows.append(row)
+    if skipped:
+        conn.commit()
+        log.info("Title pre-filter: skipped %d irrelevant jobs", skipped)
+    rows = filtered_rows
+
+    if not rows:
+        log.info("No pending jobs after title filter.")
         return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
 
     site_jobs: dict[str, list[tuple]] = {}

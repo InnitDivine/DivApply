@@ -13,32 +13,50 @@ from datetime import datetime, timezone
 
 from applypilot.config import RESUME_PATH, load_profile
 from applypilot.database import get_connection, get_jobs_by_stage
-from applypilot.llm import get_client
+from applypilot.llm import get_client_for_stage
 
 log = logging.getLogger(__name__)
 
 
 # ── Scoring Prompt ────────────────────────────────────────────────────────
 
-SCORE_PROMPT = """You are a job fit evaluator. Given a candidate's resume and a job description, score how well the candidate fits the role.
+SCORE_PROMPT = """You are a neutral job fit evaluator. Read the candidate's resume and the job posting carefully, then score how well the candidate qualifies for this specific role on a 1-10 scale.
 
 SCORING CRITERIA:
-- 9-10: Perfect match. Candidate has direct experience in nearly all required skills and qualifications.
-- 7-8: Strong match. Candidate has most required skills, minor gaps easily bridged.
-- 5-6: Moderate match. Candidate has some relevant skills but missing key requirements.
-- 3-4: Weak match. Significant skill gaps, would need substantial ramp-up.
-- 1-2: Poor match. Completely different field or experience level.
+- 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
+- 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge.
+- 5-6: Moderate match. Relevant background exists but meaningful gaps in required experience or credentials.
+- 3-4: Weak match. Some transferable skills but significant gaps. Candidate could apply but is unlikely to be competitive.
+- 1-2: Incompatible. Role requires specific licensure, certification, or field experience the candidate does not have and cannot substitute.
 
-IMPORTANT FACTORS:
-- Weight technical skills heavily (programming languages, frameworks, tools)
-- Consider transferable experience (automation, scripting, API work)
-- Factor in the candidate's project experience
-- Be realistic about experience level vs. job requirements (years of experience, seniority)
+AUTOMATIC SCORE = 1 (do not evaluate further) if ANY of these are true — SCAM/JUNK SIGNALS:
+- Job description is vague, generic, or could apply to any industry with no specific duties
+- Company name is missing, hidden, or listed only as "Confidential" or "Our Client"
+- No company website, physical address, or verifiable business presence mentioned
+- Promises unusually high pay for minimal qualifications (e.g. "$50-100/hr, no experience needed")
+- Application asks for SSN, bank account, or payment upfront before hiring
+- Job is "work from home, set your own hours, unlimited earnings" style
+- Recruiter-only posting where the actual employer is never named
+- Job title/description is clearly a data harvesting scheme (brand ambassador, product tester, mystery shopper, chat agent, survey taker, social media evaluator, online rater)
+- Job redirects to a third-party site asking to "create a profile" before any interview
+- Multiple identical job postings from the same "company" with different salaries
+
+QUALIFICATION MISMATCH:
+- Required license, certification, clearance, or legal credential is clearly missing and cannot be substituted
+- Job explicitly requires completed education or experience that the resume does not support
+- Job requires field-specific experience that is absent from the resume
+
+IMPORTANT NOTES:
+- Judge based on the actual job description minimum qualifications, not job title alone.
+- Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family.
+- Do not artificially boost or suppress roles based on a presumed career path.
+- If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
+- Use only evidence from the resume and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
 SCORE: [1-10]
-KEYWORDS: [comma-separated ATS keywords from the job description that match or could match the candidate]
-REASONING: [2-3 sentences explaining the score]"""
+KEYWORDS: [comma-separated ATS keywords from the job description matching the candidate]
+REASONING: [1-2 sentences]"""
 
 
 def _parse_score_response(response: str) -> dict:
@@ -70,7 +88,12 @@ def _parse_score_response(response: str) -> dict:
     return {"score": score, "keywords": keywords, "reasoning": reasoning}
 
 
-def score_job(resume_text: str, job: dict) -> dict:
+def score_job(
+    resume_text: str,
+    job: dict,
+    coursework_summary: str = "",
+    coursework_skills_summary: str = "",
+) -> dict:
     """Score a single job against the resume.
 
     Args:
@@ -84,41 +107,54 @@ def score_job(resume_text: str, job: dict) -> dict:
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
         f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
+        f"DESCRIPTION:\n{(job.get('full_description') or '')[:3000]}"
     )
 
+    coursework_block = coursework_summary.strip() or "N/A"
+    coursework_skills_block = coursework_skills_summary.strip() or "N/A"
     messages = [
         {"role": "system", "content": SCORE_PROMPT},
-        {"role": "user", "content": f"RESUME:\n{resume_text}\n\n---\n\nJOB POSTING:\n{job_text}"},
+        {"role": "user", "content": (
+            f"RESUME:\n{resume_text}\n\n"
+            f"ACADEMIC COURSEWORK (internal only, do not cite unless already in resume):\n{coursework_block}\n\n"
+            f"COURSEWORK SKILL MAP (internal only, do not cite unless already in resume):\n{coursework_skills_block}\n\n"
+            f"---\n\nJOB POSTING:\n{job_text}"
+        )},
     ]
 
     try:
-        client = get_client()
-        response = client.chat(messages, max_tokens=512, temperature=0.2)
+        client = get_client_for_stage("score")
+        response = client.chat(messages, max_tokens=4096, temperature=0.1)
         return _parse_score_response(response)
     except Exception as e:
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
         return {"score": 0, "keywords": "", "reasoning": f"LLM error: {e}"}
 
 
-def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
+def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> dict:
     """Score unscored jobs that have full descriptions.
 
     Args:
         limit: Maximum number of jobs to score in this run.
         rescore: If True, re-score all jobs (not just unscored ones).
+        prune_below: If > 0, delete jobs with fit_score <= this value after scoring.
 
     Returns:
-        {"scored": int, "errors": int, "elapsed": float, "distribution": list}
+        {"scored": int, "errors": int, "elapsed": float, "distribution": list, "pruned": int}
     """
+    profile = load_profile()
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
+    coursework_summary = "\n".join(profile.get("coursework_summary", []))
+    coursework_skills_summary = "\n".join(profile.get("coursework_skills", []))
     conn = get_connection()
 
     if rescore:
         query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
         if limit > 0:
-            query += f" LIMIT {limit}"
-        jobs = conn.execute(query).fetchall()
+            query += " LIMIT ?"
+            jobs = conn.execute(query, (limit,)).fetchall()
+        else:
+            jobs = conn.execute(query).fetchall()
     else:
         jobs = get_jobs_by_stage(conn=conn, stage="pending_score", limit=limit)
 
@@ -138,7 +174,7 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     results: list[dict] = []
 
     for job in jobs:
-        result = score_job(resume_text, job)
+        result = score_job(resume_text, job, coursework_summary, coursework_skills_summary)
         result["url"] = job["url"]
         completed += 1
 
@@ -172,9 +208,22 @@ def run_scoring(limit: int = 0, rescore: bool = False) -> dict:
     """).fetchall()
     distribution = [(row[0], row[1]) for row in dist]
 
+    # Auto-prune low-score jobs if requested
+    pruned = 0
+    if prune_below > 0:
+        cursor = conn.execute(
+            "DELETE FROM jobs WHERE fit_score IS NOT NULL AND fit_score > 0 AND fit_score <= ?",
+            (prune_below,),
+        )
+        pruned = cursor.rowcount
+        conn.commit()
+        if pruned:
+            log.info("Auto-pruned %d jobs with fit_score <= %d", pruned, prune_below)
+
     return {
         "scored": len(results),
         "errors": errors,
         "elapsed": elapsed,
         "distribution": distribution,
+        "pruned": pruned,
     }

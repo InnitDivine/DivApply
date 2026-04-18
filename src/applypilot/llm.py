@@ -11,6 +11,7 @@ LLM_MODEL env var overrides the model name for any provider.
 
 import logging
 import os
+import re
 import time
 
 import httpx
@@ -64,7 +65,7 @@ def _detect_provider() -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 
 _MAX_RETRIES = 5
-_TIMEOUT = 120  # seconds
+_TIMEOUT = 600  # seconds — Ollama on large models can be slow
 
 # Base wait on first 429/503 (doubles each retry, caps at 60s).
 # Gemini free tier is 15 RPM = 4s minimum between requests; 10s gives headroom.
@@ -137,8 +138,10 @@ class LLMClient:
         resp = self._client.post(
             url,
             json=payload,
-            headers={"Content-Type": "application/json"},
-            params={"key": self.api_key},
+            headers={
+                "Content-Type": "application/json",
+                "x-goog-api-key": self.api_key,
+            },
         )
         resp.raise_for_status()
         data = resp.json()
@@ -161,8 +164,21 @@ class LLMClient:
             "model": self.model,
             "messages": messages,
             "temperature": temperature,
-            "max_tokens": max_tokens,
         }
+        # GPT-5.x and o-series models use max_completion_tokens; all others use max_tokens
+        _new_token_param = (
+            self.model.startswith("gpt-5")
+            or self.model.startswith("o1")
+            or self.model.startswith("o3")
+            or self.model.startswith("o4")
+        )
+        if _new_token_param:
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
+        # Ollama 0.9+ supports think:false to disable qwen3 chain-of-thought
+        if "qwen" in self.model.lower():
+            payload["think"] = False
 
         resp = self._client.post(
             f"{self.base_url}/chat/completions",
@@ -194,18 +210,29 @@ class LLMClient:
         """Send a chat completion request and return the assistant message text."""
         # Qwen3 optimization: prepend /no_think to skip chain-of-thought
         # reasoning, saving tokens on structured extraction tasks.
+        # NOTE: find the first *user* message — there may be a system message at [0].
         if "qwen" in self.model.lower() and messages:
-            first = messages[0]
-            if first.get("role") == "user" and not first["content"].startswith("/no_think"):
-                messages = [{"role": first["role"], "content": f"/no_think\n{first['content']}"}] + messages[1:]
+            for _i, _msg in enumerate(messages):
+                if _msg.get("role") == "user" and not _msg["content"].startswith("/no_think"):
+                    messages = (
+                        messages[:_i]
+                        + [{"role": _msg["role"], "content": f"/no_think\n{_msg['content']}"}]
+                        + messages[_i + 1:]
+                    )
+                    break
 
         for attempt in range(_MAX_RETRIES):
             try:
                 # Route to native Gemini if we've already confirmed it's needed
                 if self._use_native_gemini:
-                    return self._chat_native_gemini(messages, temperature, max_tokens)
+                    raw = self._chat_native_gemini(messages, temperature, max_tokens)
+                else:
+                    raw = self._chat_compat(messages, temperature, max_tokens)
 
-                return self._chat_compat(messages, temperature, max_tokens)
+                # Strip qwen3 <think>...</think> blocks if they leak into output
+                if "<think>" in raw:
+                    raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+                return raw
 
             except _GeminiCompatForbidden as exc:
                 # Model not available on OpenAI-compat layer — switch to native.
@@ -272,6 +299,12 @@ class LLMClient:
     def close(self) -> None:
         self._client.close()
 
+    def __del__(self) -> None:
+        try:
+            self._client.close()
+        except Exception:
+            pass
+
 
 class _GeminiCompatForbidden(Exception):
     """Sentinel: Gemini OpenAI-compat returned 403. Switch to native API."""
@@ -281,10 +314,19 @@ class _GeminiCompatForbidden(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Singleton
+# Singleton + per-stage clients
 # ---------------------------------------------------------------------------
 
 _instance: LLMClient | None = None
+_stage_instances: dict[str, LLMClient] = {}
+
+# Stage env-var overrides: LLM_MODEL_SCORE, LLM_MODEL_TAILOR, LLM_MODEL_COVER
+_STAGE_MODEL_VARS = {
+    "score": "LLM_MODEL_SCORE",
+    "tailor": "LLM_MODEL_TAILOR",
+    "cover": "LLM_MODEL_COVER",
+    "apply": "LLM_MODEL_APPLY",
+}
 
 
 def get_client() -> LLMClient:
@@ -295,3 +337,31 @@ def get_client() -> LLMClient:
         log.info("LLM provider: %s  model: %s", base_url, model)
         _instance = LLMClient(base_url, model, api_key)
     return _instance
+
+
+def get_client_for_stage(stage: str) -> LLMClient:
+    """Return an LLMClient for a specific pipeline stage.
+
+    Checks for a stage-specific model env var first (e.g. LLM_MODEL_TAILOR),
+    falls back to the default LLM_MODEL / provider detection.
+
+    This lets you run scoring on qwen2.5:7b and tailoring on a larger model
+    simply by setting LLM_MODEL_TAILOR=qwen2.5:14b without touching LLM_MODEL.
+    """
+    global _stage_instances
+
+    # Re-read env each call so changes after load_env() are picked up
+    stage_var = _STAGE_MODEL_VARS.get(stage, "")
+    stage_model = os.environ.get(stage_var, "") if stage_var else ""
+
+    if not stage_model:
+        # No stage override — use the default singleton
+        return get_client()
+
+    cache_key = f"{stage}:{stage_model}"
+    if cache_key not in _stage_instances:
+        base_url, default_model, api_key = _detect_provider()
+        log.info("LLM stage '%s': provider=%s  model=%s", stage, base_url, stage_model)
+        _stage_instances[cache_key] = LLMClient(base_url, stage_model, api_key)
+
+    return _stage_instances[cache_key]

@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from applypilot.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
 from applypilot.database import get_connection, get_jobs_by_stage
-from applypilot.llm import get_client
+from applypilot.llm import get_client_for_stage
 from applypilot.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
@@ -50,6 +50,8 @@ def _build_cover_letter_prompt(profile: dict) -> str:
     # Real metrics from resume_facts
     real_metrics = resume_facts.get("real_metrics", [])
     preserved_projects = resume_facts.get("preserved_projects", [])
+    coursework = profile.get("coursework_summary", [])
+    coursework_skills = profile.get("coursework_skills", [])
 
     # Build achievement examples for the prompt
     projects_hint = ""
@@ -60,6 +62,18 @@ def _build_cover_letter_prompt(profile: dict) -> str:
     if real_metrics:
         metrics_hint = f"\nReal metrics to use: {', '.join(real_metrics)}"
 
+    coursework_hint = ""
+    if coursework:
+        coursework_hint = "\nAcademic coursework (internal only, do not cite unless already on the resume):\n" + "\n".join(
+            f"- {item}" for item in coursework[:12]
+        )
+
+    coursework_skills_hint = ""
+    if coursework_skills:
+        coursework_skills_hint = "\nAcademic skill map (internal only, do not cite unless already on the resume):\n" + "\n".join(
+            f"- {item}" for item in coursework_skills[:12]
+        )
+
     # Build the full banned list from the validator so the prompt stays in sync
     # with what will actually be rejected — the validator checks all of these.
     all_banned = ", ".join(f'"{w}"' for w in BANNED_WORDS)
@@ -69,11 +83,13 @@ def _build_cover_letter_prompt(profile: dict) -> str:
 
 STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
 
-PARAGRAPH 1 (2-3 sentences): Open with a specific thing YOU built that solves THEIR problem. Not "I'm excited about this role." Not "This role aligns with my experience." Start with the work.
+PARAGRAPH 1 (2-3 sentences): Open with the strongest verified fact from the candidate's background that directly matches the job. Use the same rule for every role.
 
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
+PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers when available. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
+{coursework_hint}
+{coursework_skills_hint}
 
-PARAGRAPH 3 (1-2 sentences): One specific thing about the company from the job description (a product, a technical challenge, a team structure). Then close. "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
+PARAGRAPH 3 (1-2 sentences): Reference one specific thing about the company or role from the job description. Then close: "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
 
 BANNED WORDS AND PHRASES (automated validator rejects ANY of these — do not use even once):
 {all_banned}
@@ -84,15 +100,15 @@ ALSO BANNED (meta-commentary the validator catches):
 BANNED PUNCTUATION: No em dashes (—) or en dashes (–). Use commas or periods.
 
 VOICE:
-- Write like a real engineer emailing someone they respect. Not formal, not casual. Just direct.
-- NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact and move on.
-- NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem your team is facing."
-- Every sentence should contain either a number, a tool name, or a specific outcome. If it doesn't, cut it.
-- Read it out loud. If it sounds like a robot wrote it, rewrite it.
+- Write like a real professional emailing someone they respect. Not formal, not casual. Just direct.
+- NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact.
+- NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem."
+- Prefer concrete facts over generalities. If a sentence does not add useful information, cut it.
+- Only mention projects or tools that are directly relevant to the job.
 
 FABRICATION = INSTANT REJECTION:
 The candidate's real tools are ONLY: {skills_str}.
-Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work you did, not the tools.
+Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work, not the tools.
 
 Sign off: just "{sign_off_name}"
 
@@ -140,12 +156,12 @@ def generate_cover_letter(
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
         f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:6000]}"
+        f"DESCRIPTION:\n{(job.get('full_description') or '')[:3000]}"
     )
 
     avoid_notes: list[str] = []
     letter = ""
-    client = get_client()
+    client = get_client_for_stage("cover")
     cl_prompt_base = _build_cover_letter_prompt(profile)
 
     for attempt in range(max_retries + 1):
@@ -185,7 +201,7 @@ def generate_cover_letter(
 
 # ── Batch Entry Point ────────────────────────────────────────────────────
 
-def run_cover_letters(min_score: int = 7, limit: int = 20,
+def run_cover_letters(min_score: int = 7, limit: int = 0,
                       validation_mode: str = "normal") -> dict:
     """Generate cover letters for high-scoring jobs that have tailored resumes.
 
@@ -202,15 +218,26 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
     conn = get_connection()
 
     # Fetch jobs that have tailored resumes but no cover letter yet
-    jobs = conn.execute(
-        "SELECT * FROM jobs "
-        "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
-        "AND full_description IS NOT NULL "
-        "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
-        "AND COALESCE(cover_attempts, 0) < ? "
-        "ORDER BY fit_score DESC LIMIT ?",
-        (min_score, MAX_ATTEMPTS, limit),
-    ).fetchall()
+    if limit and limit > 0:
+        jobs = conn.execute(
+            "SELECT * FROM jobs "
+            "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
+            "AND full_description IS NOT NULL "
+            "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
+            "AND COALESCE(cover_attempts, 0) < ? "
+            "ORDER BY fit_score DESC LIMIT ?",
+            (min_score, MAX_ATTEMPTS, limit),
+        ).fetchall()
+    else:
+        jobs = conn.execute(
+            "SELECT * FROM jobs "
+            "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
+            "AND full_description IS NOT NULL "
+            "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
+            "AND COALESCE(cover_attempts, 0) < ? "
+            "ORDER BY fit_score DESC",
+            (min_score, MAX_ATTEMPTS),
+        ).fetchall()
 
     if not jobs:
         log.info("No jobs needing cover letters (score >= %d).", min_score)
@@ -218,8 +245,12 @@ def run_cover_letters(min_score: int = 7, limit: int = 20,
 
     # Convert rows to dicts
     if jobs and not isinstance(jobs[0], dict):
-        columns = jobs[0].keys()
-        jobs = [dict(zip(columns, row)) for row in jobs]
+        if hasattr(jobs[0], 'keys'):
+            columns = jobs[0].keys()
+            jobs = [dict(zip(columns, row)) for row in jobs]
+        else:
+            log.error("Unexpected row type: %s — cannot process", type(jobs[0]))
+            return {"generated": 0, "errors": len(jobs), "elapsed": 0.0}
 
     COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
     log.info(

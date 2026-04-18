@@ -5,6 +5,7 @@ pipeline stage are created up front so any stage can run independently
 without migration ordering issues.
 """
 
+import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
@@ -134,6 +135,10 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     """)
     conn.commit()
 
+    # Create auxiliary knowledge tables used by the profile layer.
+    ensure_coursework_table(conn)
+    seed_coursework_if_empty(conn)
+
     # Run migrations for any columns added after initial schema
     ensure_columns(conn)
 
@@ -211,12 +216,200 @@ def ensure_columns(conn: sqlite3.Connection | None = None) -> list[str]:
             if "PRIMARY KEY" in dtype:
                 continue
             conn.execute(f"ALTER TABLE jobs ADD COLUMN {col} {dtype}")
+            conn.commit()  # commit each column individually so partial crashes don't corrupt schema
             added.append(col)
 
-    if added:
-        conn.commit()
-
     return added
+
+
+def ensure_coursework_table(conn: sqlite3.Connection | None = None) -> None:
+    """Create the hidden coursework knowledge table if it does not exist."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS coursework (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            school          TEXT,
+            course_code     TEXT,
+            course_title    TEXT,
+            subject_area    TEXT,
+            term            TEXT,
+            status          TEXT,
+            credits         REAL,
+            grade           TEXT,
+            source          TEXT,
+            notes           TEXT,
+            skills          TEXT,
+            raw_text        TEXT,
+            created_at      TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+
+
+def _infer_course_skills(entry: dict) -> list[str]:
+    """Infer a compact skill tag list from coursework metadata."""
+    text = " ".join(
+        str(entry.get(key, "")).lower()
+        for key in ("school", "course_code", "course_title", "subject_area", "notes", "raw_text")
+    )
+
+    rules: list[tuple[tuple[str, ...], list[str]]] = [
+        (("accounting", "taxation", "finance", "financial"), ["accounting", "financial records", "reconciliation"]),
+        (("business communications", "business english", "composition", "technical writing", "writing"), ["professional writing", "documentation", "communication"]),
+        (("information systems", "computer", "information technology", "is 101"), ["information systems", "digital workflows", "business software"]),
+        (("marketing",), ["marketing", "customer awareness", "communication"]),
+        (("management", "operations", "entrepreneurship", "legal environment", "personal finance"), ["business operations", "management", "compliance", "planning"]),
+        (("public health", "health science", "health and wellness", "community health", "epidemiology", "disease", "public health administration", "community and environmental health", "health education", "substance abuse"), ["public health", "health education", "community services", "program support"]),
+        (("nutrition", "medical terminology", "anatomy", "physiology", "disability"), ["health literacy", "human services", "wellness"]),
+        (("biostat", "statistics"), ["data analysis", "statistics", "research literacy"]),
+        (("biology", "chemistry"), ["scientific reasoning", "lab methods", "quantitative reasoning"]),
+        (("psychology", "human diversity", "history", "culture", "arts", "music", "new testament"), ["interpersonal communication", "cultural awareness", "behavioral insight"]),
+        (("precalculus", "math"), ["quantitative reasoning", "problem solving"]),
+        (("swimming", "strength training"), ["physical fitness", "discipline", "wellness"]),
+        (("nevadafit", "welcome"), ["orientation", "college readiness", "self-management"]),
+    ]
+
+    tags: list[str] = []
+    for needles, inferred in rules:
+        if any(needle in text for needle in needles):
+            tags.extend(inferred)
+
+    if not tags:
+        tags = ["academic knowledge", "general problem solving"]
+
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for tag in tags:
+        if tag not in seen:
+            seen.add(tag)
+            ordered.append(tag)
+    return ordered[:6]
+
+
+def _normalize_coursework_entry(entry: dict, now: str) -> dict:
+    """Normalize one coursework row before persisting it."""
+    normalized = {
+        "school": entry.get("school"),
+        "course_code": entry.get("course_code"),
+        "course_title": entry.get("course_title"),
+        "subject_area": entry.get("subject_area"),
+        "term": entry.get("term"),
+        "status": entry.get("status") or entry.get("course_status"),
+        "credits": entry.get("credits"),
+        "grade": entry.get("grade"),
+        "source": entry.get("source"),
+        "notes": entry.get("notes"),
+        "skills": entry.get("skills"),
+        "raw_text": entry.get("raw_text"),
+        "created_at": entry.get("created_at") or now,
+    }
+
+    if not normalized["skills"]:
+        normalized["skills"] = json.dumps(_infer_course_skills(normalized), ensure_ascii=True)
+    elif isinstance(normalized["skills"], list):
+        normalized["skills"] = json.dumps(normalized["skills"], ensure_ascii=True)
+
+    return normalized
+
+
+def _seed_coursework_path() -> Path:
+    return Path(__file__).parent / "config" / "coursework.seed.json"
+
+
+def load_coursework_seed() -> list[dict]:
+    """Load bundled coursework seed data from the package config directory."""
+    path = _seed_coursework_path()
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    if isinstance(data, dict):
+        data = data.get("coursework") or data.get("courses") or []
+    return [row for row in data if isinstance(row, dict)]
+
+
+def seed_coursework_if_empty(conn: sqlite3.Connection | None = None) -> int:
+    """Populate coursework knowledge from the bundled seed file if empty."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_coursework_table(conn)
+    count = conn.execute("SELECT COUNT(*) FROM coursework").fetchone()[0]
+    if count:
+        return 0
+
+    seed_rows = load_coursework_seed()
+    if not seed_rows:
+        return 0
+
+    return replace_coursework(seed_rows, conn=conn)
+
+
+def replace_coursework(entries: list[dict], conn: sqlite3.Connection | None = None) -> int:
+    """Replace all stored coursework rows with a new set of entries."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_coursework_table(conn)
+    conn.execute("DELETE FROM coursework")
+
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    for entry in entries:
+        normalized = _normalize_coursework_entry(entry, now)
+        conn.execute(
+            """
+            INSERT INTO coursework (
+                school, course_code, course_title, subject_area,
+                term, status, credits, grade, source, notes, skills, raw_text, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                normalized.get("school"),
+                normalized.get("course_code"),
+                normalized.get("course_title"),
+                normalized.get("subject_area"),
+                normalized.get("term"),
+                normalized.get("status"),
+                normalized.get("credits"),
+                normalized.get("grade"),
+                normalized.get("source"),
+                normalized.get("notes"),
+                normalized.get("skills"),
+                normalized.get("raw_text"),
+                normalized.get("created_at"),
+            ),
+        )
+        inserted += 1
+
+    conn.commit()
+    return inserted
+
+
+def get_coursework(conn: sqlite3.Connection | None = None) -> list[dict]:
+    """Return stored coursework rows sorted newest-last within each school."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_coursework_table(conn)
+    rows = conn.execute(
+        """
+        SELECT school, course_code, course_title, subject_area, term, status, credits,
+               grade, source, notes, skills, raw_text, created_at
+        FROM coursework
+        ORDER BY school, term, course_title
+        """
+    ).fetchall()
+
+    if not rows:
+        return []
+
+    columns = rows[0].keys()
+    return [dict(zip(columns, row)) for row in rows]
 
 
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:
@@ -391,6 +584,11 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
             "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
         ),
         "tailored": "tailored_resume_path IS NOT NULL",
+        "pending_cover": (
+            "fit_score >= ? AND full_description IS NOT NULL "
+            "AND tailored_resume_path IS NOT NULL AND cover_letter_path IS NULL "
+            "AND COALESCE(cover_attempts, 0) < 5"
+        ),
         "pending_apply": (
             "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
             "AND application_url IS NOT NULL"
@@ -410,7 +608,7 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         where += " AND fit_score >= ?"
         params.append(min_score)
 
-    query = f"SELECT * FROM jobs WHERE {where} ORDER BY fit_score DESC NULLS LAST, discovered_at DESC"
+    query = f"SELECT * FROM jobs WHERE {where} ORDER BY CASE WHEN fit_score IS NULL THEN 1 ELSE 0 END, fit_score DESC, discovered_at DESC"
     if limit > 0:
         query += " LIMIT ?"
         params.append(limit)

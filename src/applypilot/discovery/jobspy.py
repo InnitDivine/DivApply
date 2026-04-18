@@ -9,7 +9,9 @@ search configuration YAML (searches.yaml) rather than being hardcoded.
 
 import logging
 import sqlite3
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from jobspy import scrape_jobs
@@ -84,6 +86,19 @@ def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
     accept = search_cfg.get("location_accept", [])
     reject = search_cfg.get("location_reject_non_remote", [])
     return accept, reject
+
+
+def _load_title_excludes(search_cfg: dict) -> list[str]:
+    """Load title exclusion patterns from search config (case-insensitive)."""
+    return [t.lower() for t in search_cfg.get("exclude_titles", [])]
+
+
+def _title_ok(title: str | None, excludes: list[str]) -> bool:
+    """Return False if title matches any exclude pattern."""
+    if not title or not excludes:
+        return True
+    t = title.lower()
+    return not any(ex in t for ex in excludes)
 
 
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
@@ -195,6 +210,7 @@ def _run_one_search(
     accept_locs: list[str],
     reject_locs: list[str],
     glassdoor_map: dict,
+    title_excludes: list[str] | None = None,
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -274,17 +290,36 @@ def _run_one_search(
         str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None,
         accept_locs, reject_locs,
     ), axis=1)]
-    filtered = before - len(df)
+    filtered_loc = before - len(df)
+
+    # Filter by title exclusion list
+    filtered_title = 0
+    if title_excludes:
+        before_title = len(df)
+        df = df[df.apply(lambda row: _title_ok(
+            str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None,
+            title_excludes,
+        ), axis=1)]
+        filtered_title = before_title - len(df)
 
     conn = get_connection()
     new, existing = store_jobspy_results(conn, df, s["query"])
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
-    if filtered:
-        msg += f", {filtered} filtered (location)"
+    if filtered_loc:
+        msg += f", {filtered_loc} filtered (location)"
+    if filtered_title:
+        msg += f", {filtered_title} filtered (title)"
     log.info(msg)
 
-    return {"new": new, "existing": existing, "errors": 0, "filtered": filtered, "total": before, "label": label}
+    return {
+        "new": new,
+        "existing": existing,
+        "errors": 0,
+        "filtered": filtered_loc + filtered_title,
+        "total": before,
+        "label": label,
+    }
 
 
 # -- Single query search -----------------------------------------------------
@@ -366,8 +401,13 @@ def _full_crawl(
     hours_old: int = 72,
     proxy: str | None = None,
     max_retries: int = 2,
+    workers: int = 4,
 ) -> dict:
-    """Run all search queries from search config across all locations."""
+    """Run all search queries from search config across all locations.
+
+    Workers > 1 runs multiple searches in parallel (network I/O bound).
+    Each worker uses a randomised delay so job boards see staggered requests.
+    """
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
 
@@ -377,6 +417,7 @@ def _full_crawl(
     defaults = search_cfg.get("defaults", {})
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
     accept_locs, reject_locs = _load_location_config(search_cfg)
+    title_excludes = _load_title_excludes(search_cfg)
 
     if tiers:
         queries = [q for q in queries if q.get("tier") in tiers]
@@ -393,34 +434,68 @@ def _full_crawl(
                 "tier": q.get("tier", 0),
             })
 
-    proxy_config = parse_proxy(proxy) if proxy else None
+    # Support per-worker proxy rotation: proxy can be a single string or
+    # a comma-separated list ("host:port:user:pass,host2:port2:user2:pass2").
+    proxy_list: list[dict | None] = [None]
+    if proxy:
+        raw_proxies = [p.strip() for p in proxy.split(",") if p.strip()]
+        proxy_list = [parse_proxy(p) for p in raw_proxies]
 
-    log.info("Full crawl: %d search combinations", len(searches))
+    log.info("Full crawl: %d search combinations | workers=%d | proxies=%d",
+             len(searches), workers, len([p for p in proxy_list if p]))
     log.info("Sites: %s | Results/site: %d | Hours old: %d",
              ", ".join(sites), results_per_site, hours_old)
 
     # Ensure DB schema is ready
     init_db()
 
+    _lock = threading.Lock()
     total_new = 0
     total_existing = 0
     total_errors = 0
     completed = 0
 
-    for s in searches:
-        result = _run_one_search(
+    def _run_search(idx_search: tuple[int, dict]) -> dict:
+        import random
+        idx, s = idx_search
+        # Round-robin proxy assignment per search
+        proxy_cfg = proxy_list[idx % len(proxy_list)]
+        # Stagger start times so workers don't all hit the same site at once
+        time.sleep(random.uniform(0, 1.5) * (idx % workers))
+        return _run_one_search(
             s, sites, results_per_site, hours_old,
-            proxy_config, defaults, max_retries,
+            proxy_cfg, defaults, max_retries,
             accept_locs, reject_locs, glassdoor_map,
+            title_excludes,
         )
-        completed += 1
-        total_new += result["new"]
-        total_existing += result["existing"]
-        total_errors += result["errors"]
 
-        if completed % 5 == 0 or completed == len(searches):
-            log.info("Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
-                     completed, len(searches), total_new, total_existing, total_errors)
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="jobspy") as pool:
+            futures = {
+                pool.submit(_run_search, (i, s)): s
+                for i, s in enumerate(searches)
+            }
+            for future in as_completed(futures):
+                result = future.result()
+                with _lock:
+                    total_new += result["new"]
+                    total_existing += result["existing"]
+                    total_errors += result["errors"]
+                    completed += 1
+                    if completed % 5 == 0 or completed == len(searches):
+                        log.info("Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
+                                 completed, len(searches), total_new, total_existing, total_errors)
+    else:
+        for i, s in enumerate(searches):
+            result = _run_search((i, s))
+            total_new += result["new"]
+            total_existing += result["existing"]
+            total_errors += result["errors"]
+            completed += 1
+            if completed % 5 == 0 or completed == len(searches):
+                log.info("Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
+                         completed, len(searches), total_new, total_existing, total_errors)
 
     # Final stats
     conn = get_connection()
@@ -440,7 +515,7 @@ def _full_crawl(
 
 # -- Public entry point ------------------------------------------------------
 
-def run_discovery(cfg: dict | None = None) -> dict:
+def run_discovery(cfg: dict | None = None, workers: int = 4) -> dict:
     """Main entry point for JobSpy-based job discovery.
 
     Loads search queries and locations from the user's search config YAML,
@@ -467,6 +542,8 @@ def run_discovery(cfg: dict | None = None) -> dict:
     tiers = cfg.get("tiers")
     locations = cfg.get("location_labels")
 
+    crawl_workers = cfg.get("defaults", {}).get("workers", workers)
+
     return _full_crawl(
         search_cfg=cfg,
         tiers=tiers,
@@ -475,4 +552,5 @@ def run_discovery(cfg: dict | None = None) -> dict:
         results_per_site=results_per_site,
         hours_old=hours_old,
         proxy=proxy,
+        workers=crawl_workers,
     )

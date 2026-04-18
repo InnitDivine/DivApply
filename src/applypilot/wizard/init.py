@@ -1,4 +1,4 @@
-"""ApplyPilot first-time setup wizard.
+"""DivApply first-time setup wizard.
 
 Interactive flow that creates ~/.applypilot/ with:
   - resume.txt (and optionally resume.pdf)
@@ -80,7 +80,7 @@ def _setup_resume() -> None:
 
 def _setup_profile() -> dict:
     """Walk through profile questions and return a nested profile dict."""
-    console.print(Panel("[bold]Step 2: Profile[/bold]\nTell ApplyPilot about yourself. This powers scoring, tailoring, and auto-fill."))
+    console.print(Panel("[bold]Step 2: Profile[/bold]\nTell DivApply about yourself. This powers scoring, tailoring, and auto-fill."))
 
     profile: dict = {}
 
@@ -206,7 +206,7 @@ def _setup_searches() -> None:
 
     # Build YAML content
     lines = [
-        "# ApplyPilot search configuration",
+        "# DivApply search configuration",
         "# Edit this file to refine your job search queries.",
         "",
         "defaults:",
@@ -242,7 +242,7 @@ def _setup_ai_features() -> None:
     ))
 
     if not Confirm.ask("Enable AI scoring and resume tailoring?", default=True):
-        console.print("[dim]Discovery-only mode. You can configure AI later with [bold]applypilot init[/bold].[/dim]")
+        console.print("[dim]Discovery-only mode. You can configure AI later with [bold]divapply init[/bold].[/dim]")
         return
 
     console.print("Supported providers: [bold]Gemini[/bold] (recommended, free tier), OpenAI, local (Ollama/llama.cpp)")
@@ -252,7 +252,7 @@ def _setup_ai_features() -> None:
         default="gemini",
     )
 
-    env_lines = ["# ApplyPilot configuration", ""]
+    env_lines = ["# DivApply configuration", ""]
 
     if provider == "gemini":
         api_key = Prompt.ask("Gemini API key (from aistudio.google.com)")
@@ -280,25 +280,27 @@ def _setup_ai_features() -> None:
 # ---------------------------------------------------------------------------
 
 def _setup_auto_apply() -> None:
-    """Configure autonomous job application (requires Claude Code CLI)."""
+    """Configure autonomous job application (requires an apply agent CLI)."""
     console.print(Panel(
         "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
-        "ApplyPilot can autonomously fill and submit job applications\n"
-        "using Claude Code as the browser agent."
+        "DivApply can autonomously fill and submit job applications\n"
+        "using Codex or Claude Code as the browser agent."
     ))
 
     if not Confirm.ask("Enable autonomous job applications?", default=True):
-        console.print("[dim]You can apply manually using the tailored resumes ApplyPilot generates.[/dim]")
+        console.print("[dim]You can apply manually using the tailored resumes DivApply generates.[/dim]")
         return
 
-    # Check for Claude Code CLI
-    if shutil.which("claude"):
-        console.print("[green]Claude Code CLI detected.[/green]")
+    # Check for an apply agent CLI
+    from applypilot.config import get_apply_backend, get_apply_backend_label
+    backend = get_apply_backend()
+    if backend:
+        console.print(f"[green]{get_apply_backend_label(backend)} detected.[/green]")
     else:
         console.print(
-            "[yellow]Claude Code CLI not found on PATH.[/yellow]\n"
-            "Install it from: [bold]https://claude.ai/code[/bold]\n"
-            "Auto-apply won't work until Claude Code is installed."
+            "[yellow]No supported apply agent CLI found on PATH.[/yellow]\n"
+            "Install Codex or Claude Code.\n"
+            "Auto-apply won't work until one of them is installed."
         )
 
     # Optional: CapSolver for CAPTCHAs
@@ -329,10 +331,10 @@ def run_wizard() -> None:
     console.print()
     console.print(
         Panel.fit(
-            "[bold green]ApplyPilot Setup Wizard[/bold green]\n\n"
+            "[bold green]DivApply Setup Wizard[/bold green]\n\n"
             "This will create your configuration at:\n"
             f"  [cyan]{APP_DIR}[/cyan]\n\n"
-            "You can re-run this anytime with [bold]applypilot init[/bold].",
+            "You can re-run this anytime with [bold]divapply init[/bold].",
             border_style="green",
         )
     )
@@ -356,7 +358,7 @@ def run_wizard() -> None:
     _setup_ai_features()
     console.print()
 
-    # Step 5: Auto-apply (Claude Code detection)
+    # Step 5: Auto-apply (apply agent detection)
     _setup_auto_apply()
     console.print()
 
@@ -378,9 +380,9 @@ def run_wizard() -> None:
 
     unlock_hint = ""
     if tier == 1:
-        unlock_hint = "\n[dim]To unlock Tier 2: configure an LLM API key (re-run [bold]applypilot init[/bold]).[/dim]"
+        unlock_hint = "\n[dim]To unlock Tier 2: configure an LLM API key (re-run [bold]divapply init[/bold]).[/dim]"
     elif tier == 2:
-        unlock_hint = "\n[dim]To unlock Tier 3: install Claude Code CLI + Chrome.[/dim]"
+        unlock_hint = "\n[dim]To unlock Tier 3: install Codex or Claude Code + Chrome.[/dim]"
 
     console.print(
         Panel.fit(

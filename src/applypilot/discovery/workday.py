@@ -50,6 +50,21 @@ def _load_location_filter(search_cfg: dict | None = None):
     return accept, reject
 
 
+def _load_title_excludes(search_cfg: dict | None = None) -> list[str]:
+    """Load title exclusion patterns from search config (case-insensitive)."""
+    if search_cfg is None:
+        search_cfg = config.load_search_config()
+    return [t.lower() for t in search_cfg.get("exclude_titles", [])]
+
+
+def _title_ok(title: str | None, excludes: list[str]) -> bool:
+    """Return False if title matches any exclude pattern."""
+    if not title or not excludes:
+        return True
+    t = title.lower()
+    return not any(ex in t for ex in excludes)
+
+
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
     """Check if a job location passes the user's location filter."""
     if not location:
@@ -347,6 +362,7 @@ def _process_one(
     location_filter: bool,
     accept_locs: list[str],
     reject_locs: list[str],
+    title_excludes: list[str] | None = None,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -362,6 +378,18 @@ def _process_one(
         log.error("%s: ERROR searching '%s': %s", emp["name"], search_text, e)
         return {"employer": emp["name"], "query": search_text,
                 "found": 0, "new": 0, "existing": 0, "error": str(e)}
+
+    if not jobs:
+        return {"employer": emp["name"], "query": search_text,
+                "found": 0, "new": 0, "existing": 0}
+
+    # Filter by excluded titles before fetching details (saves time)
+    if title_excludes:
+        before = len(jobs)
+        jobs = [j for j in jobs if _title_ok(j.get("title"), title_excludes)]
+        filtered = before - len(jobs)
+        if filtered:
+            log.info("%s: filtered %d jobs (excluded title)", emp["name"], filtered)
 
     if not jobs:
         return {"employer": emp["name"], "query": search_text,
@@ -390,6 +418,7 @@ def scrape_employers(
     max_results: int = 0,
     accept_locs: list[str] | None = None,
     reject_locs: list[str] | None = None,
+    title_excludes: list[str] | None = None,
     workers: int = 1,
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
@@ -423,7 +452,7 @@ def scrape_employers(
             futures = {
                 pool.submit(
                     _process_one, key, employers, search_text,
-                    location_filter, accept_locs, reject_locs,
+                    location_filter, accept_locs, reject_locs, title_excludes,
                 ): key
                 for key in valid_keys
             }
@@ -446,7 +475,7 @@ def scrape_employers(
         for key in valid_keys:
             result = _process_one(
                 key, employers, search_text,
-                location_filter, accept_locs, reject_locs,
+                location_filter, accept_locs, reject_locs, title_excludes,
             )
             completed += 1
             total_new += result["new"]
@@ -493,6 +522,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     search_cfg = config.load_search_config()
     queries_cfg = search_cfg.get("queries", [])
     accept_locs, reject_locs = _load_location_filter(search_cfg)
+    title_excludes = _load_title_excludes(search_cfg)
 
     # Default to tier 1-2 queries for workday scraping
     max_tier = search_cfg.get("workday_max_tier", 2)
@@ -526,6 +556,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
             location_filter=location_filter,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
+            title_excludes=title_excludes,
             workers=workers,
         )
         grand_new += result["new"]
