@@ -1,4 +1,4 @@
-"""Apply orchestration: acquire jobs, spawn Claude Code sessions, track results.
+﻿"""Apply orchestration: acquire jobs, spawn Claude Code sessions, track results.
 
 This is the main entry point for the apply pipeline. It pulls jobs from
 the database, launches Chrome + Claude Code for each one, parses the
@@ -24,16 +24,16 @@ from pathlib import Path
 from rich.console import Console
 from rich.live import Live
 
-from applypilot import config
-from applypilot.database import get_connection
-from applypilot.apply import chrome, dashboard, prompt as prompt_mod
-from applypilot.apply.chrome import (
+from divapply import config
+from divapply.database import get_connection
+from divapply.apply import chrome, dashboard, prompt as prompt_mod
+from divapply.apply.chrome import (
     launch_chrome, cleanup_worker, kill_all_chrome,
     reset_worker_dir, cleanup_on_exit, _kill_process_tree,
     setup_worker_profile,
     BASE_CDP_PORT,
 )
-from applypilot.apply.dashboard import (
+from divapply.apply.dashboard import (
     init_worker, update_state, add_event, get_state,
     render_full, get_totals,
 )
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 # Blocked sites loaded from config/sites.yaml
 def _load_blocked():
-    from applypilot.config import load_blocked_sites
+    from divapply.config import load_blocked_sites
     return load_blocked_sites()
 
 # How often to poll the DB when the queue is empty (seconds)
@@ -166,7 +166,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             return None
 
         # Skip manual ATS sites (unsolvable CAPTCHAs)
-        from applypilot.config import is_manual_ats
+        from divapply.config import is_manual_ats
         apply_url = row["application_url"] or row["url"]
         if is_manual_ats(apply_url):
             conn.execute(
@@ -774,7 +774,7 @@ def main(limit: int = 1, target_url: str | None = None,
             refresh_thread.start()
 
             if workers == 1:
-                # Single worker — run directly in main thread
+                # Single worker â€” run directly in main thread
                 total_applied, total_failed = worker_loop(
                     worker_id=0,
                     limit=effective_limit,
@@ -785,7 +785,7 @@ def main(limit: int = 1, target_url: str | None = None,
                     dry_run=dry_run,
                 )
             else:
-                # Multi-worker — distribute limit across workers
+                # Multi-worker â€” distribute limit across workers
                 if effective_limit:
                     base = effective_limit // workers
                     extra = effective_limit % workers
@@ -936,7 +936,7 @@ def _build_agent_command(
     ]
 
     if (
-        os.environ.get("APPLYPILOT_CODEX_OSS", "").strip().lower() in {"1", "true", "yes", "on"}
+        os.environ.get("DIVAPPLY_CODEX_OSS", "").strip().lower() in {"1", "true", "yes", "on"}
         or ":" in model
     ):
         codex_args.append("--oss")
@@ -953,7 +953,7 @@ def _build_agent_command(
         if server_name == "playwright":
             codex_args.extend(["-c", f"{prefix}.required=true"])
 
-    template = os.environ.get("APPLYPILOT_CODEX_CMD", "").strip()
+    template = os.environ.get("DIVAPPLY_CODEX_CMD", "").strip()
     if template:
         rendered = template.format(
             model=model,
@@ -1401,3 +1401,4 @@ def main(limit: int = 1, target_url: str | None = None,
     finally:
         _stop_event.set()
         kill_all_chrome()
+

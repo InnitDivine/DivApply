@@ -1,4 +1,4 @@
-"""Text-to-PDF conversion for tailored resumes and cover letters.
+﻿"""Text-to-PDF conversion for tailored resumes and cover letters.
 
 Parses the structured text resume format, renders via an HTML/CSS template,
 and exports to PDF using headless Chromium via Playwright.
@@ -7,12 +7,12 @@ and exports to PDF using headless Chromium via Playwright.
 import logging
 from pathlib import Path
 
-from applypilot.config import TAILORED_DIR
+from divapply.config import TAILORED_DIR
 
 log = logging.getLogger(__name__)
 
 
-# ── Resume Parser ────────────────────────────────────────────────────────
+# â”€â”€ Resume Parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def parse_resume(text: str) -> dict:
     """Parse a structured text resume into sections.
@@ -31,9 +31,9 @@ def parse_resume(text: str) -> dict:
     # Header: first few lines before the first ALL-CAPS section header.
     # Strategy: section headers always appear AFTER at least one blank line
     # (they never appear on the very first line). This correctly handles:
-    #   - Base resume: "DALTON JOSEPH DE ARRIETA" (all-caps name, line 0) → header
-    #   - Tailored resume: "Dalton Joseph De Arrieta" (mixed-case, line 0) → header
-    #   - Section headers: "PROFESSIONAL SUMMARY", "SUMMARY", etc. → body
+    #   - Base resume: "DALTON JOSEPH DE ARRIETA" (all-caps name, line 0) â†’ header
+    #   - Tailored resume: "Dalton Joseph De Arrieta" (mixed-case, line 0) â†’ header
+    #   - Section headers: "PROFESSIONAL SUMMARY", "SUMMARY", etc. â†’ body
     header_lines: list[str] = []
     body_start = 0
     found_blank = False
@@ -213,7 +213,7 @@ def parse_entries(text: str) -> list[dict]:
     return entries
 
 
-# ── HTML Template ────────────────────────────────────────────────────────
+# â”€â”€ HTML Template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_html(resume: dict) -> str:
     """Build professional resume HTML from parsed data.
@@ -235,7 +235,7 @@ def build_html(resume: dict) -> str:
                 return k
         return None
 
-    # Skills — two-column grid
+    # Skills â€” two-column grid
     skills_html = ""
     skills_key = _find_key(sections, "SKILL")
     if skills_key:
@@ -309,7 +309,7 @@ def build_html(resume: dict) -> str:
         if cert_items:
             cert_html = f'<div class="section"><div class="section-title">Certifications &amp; Licenses</div>{cert_items}</div>'
 
-    # Education — parse into structured blocks
+    # Education â€” parse into structured blocks
     edu_html = ""
     edu_key = _find_key(sections, "EDUCATION")
     if edu_key:
@@ -322,7 +322,7 @@ def build_html(resume: dict) -> str:
                 continue
             degree = lines[0]
             school = lines[1] if len(lines) > 1 else ""
-            details = " &nbsp;·&nbsp; ".join(lines[2:]) if len(lines) > 2 else ""
+            details = " &nbsp;Â·&nbsp; ".join(lines[2:]) if len(lines) > 2 else ""
             edu_items += f'''<div class="edu-entry">
   <div class="edu-degree">{degree}</div>
   <div class="edu-school">{school}</div>
@@ -368,7 +368,7 @@ body {{
     background: #fff;
 }}
 
-/* ── Header ── */
+/* â”€â”€ Header â”€â”€ */
 .header {{
     border-bottom: 2px solid #c17f3e;
     padding-bottom: 5px;
@@ -413,7 +413,7 @@ body {{
     text-decoration: none;
 }}
 
-/* ── Sections ── */
+/* â”€â”€ Sections â”€â”€ */
 .section {{
     margin-top: 6px;
 }}
@@ -440,7 +440,7 @@ body {{
     flex-shrink: 0;
 }}
 
-/* ── Summary ── */
+/* â”€â”€ Summary â”€â”€ */
 .summary {{
     font-size: 9pt;
     color: #3a2e22;
@@ -448,7 +448,7 @@ body {{
     font-weight: 300;
 }}
 
-/* ── Skills ── */
+/* â”€â”€ Skills â”€â”€ */
 .skills-grid {{
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -464,7 +464,7 @@ body {{
     color: #4a3728;
 }}
 
-/* ── Experience entries ── */
+/* â”€â”€ Experience entries â”€â”€ */
 .entry {{
     margin-bottom: 4px;
     break-inside: avoid;
@@ -512,7 +512,7 @@ li::marker {{
     color: #c17f3e;
 }}
 
-/* ── Certifications ── */
+/* â”€â”€ Certifications â”€â”€ */
 .cert-item {{
     font-size: 8.5pt;
     line-height: 1.25;
@@ -522,7 +522,7 @@ li::marker {{
     margin-bottom: 3px;
 }}
 
-/* ── Education ── */
+/* â”€â”€ Education â”€â”€ */
 .edu-entry {{
     margin-bottom: 3px;
     padding-left: 8px;
@@ -565,7 +565,7 @@ li::marker {{
 </html>"""
 
 
-# ── Cover Letter HTML Template ───────────────────────────────────────────
+# â”€â”€ Cover Letter HTML Template â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_cover_letter_html(text: str, profile: dict | None = None) -> str:
     """Build a styled cover letter HTML from plain letter text."""
@@ -663,7 +663,7 @@ body {{
 </html>"""
 
 
-# ── PDF Renderer ─────────────────────────────────────────────────────────
+# â”€â”€ PDF Renderer â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def render_pdf(html: str, output_path: str) -> None:
     """Render HTML to PDF using Playwright's headless Chromium.
@@ -687,7 +687,7 @@ def render_pdf(html: str, output_path: str) -> None:
         browser.close()
 
 
-# ── Public API ───────────────────────────────────────────────────────────
+# â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def convert_to_pdf(
     text_path: Path, output_path: Path | None = None, html_only: bool = False,
@@ -715,7 +715,7 @@ def convert_to_pdf(
     if is_cover_letter:
         if profile is None:
             try:
-                from applypilot.config import load_profile
+                from divapply.config import load_profile
                 profile = load_profile()
             except Exception:
                 profile = {}
@@ -786,3 +786,4 @@ def batch_convert(limit: int = 50) -> int:
 
     log.info("Done: %d/%d PDFs generated in %s", converted, len(to_convert), TAILORED_DIR)
     return converted
+

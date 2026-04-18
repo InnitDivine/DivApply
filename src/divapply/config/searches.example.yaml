@@ -1,5 +1,5 @@
-# DivApply search configuration
-# Copy to ~/.applypilot/searches.yaml and customize for your job search.
+﻿# DivApply search configuration
+# Copy to ~/.DivApply/searches.yaml and customize for your job search.
 # The wizard (divapply init) generates a basic version automatically.
 
 # Search queries -- each has a query string and priority tier.
@@ -110,3 +110,4 @@ exclude_titles:
   - "clearance required"
   - "TS/SCI"
   - "principal scientist"
+

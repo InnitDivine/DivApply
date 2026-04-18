@@ -1,4 +1,4 @@
-"""DivApply HTML Dashboard Generator.
+﻿"""DivApply HTML Dashboard Generator.
 
 Generates a self-contained HTML dashboard with:
   - Summary stats (total, enriched, scored, high-fit)
@@ -17,8 +17,8 @@ from pathlib import Path
 
 from rich.console import Console
 
-from applypilot.config import APP_DIR, DB_PATH
-from applypilot.database import get_connection
+from divapply.config import APP_DIR, DB_PATH
+from divapply.database import get_connection
 
 console = Console()
 
@@ -27,7 +27,7 @@ def generate_dashboard(output_path: str | None = None) -> str:
     """Generate an HTML dashboard of all jobs with fit scores.
 
     Args:
-        output_path: Where to write the HTML file. Defaults to ~/.applypilot/dashboard.html.
+        output_path: Where to write the HTML file. Defaults to ~/.divapply/dashboard.html.
 
     Returns:
         Absolute path to the generated HTML file.
@@ -399,8 +399,9 @@ def open_dashboard(output_path: str | None = None) -> None:
     """Generate the dashboard and open it in the default browser.
 
     Args:
-        output_path: Where to write the HTML file. Defaults to ~/.applypilot/dashboard.html.
+        output_path: Where to write the HTML file. Defaults to ~/.divapply/dashboard.html.
     """
     path = generate_dashboard(output_path)
     console.print("[dim]Opening in browser...[/dim]")
     webbrowser.open(f"file:///{path}")
+

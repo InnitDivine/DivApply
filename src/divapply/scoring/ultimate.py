@@ -1,13 +1,13 @@
-"""Ultimate resume generator: mash top-scoring jobs into one general-purpose resume.
+﻿"""Ultimate resume generator: mash top-scoring jobs into one general-purpose resume.
 
 Pulls the N highest-scored jobs from the database, extracts their keywords
 and key requirements, then generates a single ATS-optimized resume that
 covers as many of those roles as possible.
 
 Usage (via CLI):
-    applypilot ultimate              # top 10 jobs, default output
-    applypilot ultimate --top 20     # use top 20 jobs
-    applypilot ultimate --out ~/resume_ultimate.pdf
+    DivApply ultimate              # top 10 jobs, default output
+    DivApply ultimate --top 20     # use top 20 jobs
+    DivApply ultimate --out ~/resume_ultimate.pdf
 """
 
 import json
@@ -15,12 +15,12 @@ import logging
 import time
 from pathlib import Path
 
-from applypilot.config import (
+from divapply.config import (
     APP_DIR, RESUME_PATH, load_profile, load_env, ensure_dirs,
 )
-from applypilot.database import get_connection, init_db
-from applypilot.llm import get_client_for_stage
-from applypilot.scoring.tailor import (
+from divapply.database import get_connection, init_db
+from divapply.llm import get_client_for_stage
+from divapply.scoring.tailor import (
     _build_tailor_prompt,
     extract_json,
     _normalize_resume_json,
@@ -28,7 +28,7 @@ from applypilot.scoring.tailor import (
     _enforce_one_page_shape as _tailor_one_page_shape,
     _sort_experience_recent_first,
 )
-from applypilot.scoring.validator import BANNED_WORDS
+from divapply.scoring.validator import BANNED_WORDS
 
 log = logging.getLogger(__name__)
 
@@ -142,7 +142,7 @@ def generate_ultimate_resume(
     if not jobs:
         raise RuntimeError(
             f"No jobs with score >= {min_score} found in the database. "
-            "Run `applypilot run score` first."
+            "Run `divapply run score` first."
         )
 
     log.info("Building ultimate resume from %d jobs (scores %d-%d)",
@@ -196,7 +196,7 @@ def generate_ultimate_resume(
     # Generate PDF
     pdf_path = None
     try:
-        from applypilot.scoring.pdf import convert_to_pdf
+        from divapply.scoring.pdf import convert_to_pdf
         pdf_result = convert_to_pdf(txt_path, output_path=out_dir / "ultimate_resume.pdf")
         pdf_path = str(pdf_result)
     except Exception as e:
@@ -211,3 +211,4 @@ def generate_ultimate_resume(
         "jobs_used": len(jobs),
         "elapsed": elapsed,
     }
+

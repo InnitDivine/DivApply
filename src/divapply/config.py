@@ -1,15 +1,15 @@
-"""DivApply configuration: paths, platform detection, user data."""
+﻿"""DivApply configuration: paths, platform detection, user data."""
 
 import os
 import platform
 import shutil
 from pathlib import Path
 
-# User data directory â€” all user-specific files live here
-APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
+# User data directory Ã¢â‚¬â€ all user-specific files live here
+APP_DIR = Path(os.environ.get("DIVAPPLY_DIR", Path.home() / ".divapply"))
 
 # Core paths
-DB_PATH = APP_DIR / "applypilot.db"
+DB_PATH = APP_DIR / "divapply.db"
 PROFILE_PATH = APP_DIR / "profile.json"
 RESUME_PATH = APP_DIR / "resume.txt"
 RESUME_PDF_PATH = APP_DIR / "resume.pdf"
@@ -90,19 +90,19 @@ def ensure_dirs() -> None:
 
 
 def load_profile() -> dict:
-    """Load user profile from ~/.applypilot/profile.json."""
+    """Load user profile from ~/.divapply/profile.json."""
     import json
 
     if not PROFILE_PATH.exists():
         raise FileNotFoundError(
-            f"Profile not found at {PROFILE_PATH}. Run `applypilot init` first."
+            f"Profile not found at {PROFILE_PATH}. Run `divapply init` first."
         )
     profile = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
 
     # Hidden coursework knowledge is stored in SQLite so it can inform
     # scoring/tailoring without being exposed in the generated resume text.
     try:
-        from applypilot.database import get_coursework, load_coursework_seed
+        from divapply.database import get_coursework, load_coursework_seed
 
         coursework = get_coursework()
         if not coursework:
@@ -173,7 +173,7 @@ def _summarize_coursework_skills(coursework: list[dict]) -> list[str]:
 
 
 def load_search_config() -> dict:
-    """Load search configuration from ~/.applypilot/searches.yaml."""
+    """Load search configuration from ~/.divapply/searches.yaml."""
     import yaml
 
     if not SEARCH_CONFIG_PATH.exists():
@@ -236,7 +236,7 @@ DEFAULTS = {
 
 
 def load_env() -> None:
-    """Load environment variables from ~/.applypilot/.env if it exists."""
+    """Load environment variables from ~/.divapply/.env if it exists."""
     from dotenv import load_dotenv
 
     if ENV_PATH.exists():
@@ -281,7 +281,7 @@ def get_available_apply_backends() -> dict[str, str]:
 
 def get_apply_backend(preferred: str | None = None) -> str | None:
     """Resolve which apply backend to use."""
-    requested = preferred or os.environ.get("APPLYPILOT_APPLY_BACKEND")
+    requested = preferred or os.environ.get("DIVAPPLY_APPLY_BACKEND")
     available = get_available_apply_backends()
     if requested:
         requested = requested.strip().lower()
@@ -301,7 +301,7 @@ def get_apply_backend_label(backend: str | None) -> str:
 
 def get_apply_browser(preferred: str | None = None) -> str:
     """Resolve which Playwright MCP browser channel to use."""
-    requested = preferred or os.environ.get("APPLYPILOT_BROWSER", "firefox")
+    requested = preferred or os.environ.get("DIVAPPLY_BROWSER", "firefox")
     browser = requested.strip().lower()
     return browser if browser in APPLY_BROWSER_LABELS else "firefox"
 
@@ -348,17 +348,17 @@ def check_tier(required: int, feature: str) -> None:
     missing: list[str] = []
 
     if required >= 2 and not any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
-        missing.append("LLM API key — run [bold]applypilot init[/bold] or set GEMINI_API_KEY")
+        missing.append("LLM API key â€” run [bold]divapply init[/bold] or set GEMINI_API_KEY")
     if required >= 3:
         if get_apply_backend() is None:
-            missing.append("Apply agent CLI — install Codex or Claude Code for auto-apply")
+            missing.append("Apply agent CLI â€” install Codex or Claude Code for auto-apply")
         if shutil.which("npx") is None:
-            missing.append("Node.js / npx — install Node.js 18+ for Playwright MCP")
+            missing.append("Node.js / npx â€” install Node.js 18+ for Playwright MCP")
         if get_apply_browser() == "chrome":
             try:
                 get_chrome_path()
             except FileNotFoundError:
-                missing.append("Chrome/Chromium — install or set CHROME_PATH")
+                missing.append("Chrome/Chromium â€” install or set CHROME_PATH")
 
     console.print(
         f"\n[red]'{feature}' requires {TIER_LABELS.get(required, f'Tier {required}')} (Tier {required}).[/red]\n"
@@ -370,3 +370,4 @@ def check_tier(required: int, feature: str) -> None:
             console.print(f"  - {item}")
     console.print()
     raise SystemExit(1)
+

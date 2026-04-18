@@ -1,4 +1,4 @@
-"""Detail page enrichment: scrapes full descriptions and apply URLs.
+﻿"""Detail page enrichment: scrapes full descriptions and apply URLs.
 
 For each job URL in the database, navigates to the detail page and extracts:
   - full_description: the complete job posting text
@@ -22,14 +22,14 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from applypilot import config
-from applypilot.config import DB_PATH
-from applypilot.database import get_connection, init_db, ensure_columns
-from applypilot.llm import get_client
+from divapply import config
+from divapply.config import DB_PATH
+from divapply.database import get_connection, init_db, ensure_columns
+from divapply.llm import get_client
 
 log = logging.getLogger(__name__)
 
-# ── Title-based pre-filter ──────────────────────────────────────────────
+# â”€â”€ Title-based pre-filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # Jobs whose titles match these patterns are clearly irrelevant and should
 # be skipped before wasting LLM tokens or scrape time on them.
 # Case-insensitive substring matching.
@@ -39,7 +39,7 @@ _TITLE_REJECT_KEYWORDS = [
     "fire engineer", "fire marshal", "dispatcher", "911",
     "correctional officer", "probation officer", "deputy sheriff",
     "detention", "sworn",
-    # Engineering (civil, structural, electrical, etc.) — not IT
+    # Engineering (civil, structural, electrical, etc.) â€” not IT
     "civil engineer", "structural engineer", "electrical engineer",
     "mechanical engineer", "traffic engineer", "city engineer",
     "water engineer", "environmental engineer", "transportation engineer",
@@ -125,7 +125,7 @@ def set_proxy(proxy_str: str | None):
     """Set proxy config from an external caller."""
     global _PROXY_CONFIG
     if proxy_str:
-        from applypilot.discovery.jobspy import parse_proxy
+        from divapply.discovery.jobspy import parse_proxy
         _PROXY_CONFIG = parse_proxy(proxy_str)
 
 
@@ -133,7 +133,7 @@ def set_proxy(proxy_str: str | None):
 
 def _load_base_urls() -> dict[str, str | None]:
     """Load site base URLs from config/sites.yaml."""
-    from applypilot.config import load_base_urls
+    from divapply.config import load_base_urls
     return load_base_urls()
 
 
@@ -552,7 +552,7 @@ def extract_with_llm(page, url: str) -> dict:
         elapsed = time.time() - t0
         log.info("LLM: %d chars in, %.1fs", len(prompt), elapsed)
 
-        from applypilot.discovery.smartextract import extract_json
+        from divapply.discovery.smartextract import extract_json
         result = extract_json(raw)
         desc = result.get("full_description")
         apply_url = result.get("application_url")
@@ -795,7 +795,7 @@ def _run_detail_scraper(
         log.info("No pending jobs to scrape.")
         return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
 
-    # ── Title pre-filter: skip obviously irrelevant jobs ──────────────
+    # â”€â”€ Title pre-filter: skip obviously irrelevant jobs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     filtered_rows = []
     skipped = 0
     for row in rows:
@@ -1000,3 +1000,4 @@ def run_enrichment(limit: int = 100, workers: int = 1) -> dict:
     stats = _run_detail_scraper(conn, max_per_site=limit, workers=workers)
 
     return stats
+

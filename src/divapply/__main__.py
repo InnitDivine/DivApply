@@ -1,5 +1,5 @@
 """Enable `python -m divapply`."""
 
-from applypilot.cli import app
+from divapply.cli import app
 
 app()

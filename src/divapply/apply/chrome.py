@@ -1,4 +1,4 @@
-"""Chrome lifecycle management for apply workers.
+﻿"""Chrome lifecycle management for apply workers.
 
 Handles launching an isolated Chrome instance with remote debugging,
 worker profile setup/cloning, and cross-platform process cleanup.
@@ -15,11 +15,11 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 
-from applypilot import config
+from divapply import config
 
 logger = logging.getLogger(__name__)
 
-# CDP port base — each worker uses BASE_CDP_PORT + worker_id
+# CDP port base â€” each worker uses BASE_CDP_PORT + worker_id
 BASE_CDP_PORT = 9222
 
 # Track Chrome processes per worker for cleanup
@@ -357,3 +357,4 @@ def cleanup_on_exit() -> None:
 
     # Sweep base port for any orphan
     _kill_on_port(BASE_CDP_PORT)
+

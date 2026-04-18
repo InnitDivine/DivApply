@@ -1,4 +1,4 @@
-"""DivApply CLI — the main entry point."""
+﻿"""DivApply CLI â€” the main entry point."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from applypilot import __version__
+from divapply import __version__
 
 logging.basicConfig(
     level=logging.INFO,
@@ -38,8 +38,8 @@ VALID_STAGES = ("discover", "enrich", "score", "tailor", "cover", "pdf")
 
 def _bootstrap() -> None:
     """Common setup: load env, create dirs, init DB."""
-    from applypilot.config import load_env, ensure_dirs
-    from applypilot.database import init_db
+from divapply.config import load_env, ensure_dirs
+from divapply.database import init_db
 
     load_env()
     ensure_dirs()
@@ -65,13 +65,13 @@ def main(
         is_eager=True,
     ),
 ) -> None:
-    """DivApply — AI-powered end-to-end job application pipeline."""
+    """DivApply â€” AI-powered end-to-end job application pipeline."""
 
 
 @app.command()
 def init() -> None:
     """Run the first-time setup wizard (profile, resume, search config)."""
-    from applypilot.wizard.init import run_wizard
+    from divapply.wizard.init import run_wizard
 
     run_wizard()
 
@@ -83,7 +83,7 @@ def import_coursework(
     """Import coursework knowledge into the hidden SQLite coursework table."""
     _bootstrap()
 
-    from applypilot.database import replace_coursework
+    from divapply.database import replace_coursework
 
     entries: list[dict] = []
     suffix = path.suffix.lower()
@@ -178,7 +178,7 @@ def run(
     """Run pipeline stages: discover, enrich, score, tailor, cover, pdf."""
     _bootstrap()
 
-    from applypilot.pipeline import run_pipeline
+    from divapply.pipeline import run_pipeline
 
     stage_list = stages if stages else ["all"]
 
@@ -194,7 +194,7 @@ def run(
     # Gate AI stages behind Tier 2
     llm_stages = {"score", "tailor", "cover"}
     if any(s in stage_list for s in llm_stages) or "all" in stage_list:
-        from applypilot.config import check_tier
+        from divapply.config import check_tier
         check_tier(2, "AI scoring/tailoring")
 
     # Validate the --validation flag value
@@ -241,7 +241,7 @@ def apply(
     """Launch auto-apply to submit job applications."""
     _bootstrap()
 
-    from applypilot.config import (
+    from divapply.config import (
         PROFILE_PATH as _profile_path,
         check_tier,
         get_apply_backend,
@@ -250,24 +250,24 @@ def apply(
         get_apply_browser_label,
         get_chrome_path,
     )
-    from applypilot.database import get_connection
+    from divapply.database import get_connection
 
     # --- Utility modes (no browser agent needed) ---
 
     if mark_applied:
-        from applypilot.apply.launcher import mark_job
+        from divapply.apply.launcher import mark_job
         mark_job(mark_applied, "applied")
         console.print(f"[green]Marked as applied:[/green] {mark_applied}")
         return
 
     if mark_failed:
-        from applypilot.apply.launcher import mark_job
+        from divapply.apply.launcher import mark_job
         mark_job(mark_failed, "failed", reason=fail_reason)
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 
     if reset_failed:
-        from applypilot.apply.launcher import reset_failed as do_reset
+        from divapply.apply.launcher import reset_failed as do_reset
         count = do_reset()
         console.print(f"[green]Reset {count} failed job(s) for retry.[/green]")
         return
@@ -301,7 +301,7 @@ def apply(
     if not _profile_path.exists():
         console.print(
             "[red]Profile not found.[/red]\n"
-            "Run [bold]applypilot init[/bold] to create your profile first."
+            "Run [bold]divapply init[/bold] to create your profile first."
         )
         raise typer.Exit(code=1)
 
@@ -314,12 +314,12 @@ def apply(
         if ready == 0:
             console.print(
                 "[red]No tailored resumes ready.[/red]\n"
-                "Run [bold]applypilot run score tailor[/bold] first to prepare applications."
+                "Run [bold]divapply run score tailor[/bold] first to prepare applications."
             )
             raise typer.Exit(code=1)
 
     if gen:
-        from applypilot.apply.launcher import gen_prompt, get_manual_command
+        from divapply.apply.launcher import gen_prompt, get_manual_command
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
@@ -340,7 +340,7 @@ def apply(
         console.print(f"  {get_manual_command(resolved_backend, resolved_model, prompt_file, mcp_path)}")
         return
 
-    from applypilot.apply.launcher import main as apply_main
+    from divapply.apply.launcher import main as apply_main
 
     effective_limit = limit if limit is not None else (0 if continuous else 1)
 
@@ -375,7 +375,7 @@ def status() -> None:
     """Show pipeline statistics from the database."""
     _bootstrap()
 
-    from applypilot.database import get_stats
+    from divapply.database import get_stats
 
     stats = get_stats()
 
@@ -441,7 +441,7 @@ def dashboard() -> None:
     """Generate and open the HTML dashboard in your browser."""
     _bootstrap()
 
-    from applypilot.view import open_dashboard
+    from divapply.view import open_dashboard
 
     open_dashboard()
 
@@ -450,7 +450,7 @@ def dashboard() -> None:
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
-    from applypilot.config import (
+    from divapply.config import (
         load_env, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
         SEARCH_CONFIG_PATH, ENV_PATH, get_chrome_path,
     )
@@ -468,21 +468,21 @@ def doctor() -> None:
     if PROFILE_PATH.exists():
         results.append(("profile.json", ok_mark, str(PROFILE_PATH)))
     else:
-        results.append(("profile.json", fail_mark, "Run 'applypilot init' to create"))
+        results.append(("profile.json", fail_mark, "Run 'divapply init' to create"))
 
     # Resume
     if RESUME_PATH.exists():
         results.append(("resume.txt", ok_mark, str(RESUME_PATH)))
     elif RESUME_PDF_PATH.exists():
-        results.append(("resume.txt", warn_mark, "Only PDF found — plain-text needed for AI stages"))
+        results.append(("resume.txt", warn_mark, "Only PDF found â€” plain-text needed for AI stages"))
     else:
-        results.append(("resume.txt", fail_mark, "Run 'applypilot init' to add your resume"))
+        results.append(("resume.txt", fail_mark, "Run 'divapply init' to add your resume"))
 
     # Search config
     if SEARCH_CONFIG_PATH.exists():
         results.append(("searches.yaml", ok_mark, str(SEARCH_CONFIG_PATH)))
     else:
-        results.append(("searches.yaml", warn_mark, "Will use example config — run 'applypilot init'"))
+        results.append(("searches.yaml", warn_mark, "Will use example config â€” run 'divapply init'"))
 
     # jobspy (discovery dep installed separately)
     try:
@@ -507,10 +507,10 @@ def doctor() -> None:
         results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
     else:
         results.append(("LLM API key", fail_mark,
-                        "Set GEMINI_API_KEY in ~/.applypilot/.env (run 'applypilot init')"))
+                        "Set GEMINI_API_KEY in ~/.divapply/.env (run 'divapply init')"))
 
     # --- Tier 3 checks ---
-    from applypilot.config import get_apply_backend, get_apply_backend_label, get_available_apply_backends
+    from divapply.config import get_apply_backend, get_apply_backend_label, get_available_apply_backends
     detected_backends = get_available_apply_backends()
     selected_backend = get_apply_backend()
     if detected_backends:
@@ -558,17 +558,17 @@ def doctor() -> None:
     console.print()
 
     # Tier summary
-    from applypilot.config import get_tier, TIER_LABELS
+    from divapply.config import get_tier, TIER_LABELS
     tier = get_tier()
     if selected_backend:
         console.print(f"[dim]  Auto-apply backend: {get_apply_backend_label(selected_backend)}[/dim]")
-    console.print(f"[bold]Current tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]")
+    console.print(f"[bold]Current tier: Tier {tier} â€” {TIER_LABELS[tier]}[/bold]")
 
     if tier == 1:
-        console.print("[dim]  → Tier 2 unlocks: scoring, tailoring, cover letters (needs LLM API key)[/dim]")
-        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
+        console.print("[dim]  â†’ Tier 2 unlocks: scoring, tailoring, cover letters (needs LLM API key)[/dim]")
+        console.print("[dim]  â†’ Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
     elif tier == 2:
-        console.print("[dim]  → Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
+        console.print("[dim]  â†’ Tier 3 unlocks: auto-apply (needs Claude Code CLI + Chrome + Node.js)[/dim]")
 
     console.print()
 
@@ -582,7 +582,7 @@ def prune(
     """Remove low-scoring jobs from the database to reduce clutter."""
     _bootstrap()
 
-    from applypilot.database import get_connection
+    from divapply.database import get_connection
 
     conn = get_connection()
 
@@ -606,7 +606,7 @@ def prune(
     console.print(f"  [bold]Total: {total}[/bold]\n")
 
     if dry_run:
-        console.print("[dim]Dry run — no changes made.[/dim]")
+        console.print("[dim]Dry run â€” no changes made.[/dim]")
         return
 
     if not yes:
@@ -627,13 +627,13 @@ def prune(
 def ultimate(
     top: int = typer.Option(10, "--top", "-n", help="Number of top-scoring jobs to draw from."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score to include."),
-    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output directory (default: ~/.applypilot/)."),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output directory (default: ~/.divapply/)."),
 ) -> None:
     """Generate an ultimate general-purpose resume from your top-scoring jobs."""
     _bootstrap()
 
     from pathlib import Path
-    from applypilot.scoring.ultimate import generate_ultimate_resume
+    from divapply.scoring.ultimate import generate_ultimate_resume
 
     output_dir = Path(out) if out else None
 
@@ -673,7 +673,7 @@ def sync(
     """
     _bootstrap()
 
-    from applypilot.social import sync_profiles
+    from divapply.social import sync_profiles
 
     targets = platform if platform else None
 
@@ -687,7 +687,7 @@ def sync(
 
     console.print("\n[bold blue]Social Profile Sync[/bold blue]")
     if dry_run:
-        console.print("[dim]Dry run — generating content only, no automation.[/dim]")
+        console.print("[dim]Dry run â€” generating content only, no automation.[/dim]")
     else:
         console.print("[dim]Extracting Firefox cookies for login, launching browser...[/dim]")
     console.print()
@@ -714,10 +714,11 @@ def sync(
         console.print()
 
     # Mention the saved snapshot
-    from applypilot.config import APP_DIR as _app_dir
+    from divapply.config import APP_DIR as _app_dir
     console.print(f"[dim]Full content saved to {_app_dir / 'social_sync.json'}[/dim]")
     console.print(f"[dim]Debug screenshots in {_app_dir / 'social_screenshots/'}[/dim]\n")
 
 
 if __name__ == "__main__":
     app()
+

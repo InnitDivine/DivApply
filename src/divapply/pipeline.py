@@ -1,13 +1,13 @@
-"""DivApply Pipeline Orchestrator.
+﻿"""DivApply Pipeline Orchestrator.
 
 Runs pipeline stages in sequence or concurrently (streaming mode).
 
 Usage (via CLI):
-    applypilot run                        # all stages, sequential
-    applypilot run --stream               # all stages, concurrent
-    applypilot run discover enrich        # specific stages
-    applypilot run score tailor cover     # LLM-only stages
-    applypilot run --dry-run              # preview without executing
+    DivApply run                        # all stages, sequential
+    DivApply run --stream               # all stages, concurrent
+    DivApply run discover enrich        # specific stages
+    DivApply run score tailor cover     # LLM-only stages
+    DivApply run --dry-run              # preview without executing
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from applypilot.config import load_env, ensure_dirs
-from applypilot.database import init_db, get_connection, get_stats
+from divapply.config import load_env, ensure_dirs
+from divapply.database import init_db, get_connection, get_stats
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -60,13 +60,13 @@ _UPSTREAM: dict[str, str | None] = {
 # ---------------------------------------------------------------------------
 
 def _run_discover(workers: int = 4) -> dict:
-    """Stage: Job discovery — JobSpy, Workday, and smart-extract scrapers."""
+    """Stage: Job discovery â€” JobSpy, Workday, and smart-extract scrapers."""
     stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
 
     # JobSpy
     console.print(f"  [cyan]JobSpy full crawl (workers={workers})...[/cyan]")
     try:
-        from applypilot.discovery.jobspy import run_discovery
+        from divapply.discovery.jobspy import run_discovery
         run_discovery(workers=workers)
         stats["jobspy"] = "ok"
     except Exception as e:
@@ -77,7 +77,7 @@ def _run_discover(workers: int = 4) -> dict:
     # Workday corporate scraper
     console.print("  [cyan]Workday corporate scraper...[/cyan]")
     try:
-        from applypilot.discovery.workday import run_workday_discovery
+        from divapply.discovery.workday import run_workday_discovery
         run_workday_discovery(workers=workers)
         stats["workday"] = "ok"
     except Exception as e:
@@ -88,7 +88,7 @@ def _run_discover(workers: int = 4) -> dict:
     # Smart extract
     console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
     try:
-        from applypilot.discovery.smartextract import run_smart_extract
+        from divapply.discovery.smartextract import run_smart_extract
         run_smart_extract(workers=workers)
         stats["smartextract"] = "ok"
     except Exception as e:
@@ -100,9 +100,9 @@ def _run_discover(workers: int = 4) -> dict:
 
 
 def _run_enrich(workers: int = 1) -> dict:
-    """Stage: Detail enrichment — scrape full descriptions and apply URLs."""
+    """Stage: Detail enrichment â€” scrape full descriptions and apply URLs."""
     try:
-        from applypilot.enrichment.detail import run_enrichment
+        from divapply.enrichment.detail import run_enrichment
         run_enrichment(workers=workers)
         return {"status": "ok"}
     except Exception as e:
@@ -111,9 +111,9 @@ def _run_enrich(workers: int = 1) -> dict:
 
 
 def _run_score(prune_below: int = 0) -> dict:
-    """Stage: LLM scoring — assign fit scores 1-10."""
+    """Stage: LLM scoring â€” assign fit scores 1-10."""
     try:
-        from applypilot.scoring.scorer import run_scoring
+        from divapply.scoring.scorer import run_scoring
         result = run_scoring(prune_below=prune_below)
         if result.get("pruned"):
             log.info("Pruned %d low-score jobs after scoring", result["pruned"])
@@ -124,9 +124,9 @@ def _run_score(prune_below: int = 0) -> dict:
 
 
 def _run_tailor(min_score: int = 7, validation_mode: str = "normal") -> dict:
-    """Stage: Resume tailoring — generate tailored resumes for high-fit jobs."""
+    """Stage: Resume tailoring â€” generate tailored resumes for high-fit jobs."""
     try:
-        from applypilot.scoring.tailor import run_tailoring
+        from divapply.scoring.tailor import run_tailoring
         run_tailoring(min_score=min_score, validation_mode=validation_mode, limit=0)
         return {"status": "ok"}
     except Exception as e:
@@ -137,7 +137,7 @@ def _run_tailor(min_score: int = 7, validation_mode: str = "normal") -> dict:
 def _run_cover(min_score: int = 7, validation_mode: str = "normal") -> dict:
     """Stage: Cover letter generation."""
     try:
-        from applypilot.scoring.cover_letter import run_cover_letters
+        from divapply.scoring.cover_letter import run_cover_letters
         run_cover_letters(min_score=min_score, validation_mode=validation_mode)
         return {"status": "ok"}
     except Exception as e:
@@ -146,9 +146,9 @@ def _run_cover(min_score: int = 7, validation_mode: str = "normal") -> dict:
 
 
 def _run_pdf() -> dict:
-    """Stage: PDF conversion — convert tailored resumes and cover letters to PDF."""
+    """Stage: PDF conversion â€” convert tailored resumes and cover letters to PDF."""
     try:
-        from applypilot.scoring.pdf import batch_convert
+        from divapply.scoring.pdf import batch_convert
         batch_convert()
         return {"status": "ok"}
     except Exception as e:
@@ -315,7 +315,7 @@ def _run_stage_streaming(
             # No work right now
             upstream_done = upstream is None or tracker.is_done(upstream)
             if upstream_done:
-                # No work and upstream is done — this stage is finished
+                # No work and upstream is done â€” this stage is finished
                 break
             # Upstream still running, wait and retry
             if stop_event.wait(timeout=_STREAM_POLL_INTERVAL):
@@ -338,7 +338,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
     for name in ordered:
         meta = STAGE_META[name]
         console.print(f"\n{'=' * 70}")
-        console.print(f"  [bold]STAGE: {name}[/bold] — {meta['desc']}")
+        console.print(f"  [bold]STAGE: {name}[/bold] â€” {meta['desc']}")
         console.print(f"  Started: {datetime.now().strftime('%H:%M:%S')}")
         console.print(f"{'=' * 70}")
 
@@ -378,7 +378,7 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
         if status not in ("ok", "partial"):
             errors[name] = status
 
-        console.print(f"\n  Stage '{name}' completed in {elapsed:.1f}s — {status}")
+        console.print(f"\n  Stage '{name}' completed in {elapsed:.1f}s â€” {status}")
 
     total_elapsed = time.time() - pipeline_start
     return {"stages": results, "errors": errors, "elapsed": total_elapsed}
@@ -391,7 +391,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
     stop_event = threading.Event()
     pipeline_start = time.time()
 
-    console.print(f"\n  [bold cyan]STREAMING MODE[/bold cyan] — stages run concurrently")
+    console.print(f"\n  [bold cyan]STREAMING MODE[/bold cyan] â€” stages run concurrently")
     console.print(f"  Poll interval: {_STREAM_POLL_INTERVAL}s\n")
 
     # Mark stages NOT in `ordered` as done so downstream doesn't wait for them
@@ -424,7 +424,7 @@ def _run_streaming(ordered: list[str], min_score: int, workers: int = 1,
                 f"  [green]Completed:[/green] {name} ({elapsed:.1f}s)"
             )
     except KeyboardInterrupt:
-        console.print("\n[yellow]Interrupted — stopping stages...[/yellow]")
+        console.print("\n[yellow]Interrupted â€” stopping stages...[/yellow]")
         stop_event.set()
         for t in threads.values():
             t.join(timeout=10)
@@ -498,7 +498,7 @@ def run_pipeline(
     console.print(f"  DB:        {pre_stats['total']} jobs, {pre_stats['pending_detail']} pending enrichment")
 
     if dry_run:
-        console.print(f"\n  [yellow]DRY RUN[/yellow] — would execute ({mode}):")
+        console.print(f"\n  [yellow]DRY RUN[/yellow] â€” would execute ({mode}):")
         for name in ordered:
             meta = STAGE_META[name]
             console.print(f"    {name:<12s}  {meta['desc']}")
@@ -548,3 +548,4 @@ def run_pipeline(
     console.print(f"{'=' * 70}\n")
 
     return result
+

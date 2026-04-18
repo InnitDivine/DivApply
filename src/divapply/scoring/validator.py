@@ -1,7 +1,7 @@
-"""Resume and cover letter validation: banned words, fabrication detection, structural checks.
+﻿"""Resume and cover letter validation: banned words, fabrication detection, structural checks.
 
 All validation is profile-driven -- no hardcoded personal data. The validator receives
-a profile dict (from applypilot.config.load_profile()) and validates against the user's
+a profile dict (from divapply.config.load_profile()) and validates against the user's
 actual skills, companies, projects, and school.
 
 Validation modes
@@ -17,7 +17,7 @@ import logging
 log = logging.getLogger(__name__)
 
 
-# ── Universal Constants (not personal data) ───────────────────────────────
+# â”€â”€ Universal Constants (not personal data) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 BANNED_WORDS: list[str] = [
     "passionate", "dedicated", "committed to",
@@ -71,7 +71,7 @@ FABRICATION_WATCHLIST: set[str] = {
 REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION"}
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _build_skills_set(profile: dict) -> set[str]:
     """Build the set of allowed skills from the profile's skills_boundary."""
@@ -94,7 +94,7 @@ def sanitize_text(text: str) -> str:
     return text.strip()
 
 
-# ── JSON Field Validation ─────────────────────────────────────────────────
+# â”€â”€ JSON Field Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dict:
     """Validate individual JSON fields from an LLM-generated tailored resume.
@@ -102,10 +102,10 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     Args:
         data:    Parsed JSON from the LLM (title, summary, skills, experience, projects, education).
         profile: User profile dict from load_profile().
-        mode:    Validation strictness — "strict", "normal", or "lenient".
-                 strict  → banned words are errors (trigger retries)
-                 normal  → banned words are warnings (no retry)
-                 lenient → banned words ignored entirely
+        mode:    Validation strictness â€” "strict", "normal", or "lenient".
+                 strict  â†’ banned words are errors (trigger retries)
+                 normal  â†’ banned words are warnings (no retry)
+                 lenient â†’ banned words ignored entirely
 
     Returns:
         {"passed": bool, "errors": list[str], "warnings": list[str]}
@@ -117,7 +117,7 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     if mode == "none":
         return {"passed": True, "errors": [], "warnings": []}
 
-    # Required keys — always checked regardless of mode
+    # Required keys â€” always checked regardless of mode
     # education is injected by code (not LLM), projects can be empty []
     for key in ("title", "summary", "skills", "experience"):
         if key not in data or not data[key]:
@@ -178,7 +178,7 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     if found_leaks:
         errors.append(f"LLM self-talk: '{found_leaks[0]}'")
 
-    # Banned filler words — severity depends on mode
+    # Banned filler words â€” severity depends on mode
     if mode != "lenient":
         found_banned = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", all_text)]
         if found_banned:
@@ -191,7 +191,7 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
 
 
-# ── Full Resume Text Validation ───────────────────────────────────────────
+# â”€â”€ Full Resume Text Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def validate_tailored_resume(text: str, profile: dict, original_text: str = "") -> dict:
     """Programmatic validation of a tailored resume against the user's profile.
@@ -241,7 +241,7 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
         if project.lower() not in text_lower:
             warnings.append(f"Project '{project}' not found -- may have been renamed")
 
-    # 5. Education injected by code — skip school check on LLM text
+    # 5. Education injected by code â€” skip school check on LLM text
 
     # 6. Check contact info preserved (warn, don't error -- we can inject)
     email = personal.get("email", "")
@@ -314,17 +314,17 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     }
 
 
-# ── Cover Letter Validation ──────────────────────────────────────────────
+# â”€â”€ Cover Letter Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def validate_cover_letter(text: str, mode: str = "normal") -> dict:
     """Programmatic validation of a cover letter.
 
     Args:
         text: The cover letter text to validate.
-        mode: Validation strictness — "strict", "normal", or "lenient".
-              strict  → banned words are errors (trigger retries); word limit enforced
-              normal  → banned words are warnings; word limit is soft (+25 words)
-              lenient → banned words ignored; word count not checked
+        mode: Validation strictness â€” "strict", "normal", or "lenient".
+              strict  â†’ banned words are errors (trigger retries); word limit enforced
+              normal  â†’ banned words are warnings; word limit is soft (+25 words)
+              lenient â†’ banned words ignored; word count not checked
 
     Returns:
         {"passed": bool, "errors": list[str], "warnings": list[str]}
@@ -338,11 +338,11 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
 
     text_lower = text.lower()
 
-    # 1. Em dashes — always an error (sanitize_text should have caught these)
+    # 1. Em dashes â€” always an error (sanitize_text should have caught these)
     if "\u2014" in text or "\u2013" in text:
         errors.append("Contains em dash or en dash.")
 
-    # 2. Banned words — severity depends on mode
+    # 2. Banned words â€” severity depends on mode
     if mode != "lenient":
         found = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
         if found:
@@ -360,14 +360,15 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
         warnings.append(f"Long ({words} words). Target 250.")
     # lenient: no word count check
 
-    # 4. LLM self-talk — always an error regardless of mode
+    # 4. LLM self-talk â€” always an error regardless of mode
     found_leaks = [p for p in LLM_LEAK_PHRASES if p in text_lower]
     if found_leaks:
         errors.append(f"LLM self-talk: '{found_leaks[0]}'")
 
-    # 5. Must start with "Dear" — always checked (preamble should have been stripped)
+    # 5. Must start with "Dear" â€” always checked (preamble should have been stripped)
     stripped = text.strip()
     if not stripped.lower().startswith("dear"):
         errors.append("Must start with 'Dear Hiring Manager,'")
 
     return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
+

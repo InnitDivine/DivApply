@@ -1,4 +1,4 @@
-"""DivApply database layer: schema, migrations, stats, and connection helpers.
+﻿"""DivApply database layer: schema, migrations, stats, and connection helpers.
 
 Single source of truth for the jobs table schema. All columns from every
 pipeline stage are created up front so any stage can run independently
@@ -11,9 +11,9 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
-from applypilot.config import DB_PATH
+from divapply.config import DB_PATH
 
-# Thread-local connection storage — each thread gets its own connection
+# Thread-local connection storage â€” each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
 
@@ -620,3 +620,4 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         columns = rows[0].keys()
         return [dict(zip(columns, row)) for row in rows]
     return []
+

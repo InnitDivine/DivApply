@@ -1,4 +1,4 @@
-"""Workday ATS direct API scraper: searches employer career portals.
+﻿"""Workday ATS direct API scraper: searches employer career portals.
 
 Scrapes Workday-powered career sites (TD, RBC, NVIDIA, Salesforce, etc.)
 via the undocumented CXS JSON API. Zero LLM, zero browser -- pure HTTP.
@@ -19,9 +19,9 @@ from html.parser import HTMLParser
 
 import yaml
 
-from applypilot import config
-from applypilot.config import CONFIG_DIR
-from applypilot.database import get_connection, init_db
+from divapply import config
+from divapply.config import CONFIG_DIR
+from divapply.database import get_connection, init_db
 
 log = logging.getLogger(__name__)
 
@@ -572,3 +572,4 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
         "existing": grand_existing,
         "queries": len(queries),
     }
+

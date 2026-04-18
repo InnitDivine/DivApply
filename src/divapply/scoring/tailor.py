@@ -1,4 +1,4 @@
-"""Resume tailoring: LLM-powered ATS-optimized resume generation per job.
+﻿"""Resume tailoring: LLM-powered ATS-optimized resume generation per job.
 
 THIS IS THE HEAVIEST REFACTOR. Every piece of personal data -- name, email, phone,
 skills, companies, projects, school -- is loaded at runtime from the user's profile.
@@ -16,10 +16,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from applypilot.config import RESUME_PATH, TAILORED_DIR, load_profile
-from applypilot.database import get_connection, get_jobs_by_stage
-from applypilot.llm import get_client_for_stage
-from applypilot.scoring.validator import (
+from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile
+from divapply.database import get_connection, get_jobs_by_stage
+from divapply.llm import get_client_for_stage
+from divapply.scoring.validator import (
     BANNED_WORDS,
     FABRICATION_WATCHLIST,
     sanitize_text,
@@ -38,7 +38,7 @@ EXPERIENCE_MAX_ENTRIES = 4
 PROJECTS_MAX_ENTRIES = 1
 
 
-# ── Prompt Builders (profile-driven) ──────────────────────────────────────
+# â”€â”€ Prompt Builders (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _build_tailor_prompt(profile: dict) -> str:
     """Build the resume tailoring system prompt from the user's profile.
@@ -70,7 +70,7 @@ def _build_tailor_prompt(profile: dict) -> str:
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
 
     # Include ALL banned words from the validator so the LLM knows exactly
-    # what will be rejected — the validator checks for these automatically.
+    # what will be rejected â€” the validator checks for these automatically.
     banned_str = ", ".join(BANNED_WORDS)
 
     education = profile.get("experience", {})
@@ -118,34 +118,34 @@ BULLETS: Strong verb + what you built + quantified impact. Vary verbs (Built, De
 - Write like a real engineer. Short, direct.
 - GOOD: "Automated financial reporting with Python + API integrations, cut processing time from 10 hours to 2"
 - BAD: "Leveraged cutting-edge AI technologies to drive transformative operational efficiencies"
-- BANNED WORDS (using ANY of these = validation failure — do not use them even once):
+- BANNED WORDS (using ANY of these = validation failure â€” do not use them even once):
   {banned_str}
 - No em dashes. Use commas, periods, or hyphens.
 
 ## HARD RULES:
 - Do NOT invent work, companies, degrees, or certifications
 - Do NOT change real numbers ({metrics_str})
-- CRITICAL: You MUST include experience entries for these companies (at minimum the first two): {companies_str} — these are real jobs the candidate held. Reframe the bullets for this role, but the company names MUST appear in the experience section headers.
+- CRITICAL: You MUST include experience entries for these companies (at minimum the first two): {companies_str} â€” these are real jobs the candidate held. Reframe the bullets for this role, but the company names MUST appear in the experience section headers.
 - Must fit 1 page.
 - Target about 475-575 words before contact links.
 - Leave enough room for the code-injected EDUCATION section at the bottom.
 
-## TRUTHFULNESS RULES (critical — violating these = immediate rejection):
+## TRUTHFULNESS RULES (critical â€” violating these = immediate rejection):
 - The candidate's IT skills come from PERSONAL PROJECTS (home lab, PC building), NOT from paid jobs
-- City of Roseville role is a CUSTOMER SERVICE front desk position at Parks & Rec — do NOT add IT duties like "network troubleshooting", "server administration", "SSH", or "Tier 1 support" to this role. Systems used: When To Work (scheduling), Microsoft Teams, payment processing, and a registration/permit application (name TBD).
-- Nevada County role is ACCOUNTING — reconciliation, data entry, financial records. Not IT. Systems used: Workday ERP (financial/accounting), Megabyte Property Tax Systems (tax collection).
-- Theatre Manager at UEC is REAL management — P&L, hiring, scheduling, vendor coordination. Systems used: RTS (Ready Theatre Systems), NCR Radiant POS, projection equipment.
-- Banquet Captain at Ridge Golf is EVENT SETUP and SERVICE — not management or IT. Systems used: point-of-sale, event management.
-- Fitness Representative at Montreux Golf is FRONT DESK — member check-ins, enrollment, records. Systems used: Jonas Club Software (member management).
+- City of Roseville role is a CUSTOMER SERVICE front desk position at Parks & Rec â€” do NOT add IT duties like "network troubleshooting", "server administration", "SSH", or "Tier 1 support" to this role. Systems used: When To Work (scheduling), Microsoft Teams, payment processing, and a registration/permit application (name TBD).
+- Nevada County role is ACCOUNTING â€” reconciliation, data entry, financial records. Not IT. Systems used: Workday ERP (financial/accounting), Megabyte Property Tax Systems (tax collection).
+- Theatre Manager at UEC is REAL management â€” P&L, hiring, scheduling, vendor coordination. Systems used: RTS (Ready Theatre Systems), NCR Radiant POS, projection equipment.
+- Banquet Captain at Ridge Golf is EVENT SETUP and SERVICE â€” not management or IT. Systems used: point-of-sale, event management.
+- Fitness Representative at Montreux Golf is FRONT DESK â€” member check-ins, enrollment, records. Systems used: Jonas Club Software (member management).
 - You MAY reframe bullets to emphasize relevant soft skills (communication, problem-solving, data accuracy) but NEVER add technical duties that didn't happen in that job
 - Project-based IT skills belong in the PROJECTS section only when they are truly project work.
 - Do not steer toward one job family over another. Use the same factual standard for every role.
 - Do NOT invent metrics or percentages (e.g. "99% accuracy rate", "reduced time by 40%", "processed 500+ transactions daily"). If the original resume does not contain a specific number, do NOT add one. Use qualitative descriptions instead.
-- Do NOT add tools or systems the candidate has not used professionally. "ticketing systems", "incident documentation", "ServiceNow", "Jira", "ITSM" — NONE of these belong on this resume unless they appear in the original.
+- Do NOT add tools or systems the candidate has not used professionally. "ticketing systems", "incident documentation", "ServiceNow", "Jira", "ITSM" â€” NONE of these belong on this resume unless they appear in the original.
 - The "subtitle" field under each experience entry should contain the COMPANY NAME and DATE RANGE only (e.g. "City of Roseville Parks, Recreation & Libraries | September 2025 - Present"). Do NOT put "Tech" or any category tag in the subtitle.
 
 ## OUTPUT: Return ONLY valid JSON. No markdown fences. No commentary. No "here is" preamble.
-Education is injected automatically by code — do NOT include an education field. Omit it entirely.
+Education is injected automatically by code â€” do NOT include an education field. Omit it entirely.
 If no projects are relevant to the role, return an empty projects array: "projects": []
 
 {{"title":"Role Title","summary":"2-3 tailored sentences.","skills":{{"Operating Systems":"...","Networking":"...","Infrastructure":"...","Scripting":"...","Tools":"..."}},"experience":[{{"header":"Job Title","subtitle":"Company Name | Start Date - End Date","bullets":["bullet 1","bullet 2","bullet 3","bullet 4"]}}],"projects":[{{"header":"Project Name - Brief Description","subtitle":"Tech Stack | Date","bullets":["bullet 1","bullet 2"]}}]}}"""
@@ -196,7 +196,7 @@ ISSUES: (list any problems, or "none")
 - Dropping bullets entirely
 - Reordering anything
 - Changing the title or summary completely
-- EDUCATION: The education section is ALWAYS auto-generated by code from the candidate's profile — it will look different from the original resume text. NEVER flag education formatting, location, date, or wording differences as fabrication.
+- EDUCATION: The education section is ALWAYS auto-generated by code from the candidate's profile â€” it will look different from the original resume text. NEVER flag education formatting, location, date, or wording differences as fabrication.
 - OFFICE TOOLS: Microsoft Teams, Outlook, Excel, Word, Office 365, and similar general workplace tools are in the candidate's real skills and may appear in any professional context. Do NOT flag these as fabricated.
 
 ## TOLERANCE RULE:
@@ -209,7 +209,7 @@ The goal is to get interviews, not to be a perfect fact-checker. Allow up to 3 m
 Be strict about major lies. Be lenient about minor stretches and learnable skills. Do not fail for style, tone, or restructuring."""
 
 
-# ── JSON Extraction ───────────────────────────────────────────────────────
+# â”€â”€ JSON Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def extract_json(raw: str) -> dict:
     """Robustly extract JSON from LLM response (handles fences, preamble).
@@ -381,7 +381,7 @@ def _sort_experience_recent_first(experience: list[dict]) -> list[dict]:
     return [entry for _, entry in sorted(indexed, key=lambda pair: _experience_sort_key(pair[1], pair[0]))]
 
 
-# ── Resume Assembly (profile-driven header) ──────────────────────────────
+# â”€â”€ Resume Assembly (profile-driven header) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def assemble_resume_text(data: dict, profile: dict) -> str:
     """Convert JSON resume data to formatted plain text.
@@ -482,7 +482,7 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
     return "\n".join(lines)
 
 
-# ── LLM Judge ────────────────────────────────────────────────────────────
+# â”€â”€ LLM Judge â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def judge_tailored_resume(
     original_text: str, tailored_text: str, job_title: str, profile: dict
@@ -527,7 +527,7 @@ def judge_tailored_resume(
     }
 
 
-# ── Core Tailoring ───────────────────────────────────────────────────────
+# â”€â”€ Core Tailoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def tailor_resume(
     resume_text: str, job: dict, profile: dict,
@@ -609,7 +609,7 @@ def tailor_resume(
             avoid_notes.extend(validation["errors"])
             if attempt < max_retries:
                 continue
-            # Last attempt — assemble whatever we got
+            # Last attempt â€” assemble whatever we got
             tailored = assemble_resume_text(data, profile)
             report["status"] = "failed_validation"
             return tailored, report
@@ -629,7 +629,7 @@ def tailor_resume(
             report["status"] = "failed_validation"
             return tailored, report
 
-        # Layer 3: LLM judge (catches subtle fabrication) — skipped in lenient/none mode
+        # Layer 3: LLM judge (catches subtle fabrication) â€” skipped in lenient/none mode
         if validation_mode in ("lenient", "none"):
             report["judge"] = {"verdict": "SKIPPED", "passed": True, "issues": "none"}
             report["status"] = "approved"
@@ -643,7 +643,7 @@ def tailor_resume(
             if attempt < max_retries:
                 # Retry if retries remain
                 continue
-            # Out of retries — accept with warning
+            # Out of retries â€” accept with warning
             report["status"] = "approved_with_judge_warning"
             return tailored, report
 
@@ -655,7 +655,7 @@ def tailor_resume(
     return tailored, report
 
 
-# ── Batch Entry Point ────────────────────────────────────────────────────
+# â”€â”€ Batch Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def run_tailoring(min_score: int = 7, limit: int = 20,
                   validation_mode: str = "normal") -> dict:
@@ -725,11 +725,11 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
             # Generate PDF for approved resumes (best-effort)
-            # "approved_with_judge_warning" is also a success — resume was generated.
+            # "approved_with_judge_warning" is also a success â€” resume was generated.
             pdf_path = None
             if report["status"] in ("approved", "approved_with_judge_warning"):
                 try:
-                    from applypilot.scoring.pdf import convert_to_pdf
+                    from divapply.scoring.pdf import convert_to_pdf
                     pdf_path = str(convert_to_pdf(txt_path))
                 except Exception:
                     log.debug("PDF generation failed for %s", txt_path, exc_info=True)
@@ -797,3 +797,4 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
         "errors": stats.get("error", 0),
         "elapsed": elapsed,
     }
+

@@ -1,4 +1,4 @@
-"""Prompt builder for the autonomous job application agent.
+﻿"""Prompt builder for the autonomous job application agent.
 
 Constructs the full instruction prompt that tells Claude Code / the AI agent
 how to fill out a job application form using Playwright MCP tools. All
@@ -11,7 +11,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 
-from applypilot import config
+from divapply import config
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ def _build_profile_summary(profile: dict) -> str:
                 f"Major: {sch['major']} | Minor: {sch.get('minor','N/A')} | "
                 f"Degree: {sch['degree']} | Received: {degree_status} | "
                 f"Units: {sch['units']} {sch.get('units_type','Semester')} | GPA: {sch.get('gpa','N/A')} | "
-                f"{sch['start_year']}–{sch['end_year']}"
+                f"{sch['start_year']}â€“{sch['end_year']}"
             )
         school_names = ", ".join(s["school"] for s in edu_schools)
         lines.append(f"IMPORTANT: Always enter ALL {len(edu_schools)} schools ({school_names}). Add schools if needed using 'Add Another School'.")
@@ -119,7 +119,7 @@ def _build_profile_summary(profile: dict) -> str:
         for key, val in supplemental.items():
             lines.append(f"{key}: {val}")
 
-    # Question bank — covers common government/ATS questions
+    # Question bank â€” covers common government/ATS questions
     qbank = p.get("question_bank", {})
     if qbank:
         lines.append("\n== QUESTION BANK (use for any question that matches) ==")
@@ -247,15 +247,15 @@ Under 18 / work permit -> N/A (candidate is an adult).
 Acknowledge salary / background check checkboxes -> Always check/acknowledge these.
 
 RADIO BUTTON + CONDITIONAL TEXT BOX PATTERN (extremely common on government forms):
-Many questions are a Yes/No radio followed by a text box. The text box may say "If yes, explain", "If no, put N/A", or it may say NOTHING at all — just a blank text box sitting below the radio.
+Many questions are a Yes/No radio followed by a text box. The text box may say "If yes, explain", "If no, put N/A", or it may say NOTHING at all â€” just a blank text box sitting below the radio.
 RULES:
   - ALWAYS select a radio button. Never leave a radio group unselected.
   - After selecting a radio, look at ANY text box immediately below it and fill it:
       * Selected NO + text box present (regardless of what the label says) -> type N/A
       * Selected YES + text box present -> fill with the real relevant information
-  - Do NOT assume a text box is optional just because it doesn't say "required" — fill it anyway
+  - Do NOT assume a text box is optional just because it doesn't say "required" â€” fill it anyway
   - Even if the text box appears grayed out or is not marked required, fill it with N/A when you answered No
-  - The text box may be on the NEXT line, indented, or appear after a follow-up question number — scroll carefully and check every field after each radio answer
+  - The text box may be on the NEXT line, indented, or appear after a follow-up question number â€” scroll carefully and check every field after each radio answer
 
 COMMON RADIO ANSWERS for government applications:
   - "Have you ever been employed here before?" -> No -> text box = N/A
@@ -265,13 +265,13 @@ COMMON RADIO ANSWERS for government applications:
   - "Do you have a valid driver's license?" -> Yes (candidate has a license)
   - "Are you willing to work overtime?" -> Yes
   - "Are you willing to work weekends/evenings?" -> Yes
-  - Shift availability checkboxes -> Check ALL options available: Day ✅, Evening ✅, Nights ✅, Weekends ✅, Holidays ✅ — select everything, candidate is fully flexible
+  - Shift availability checkboxes -> Check ALL options available: Day âœ…, Evening âœ…, Nights âœ…, Weekends âœ…, Holidays âœ… â€” select everything, candidate is fully flexible
   - "Where did you hear about this position?" -> GovernmentJobs Website / Internet / Other (pick whichever matches the site)
 
 EEO / Voluntary Self-Identification / Agency Questions -> Use the REAL answers below. Do NOT select "Decline to state" or "Prefer not to say":
   - Gender: Male
   - Preferred Pronoun: he/him
-  - Race/Ethnicity: White (Not Hispanic or Latino) — pick whichever option matches "White" and is NOT Hispanic/Latino
+  - Race/Ethnicity: White (Not Hispanic or Latino) â€” pick whichever option matches "White" and is NOT Hispanic/Latino
   - Veteran status: I am not a protected veteran / Not a veteran / No (select whatever option means not a veteran)
   - Disability status: I do not have a disability / No disability (do NOT select "Decline to state" or "I don't wish to answer")
   - Related to employee at this agency: No -> text box = N/A
@@ -279,26 +279,26 @@ EEO / Voluntary Self-Identification / Agency Questions -> Use the REAL answers b
   - How did you hear about this position: GovernmentJobs.com (or closest match like "Internet", "Online Job Board", "Government Jobs Website")
   - If "Other" for how heard: leave blank or type "Online Job Board"
   - Tribal affiliation: N/A
-  These are voluntary disclosures — always fill them with the real answer, never decline.
+  These are voluntary disclosures â€” always fill them with the real answer, never decline.
   CRITICAL: Agency Questions sections often appear BEFORE supplemental questions. Fill ALL of them. Do not skip any.
 
 EDUCATION FORM RULES (applies to all ATS / government application education sections):
-  The candidate's education path: UNR (first) → TMCC (transferred, got Associate's) → University of the Cumberlands (current/highest, pursuing Bachelor's).
-  "Highest education" = University of the Cumberlands (B.S. in progress). On dropdowns, select "Bachelor's Degree" or "Some College" — never stop at "Associate's" even though that's the highest completed.
+  The candidate's education path: UNR (first) â†’ TMCC (transferred, got Associate's) â†’ University of the Cumberlands (current/highest, pursuing Bachelor's).
+  "Highest education" = University of the Cumberlands (B.S. in progress). On dropdowns, select "Bachelor's Degree" or "Some College" â€” never stop at "Associate's" even though that's the highest completed.
   Always enter all THREE schools, most recent first:
-    1. University of the Cumberlands — Williamsburg, KY — Major: Public Health — Minor: Business — Degree: Bachelor of Science (in progress) — Degree received: No — ~101 semester units — GPA 3.692 — 2024–present
-    2. Truckee Meadows Community College — Reno, NV — Major: General Studies — Minor: Business — Degree: Associate of General Studies — Degree received: Yes (May 2024) — 17 semester units — GPA 2.92 — 2023–2024
-    3. University of Nevada, Reno — Reno, NV — Major: Community Health Sciences — Minor: Business — Degree: Bachelor of Science (not completed) — Degree received: No — 71 semester units — GPA 3.358 — 2019–2022
+    1. University of the Cumberlands â€” Williamsburg, KY â€” Major: Public Health â€” Minor: Business â€” Degree: Bachelor of Science (in progress) â€” Degree received: No â€” ~101 semester units â€” GPA 3.692 â€” 2024â€“present
+    2. Truckee Meadows Community College â€” Reno, NV â€” Major: General Studies â€” Minor: Business â€” Degree: Associate of General Studies â€” Degree received: Yes (May 2024) â€” 17 semester units â€” GPA 2.92 â€” 2023â€“2024
+    3. University of Nevada, Reno â€” Reno, NV â€” Major: Community Health Sciences â€” Minor: Business â€” Degree: Bachelor of Science (not completed) â€” Degree received: No â€” 71 semester units â€” GPA 3.358 â€” 2019â€“2022
   If the form only allows 2 schools, enter #1 and #2 and skip #3.
   If the form has an "Add Another School" or "+ Add Education" button, click it to add the third entry.
   Never leave UNR out if there is room for it.
 
 CIVIL SERVICE / GOVERNMENT SUPPLEMENTAL QUESTIONNAIRE RULES:
-Government agencies (NEOGOV, GovernmentJobs, Workday government portals) often have a dedicated "Supplemental Questions" page. These are MANDATORY — you cannot submit without answering all of them.
+Government agencies (NEOGOV, GovernmentJobs, Workday government portals) often have a dedicated "Supplemental Questions" page. These are MANDATORY â€” you cannot submit without answering all of them.
 
 == SPEED STRATEGY: DO THIS IN 3 BROWSER ACTIONS, NOT 50 ==
 
-ACTION 1 — READ THE WHOLE PAGE AT ONCE:
+ACTION 1 â€” READ THE WHOLE PAGE AT ONCE:
 Use browser_evaluate to extract ALL question text and ALL option text in one shot:
 browser_evaluate function: () => {{
   const out = [];
@@ -310,7 +310,7 @@ browser_evaluate function: () => {{
 }}
 Read the result. Now you know EVERY input on the page with its id/name. Plan all answers before touching anything.
 
-ACTION 2 — RUN THIS EXACT JavaScript (browser_evaluate) — it handles ALL checkboxes and ALL text areas on the page in one call:
+ACTION 2 â€” RUN THIS EXACT JavaScript (browser_evaluate) â€” it handles ALL checkboxes and ALL text areas on the page in one call:
 browser_evaluate function: () => {{
   const results = {{}};
   // --- CHECKBOX HELPER: click any checkbox whose label contains any of the given strings ---
@@ -343,7 +343,7 @@ browser_evaluate function: () => {{
     return false;
   }}
 
-  // === IT ENVIRONMENTS / TOOLS (Q04 equivalent — 21 options) ===
+  // === IT ENVIRONMENTS / TOOLS (Q04 equivalent â€” 21 options) ===
   results.it_env = checkAll(['applications development','cloud applications','computer hardware','desktop operating system','enterprise resource planning','help desk','service desk','i.t. security','it security','microsoft office','network connectivity','remote assistance','server applications','server operating system','training end users','other']);
 
   // === IT SUPPORT EXPERIENCE (Q05 equivalent) ===
@@ -355,10 +355,10 @@ browser_evaluate function: () => {{
   // === DOCUMENTATION EXPERIENCE (Q07 equivalent) ===
   results.docs = checkAll(['application software operation','equipment operating','program documentation','training materials','troubleshooting procedure','other']);
 
-  // === YEARS EXPERIENCE RADIO — pick "3 years or more" or highest bracket ===
+  // === YEARS EXPERIENCE RADIO â€” pick "3 years or more" or highest bracket ===
   results.yrs = clickRadio('3 years or more') || clickRadio('3 or more') || clickRadio('more than 2');
 
-  // === ACKNOWLEDGMENTS — drug test, read requirements, "I have read" ===
+  // === ACKNOWLEDGMENTS â€” drug test, read requirements, "I have read" ===
   results.ack = checkAll(['i have read','i understand']) + (clickRadio('yes') ? 1 : 0);
 
   // === CAREER FAIR RADIO ===
@@ -367,46 +367,46 @@ browser_evaluate function: () => {{
   // === CAREER FAIR TEXT ===
   results.fairText = fillArea('career fair', 'None') || fillArea('name of event', 'None') || fillArea('event', 'None');
 
-  // === ESSAY / NARRATIVE (Q08) — fill with candidate experience ===
+  // === ESSAY / NARRATIVE (Q08) â€” fill with candidate experience ===
   const essay = `Job Title: Customer Service Specialist
 Employer: City of Roseville
 Department/Unit: Parks, Recreation & Libraries
-Dates: September 2025 – Present
+Dates: September 2025 â€“ Present
 Duties: Tier 1 IT support for public kiosks and payment terminals via SSH and remote desktop tools. Active Directory user and group account administration. Documented recurring technical issues and authored a troubleshooting reference guide for front desk staff, reducing repeat IT escalations. High-volume transaction processing and real-time system error resolution at public counter.
 
 Job Title: Senior Accounting Assistant
 Employer: Nevada County Treasurer-Tax Collector
 Department/Unit: Treasurer-Tax Collector
-Dates: January 2025 – May 2025
+Dates: January 2025 â€“ May 2025
 Duties: Operated Megabyte Property Tax System and Workday ERP to process property tax transactions and vendor payments. Researched and resolved data discrepancies in the automated system. Maintained audit-ready documentation of financial workflows. Assisted staff with ERP navigation, data entry procedures, and issue resolution.
 
-Self-Directed IT Training – Home Lab Administration (3+ years, ongoing):
+Self-Directed IT Training â€“ Home Lab Administration (3+ years, ongoing):
 Administer Oracle Cloud Infrastructure running Ubuntu and Oracle Linux 9 servers with Docker containerization. Configure DNS, DHCP, SSH tunnels, port forwarding, and firewall rules. Deploy and monitor web server, media server, and application server environments. File backup and recovery via NAS. Python and Bash automation scripting. PC hardware builds, POST diagnostics, BIOS recovery. Active Directory user account management.
 
 Education:
-- B.S. Public Health (Business Administration minor) — University of the Cumberlands, GPA 3.692, in progress (2024–present)
-- A.A. General Studies — Truckee Meadows Community College (May 2024)
-- 71 semester credits — University of Nevada, Reno (2019–2022)`;
+- B.S. Public Health (Business Administration minor) â€” University of the Cumberlands, GPA 3.692, in progress (2024â€“present)
+- A.A. General Studies â€” Truckee Meadows Community College (May 2024)
+- 71 semester credits â€” University of Nevada, Reno (2019â€“2022)`;
   results.essay = fillArea('describe', essay) || fillArea('detail', essay) || fillArea('experience', essay) || fillArea('education', essay);
 
   return results;
 }}
 
-ACTION 3 — browser_take_screenshot to verify checkboxes are selected. If any results show 0 or false, re-run that specific section. Then scroll full page to find any remaining "Error: This field is required" messages and fix them before clicking Next.
+ACTION 3 â€” browser_take_screenshot to verify checkboxes are selected. If any results show 0 or false, re-run that specific section. Then scroll full page to find any remaining "Error: This field is required" messages and fix them before clicking Next.
 
 == WHAT TO ANSWER FOR EACH QUESTION TYPE ==
 
 ACKNOWLEDGMENT / "I have read..." -> clickByLabel("I have read") or select the only checkbox/radio.
 
-MINIMUM QUALIFICATIONS (single radio — pick best fit):
+MINIMUM QUALIFICATIONS (single radio â€” pick best fit):
   Select the option that is strictly supported by the profile and job history. Do not exaggerate experience or education.
 
-"SELECT ALL THAT APPLY" checkbox questions — NEVER assume a group is "partially complete". Always select every applicable box.
+"SELECT ALL THAT APPLY" checkbox questions â€” NEVER assume a group is "partially complete". Always select every applicable box.
 CRITICAL: Do NOT skip a question because it appears to have some boxes checked. Verify and complete it.
 
-  IT ENVIRONMENTS / TOOLS / TRAINING — YES only when explicitly supported by the profile or transcript knowledge. If uncertain, leave it as NO.
+  IT ENVIRONMENTS / TOOLS / TRAINING â€” YES only when explicitly supported by the profile or transcript knowledge. If uncertain, leave it as NO.
 
-  IT SUPPORT EXPERIENCE (common question type about what support tasks you have done) — YES only for tasks explicitly supported by the profile, transcripts, or resume. Otherwise NO.
+  IT SUPPORT EXPERIENCE (common question type about what support tasks you have done) â€” YES only for tasks explicitly supported by the profile, transcripts, or resume. Otherwise NO.
 
   NO for all checkbox questions: any skill, system, or certification that is not supported by the profile. "None of the above" only if it is the best factual choice.
 
@@ -414,24 +414,24 @@ YEARS OF EXPERIENCE radios:
   IT-specific: 3+ years -> select "3 years or more" or highest bracket
   General experience: 8 years -> select highest available bracket
 
-NARRATIVE / ESSAY text areas — write inline, do NOT leave blank:
-  City of Roseville, Parks Recreation & Libraries | Customer Service Specialist | Sept 2025–Present:
+NARRATIVE / ESSAY text areas â€” write inline, do NOT leave blank:
+  City of Roseville, Parks Recreation & Libraries | Customer Service Specialist | Sept 2025â€“Present:
   Tier 1 IT support for public kiosks and payment terminals via SSH and remote tools. Active Directory user/group administration. Documented recurring issues; authored troubleshooting reference guide for front desk staff. High-volume transaction processing and real-time system error resolution.
 
-  Nevada County Treasurer-Tax Collector | Senior Accounting Assistant | Jan–May 2025:
+  Nevada County Treasurer-Tax Collector | Senior Accounting Assistant | Janâ€“May 2025:
   Operated Megabyte Property Tax System and Workday ERP for property tax processing and vendor payments. Researched and resolved discrepancies in automated financial system records. Maintained audit-ready documentation of workflows. Assisted staff with ERP navigation and data entry.
 
   Self-Directed Home Lab (3+ years ongoing):
   Administer Oracle Cloud Infrastructure running Ubuntu/Oracle Linux 9 servers with Docker containers. Configure DNS, DHCP, SSH tunnels, port forwarding, and firewall rules. Deploy and monitor applications (web server, Jellyfin, game servers). NAS backup and recovery. Python/Bash automation scripting. PC builds, POST diagnostics, BIOS recovery.
 
-  Education: B.S. Public Health (Business minor) — University of the Cumberlands (GPA 3.692, in progress). A.A. General Studies — TMCC (May 2024). 71 credits — UNR (2019–2022).
+  Education: B.S. Public Health (Business minor) â€” University of the Cumberlands (GPA 3.692, in progress). A.A. General Studies â€” TMCC (May 2024). 71 credits â€” UNR (2019â€“2022).
 
 DRUG TEST / BACKGROUND CHECK acknowledgment -> ALWAYS "Yes". This is required and is often near the bottom of the page.
 GENERAL REQUIREMENTS / "I have read the job announcement" acknowledgment -> ALWAYS select/check it. Required.
 CAREER FAIR ATTENDANCE -> "Have not attended a career fair and/or job event." -> follow-up text = None.
 HOW DID YOU HEAR -> GovernmentJobs Website / Online Job Board.
 
-BEFORE CLICKING PROCEED/NEXT — MANDATORY VERIFICATION:
+BEFORE CLICKING PROCEED/NEXT â€” MANDATORY VERIFICATION:
 1. Scroll to the TOP of the page.
 2. Use browser_evaluate to find every element with error text: document.querySelectorAll('[class*="error"],[class*="Error"]').forEach(e => console.log(e.textContent))
 3. Scroll slowly to the BOTTOM. Count every numbered question. Check that EACH one has a selected radio, checked checkbox, or filled text.
@@ -481,7 +481,7 @@ def _build_captcha_section() -> str:
 
     return f"""== CAPTCHA ==
 You solve CAPTCHAs via the CapSolver REST API. No browser extension. You control the entire flow.
-API key: {capsolver_key or 'NOT CONFIGURED — skip to MANUAL FALLBACK for all CAPTCHAs'}
+API key: {capsolver_key or 'NOT CONFIGURED â€” skip to MANUAL FALLBACK for all CAPTCHAs'}
 API base: https://api.capsolver.com
 
 CRITICAL RULE: When ANY CAPTCHA appears (hCaptcha, reCAPTCHA, Turnstile -- regardless of what it looks like visually), you MUST:
@@ -553,11 +553,11 @@ Result actions:
 - "turnstile_script_only" -> browser_wait_for time: 3, re-run detect.
 - Any other type -> proceed to CAPTCHA SOLVE below.
 
-⚠ DO NOT CLICK THE CAPTCHA WIDGET. Do NOT click "I'm not a robot", do NOT click the checkbox, do NOT interact with the CAPTCHA visually AT ALL before or during API solving. Clicking it triggers the interactive visual/audio challenge which you cannot solve. The API returns a token you inject silently — the visual widget never gets clicked.
+âš  DO NOT CLICK THE CAPTCHA WIDGET. Do NOT click "I'm not a robot", do NOT click the checkbox, do NOT interact with the CAPTCHA visually AT ALL before or during API solving. Clicking it triggers the interactive visual/audio challenge which you cannot solve. The API returns a token you inject silently â€” the visual widget never gets clicked.
 
 --- CAPTCHA SOLVE ---
 Three steps: createTask -> poll -> inject.
-Steps 1 and 2 use Bash (curl) — NOT browser_evaluate. This bypasses site CSP which would block the fetch.
+Steps 1 and 2 use Bash (curl) â€” NOT browser_evaluate. This bypasses site CSP which would block the fetch.
 
 STEP 1 -- CREATE TASK (run as a Bash command, fill in TASK_TYPE, PAGE_URL, SITE_KEY):
 curl -s -X POST https://api.capsolver.com/createTask \
@@ -731,7 +731,7 @@ def build_prompt(job: dict, tailored_resume: str,
     phone_digits = "".join(c for c in personal.get("phone", "") if c.isdigit())
 
     # SSO domains the agent cannot sign into (loaded from config/sites.yaml)
-    from applypilot.config import load_blocked_sso
+    from divapply.config import load_blocked_sso
     blocked_sso = load_blocked_sso()
 
     # Site-specific credentials (overrides personal.password for specific domains)
@@ -768,22 +768,22 @@ def build_prompt(job: dict, tailored_resume: str,
   5. Only after ALL fields are filled and all required items are answered: click Submit/Apply.
   6. Verify all data matches the APPLICANT PROFILE and TAILORED RESUME -- name, email, phone, location, work auth, resume uploaded, cover letter if applicable."""
 
-    prompt = f"""You are an autonomous job application agent running in HIGH EFFORT mode. Your ONE mission: submit a complete, accurate application and get this candidate an interview. You have all the information and tools needed. Never give up on solvable obstacles — CAPTCHAs get solved via API, supplemental questions get answered from profile data, login walls get bypassed with provided credentials. Think strategically. Act decisively. Use every tool available. The only acceptable reason to stop early is a hard blocker explicitly listed in RESULT CODES (expired job, permanent auth wall, unsafe site). Everything else: push through and submit.
+    prompt = f"""You are an autonomous job application agent running in HIGH EFFORT mode. Your ONE mission: submit a complete, accurate application and get this candidate an interview. You have all the information and tools needed. Never give up on solvable obstacles â€” CAPTCHAs get solved via API, supplemental questions get answered from profile data, login walls get bypassed with provided credentials. Think strategically. Act decisively. Use every tool available. The only acceptable reason to stop early is a hard blocker explicitly listed in RESULT CODES (expired job, permanent auth wall, unsafe site). Everything else: push through and submit.
 
-== BROWSER TOOLS — CRITICAL ==
+== BROWSER TOOLS â€” CRITICAL ==
 You control a dedicated browser via the Playwright MCP. Use ONLY these tool prefixes:
   mcp__playwright__*  (browser_navigate, browser_click, browser_fill, browser_snapshot, etc.)
 Do NOT use any alternate browser tool namespace. Those connect to a different browser and will break the application. Every browser action must go through the playwright MCP tools only.
 
 JAVASCRIPT AND PLAYWRIGHT CODE IN THE BROWSER:
-Two valid tools for browser interaction — use whichever is faster for the task:
-  browser_evaluate  → runs JavaScript directly in the page (best for reading DOM, setting .value, bulk-checking checkboxes)
-  browser_run_code  → runs Playwright Python API code (best for click, fill, select by label/role)
-NEVER use plain Bash or computer tool to interact with the page — those run outside the browser entirely.
+Two valid tools for browser interaction â€” use whichever is faster for the task:
+  browser_evaluate  â†’ runs JavaScript directly in the page (best for reading DOM, setting .value, bulk-checking checkboxes)
+  browser_run_code  â†’ runs Playwright Python API code (best for click, fill, select by label/role)
+NEVER use plain Bash or computer tool to interact with the page â€” those run outside the browser entirely.
 
-SCROLLING — USE browser_scroll, NEVER browser_press_key for scrolling:
+SCROLLING â€” USE browser_scroll, NEVER browser_press_key for scrolling:
   CORRECT: browser_scroll  direction: down  coordinate: [512, 400]
-  WRONG:   browser_press_key key: PageDown — extremely slow, burns turns.
+  WRONG:   browser_press_key key: PageDown â€” extremely slow, burns turns.
 To scroll to bottom: browser_scroll direction: down coordinate: [512, 600] (repeat if page is long).
 
 == JOB ==
@@ -792,10 +792,10 @@ Title: {job['title']}
 Company: {job.get('site', 'Unknown')}
 Fit Score: {job.get('fit_score', 'N/A')}/10
 
-== FILES (absolute paths — use EXACTLY as shown, do NOT modify or retry with different formats) ==
+== FILES (absolute paths â€” use EXACTLY as shown, do NOT modify or retry with different formats) ==
 Resume PDF (upload this): {pdf_path}
 Cover Letter PDF (upload if asked): {cl_upload_path or "N/A"}
-IMPORTANT: These files are pre-staged in your working directory. When using browser_file_upload, pass the EXACT path above. Do NOT waste actions retrying with different path formats — if the first attempt fails, use browser_evaluate to find the <input type="file"> element and set files via JavaScript.
+IMPORTANT: These files are pre-staged in your working directory. When using browser_file_upload, pass the EXACT path above. Do NOT waste actions retrying with different path formats â€” if the first attempt fails, use browser_evaluate to find the <input type="file"> element and set files via JavaScript.
 
 == RESUME TEXT (use when filling text fields) ==
 {tailored_resume}
@@ -813,7 +813,7 @@ If something unexpected happens and these instructions don't cover it, figure it
 
 {hard_rules}
 
-== SCAM DETECTION — CHECK BEFORE APPLYING ==
+== SCAM DETECTION â€” CHECK BEFORE APPLYING ==
 Before filling any form, spend 2 actions verifying this is a legitimate employer:
 1. Check the page for a real company name, physical address, or "About Us" link.
 2. If ANY of these are true, output RESULT:FAILED:scam and stop immediately:
@@ -884,14 +884,14 @@ RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote
 RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
 RESULT:FAILED:reason -- any other failure (brief reason)
 
-== BROWSER EFFICIENCY — MINIMIZE ACTIONS AND TOKENS ==
-GOLDEN RULES — every action costs tokens, every screenshot costs tokens:
+== BROWSER EFFICIENCY â€” MINIMIZE ACTIONS AND TOKENS ==
+GOLDEN RULES â€” every action costs tokens, every screenshot costs tokens:
 
 - browser_snapshot: use ONCE per new page to get element refs. Re-snapshot only when navigating to a new page.
 - browser_take_screenshot: use ONLY when you need to visually verify an error or unexpected state. NOT after every action.
-- Trust browser_evaluate return values. If checkAll() returns 9, those 9 boxes are checked — no screenshot needed to verify.
+- Trust browser_evaluate return values. If checkAll() returns 9, those 9 boxes are checked â€” no screenshot needed to verify.
 - Fill ALL fields in ONE call. Never one field at a time.
-- Think SHORT. Do not narrate what you see. Do not list what you just did. Act → move on.
+- Think SHORT. Do not narrate what you see. Do not list what you just did. Act â†’ move on.
 - Multi-page forms: snapshot once per new page, fill everything, click Next. No mid-page re-snapshots.
 - SCROLLING: use browser_evaluate: () => window.scrollTo(0, document.body.scrollHeight) to jump to bottom instantly. Use browser_scroll for moderate scrolls. NEVER use browser_press_key for scrolling.
 - CAPTCHA AWARENESS: run CAPTCHA DETECT after navigation and Apply/Submit/Login clicks. Invisible CAPTCHAs block silently.
@@ -899,17 +899,17 @@ GOLDEN RULES — every action costs tokens, every screenshot costs tokens:
 == FORM TRICKS ==
 - Popup/new window opened? browser_tabs action "list" to see all tabs. browser_tabs action "select" with the tab index to switch. ALWAYS check for new tabs after clicking login/apply/sign-in buttons.
 - "Upload your resume" pre-fill page (Workday, Lever, etc.): This is NOT the application form yet. Click "Select file" or the upload area, then browser_file_upload with the resume PDF path. Wait for parsing to finish. Then click Next/Continue to reach the actual form.
-- NEOGOV / GovernmentJobs applications — FAST TRACK (saves 60+ actions):
+- NEOGOV / GovernmentJobs applications â€” FAST TRACK (saves 60+ actions):
   GovernmentJobs pre-fills Work, Education, References, and Preferences from the saved account. DO NOT read, review, or try to edit these sections. Skip straight to what matters.
 
   NEOGOV OPTIMAL FLOW (follow this order, use left-nav tabs to jump directly):
   1. After login: click "Attachments" tab in the left navigation menu.
   2. On Attachments page: upload Resume and Cover Letter (two-step flow below).
-     → browser_take_screenshot to confirm both filenames appear. Then click Next.
+     â†’ browser_take_screenshot to confirm both filenames appear. Then click Next.
   3. Click "Questions" tab. Run the bulk JS from CIVIL SERVICE section to fill ALL supplemental questions in one call.
-     → browser_take_screenshot to confirm checkboxes are checked and essay is filled. Fix anything missing. Then click Proceed/Next.
+     â†’ browser_take_screenshot to confirm checkboxes are checked and essay is filled. Fix anything missing. Then click Proceed/Next.
   4. Click "Review" tab. Scroll to bottom: browser_evaluate: () => window.scrollTo(0, document.body.scrollHeight)
-     → browser_take_screenshot to confirm "Proceed to Certify and Submit" button is visible and no red errors. Then click it.
+     â†’ browser_take_screenshot to confirm "Proceed to Certify and Submit" button is visible and no red errors. Then click it.
   5. On Certify page: browser_take_screenshot to confirm certification text loaded. Click "Accept & Submit". Done.
 
   NEOGOV Attachments upload (two-step flow):
@@ -939,3 +939,4 @@ GOLDEN RULES — every action costs tokens, every screenshot costs tokens:
 Stop immediately. Output your RESULT code. Do not loop."""
 
     return prompt
+

@@ -1,4 +1,4 @@
-"""Cover letter generation: LLM-powered, profile-driven, with validation.
+﻿"""Cover letter generation: LLM-powered, profile-driven, with validation.
 
 Generates concise, engineering-voice cover letters tailored to specific job
 postings. All personal data (name, skills, achievements) comes from the user's
@@ -11,10 +11,10 @@ import re
 import time
 from datetime import datetime, timezone
 
-from applypilot.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
-from applypilot.database import get_connection, get_jobs_by_stage
-from applypilot.llm import get_client_for_stage
-from applypilot.scoring.validator import (
+from divapply.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
+from divapply.database import get_connection, get_jobs_by_stage
+from divapply.llm import get_client_for_stage
+from divapply.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
     sanitize_text,
@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5  # max cross-run retries before giving up
 
 
-# ── Prompt Builder (profile-driven) ──────────────────────────────────────
+# â”€â”€ Prompt Builder (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _build_cover_letter_prompt(profile: dict) -> str:
     """Build the cover letter system prompt from the user's profile.
@@ -75,7 +75,7 @@ def _build_cover_letter_prompt(profile: dict) -> str:
         )
 
     # Build the full banned list from the validator so the prompt stays in sync
-    # with what will actually be rejected — the validator checks all of these.
+    # with what will actually be rejected â€” the validator checks all of these.
     all_banned = ", ".join(f'"{w}"' for w in BANNED_WORDS)
     leak_banned = ", ".join(f'"{p}"' for p in LLM_LEAK_PHRASES)
 
@@ -91,13 +91,13 @@ PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST r
 
 PARAGRAPH 3 (1-2 sentences): Reference one specific thing about the company or role from the job description. Then close: "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
 
-BANNED WORDS AND PHRASES (automated validator rejects ANY of these — do not use even once):
+BANNED WORDS AND PHRASES (automated validator rejects ANY of these â€” do not use even once):
 {all_banned}
 
 ALSO BANNED (meta-commentary the validator catches):
 {leak_banned}
 
-BANNED PUNCTUATION: No em dashes (—) or en dashes (–). Use commas or periods.
+BANNED PUNCTUATION: No em dashes (â€”) or en dashes (â€“). Use commas or periods.
 
 VOICE:
 - Write like a real professional emailing someone they respect. Not formal, not casual. Just direct.
@@ -116,7 +116,7 @@ Output ONLY the letter text. No subject lines. No "Here is the cover letter:" pr
 Start DIRECTLY with "Dear Hiring Manager," and end with the name."""
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _strip_preamble(text: str) -> str:
     """Remove LLM preamble before 'Dear Hiring Manager,' if present.
@@ -131,7 +131,7 @@ def _strip_preamble(text: str) -> str:
     return text
 
 
-# ── Core Generation ──────────────────────────────────────────────────────
+# â”€â”€ Core Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def generate_cover_letter(
     resume_text: str, job: dict, profile: dict,
@@ -190,7 +190,7 @@ def generate_cover_letter(
             return letter
 
         avoid_notes.extend(validation["errors"])
-        # Warnings never block — only hard errors trigger a retry
+        # Warnings never block â€” only hard errors trigger a retry
         log.debug(
             "Cover letter attempt %d/%d failed: %s",
             attempt + 1, max_retries + 1, validation["errors"],
@@ -199,7 +199,7 @@ def generate_cover_letter(
     return letter  # last attempt even if failed
 
 
-# ── Batch Entry Point ────────────────────────────────────────────────────
+# â”€â”€ Batch Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def run_cover_letters(min_score: int = 7, limit: int = 0,
                       validation_mode: str = "normal") -> dict:
@@ -249,7 +249,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
             columns = jobs[0].keys()
             jobs = [dict(zip(columns, row)) for row in jobs]
         else:
-            log.error("Unexpected row type: %s — cannot process", type(jobs[0]))
+            log.error("Unexpected row type: %s â€” cannot process", type(jobs[0]))
             return {"generated": 0, "errors": len(jobs), "elapsed": 0.0}
 
     COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
@@ -279,7 +279,7 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
             # Generate PDF (best-effort)
             pdf_path = None
             try:
-                from applypilot.scoring.pdf import convert_to_pdf
+                from divapply.scoring.pdf import convert_to_pdf
                 pdf_path = str(convert_to_pdf(cl_path))
             except Exception:
                 log.debug("PDF generation failed for %s", cl_path, exc_info=True)
@@ -334,3 +334,4 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
         "errors": error_count,
         "elapsed": elapsed,
     }
+

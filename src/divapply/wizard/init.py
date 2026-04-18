@@ -1,6 +1,6 @@
-"""DivApply first-time setup wizard.
+﻿"""DivApply first-time setup wizard.
 
-Interactive flow that creates ~/.applypilot/ with:
+Interactive flow that creates ~/.divapply/ with:
   - resume.txt (and optionally resume.pdf)
   - profile.json
   - searches.yaml
@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from applypilot.config import (
+from divapply.config import (
     APP_DIR,
     ENV_PATH,
     PROFILE_PATH,
@@ -109,7 +109,7 @@ def _setup_profile() -> dict:
     profile["work_authorization"] = {
         "legally_authorized_to_work": Confirm.ask("Are you legally authorized to work in your target country?"),
         "require_sponsorship": Confirm.ask("Will you now or in the future need sponsorship?"),
-        "work_permit_type": Prompt.ask("Work permit type (e.g. Citizen, PR, Open Work Permit — leave blank if N/A)", default=""),
+        "work_permit_type": Prompt.ask("Work permit type (e.g. Citizen, PR, Open Work Permit â€” leave blank if N/A)", default=""),
     }
 
     # -- Compensation --
@@ -149,7 +149,7 @@ def _setup_profile() -> dict:
 
     # -- Resume Facts (preserved truths for tailoring) --
     console.print("\n[bold cyan]Resume Facts[/bold cyan]")
-    console.print("[dim]These are preserved exactly during resume tailoring — the AI will never change them.[/dim]")
+    console.print("[dim]These are preserved exactly during resume tailoring â€” the AI will never change them.[/dim]")
     companies = Prompt.ask("Companies to always keep (comma-separated)", default="")
     projects = Prompt.ask("Projects to always keep (comma-separated)", default="")
     school = Prompt.ask("School name(s) to preserve", default="")
@@ -234,7 +234,7 @@ def _setup_searches() -> None:
 # ---------------------------------------------------------------------------
 
 def _setup_ai_features() -> None:
-    """Ask about AI scoring/tailoring — optional LLM configuration."""
+    """Ask about AI scoring/tailoring â€” optional LLM configuration."""
     console.print(Panel(
         "[bold]Step 4: AI Features (optional)[/bold]\n"
         "An LLM powers job scoring, resume tailoring, and cover letters.\n"
@@ -242,7 +242,7 @@ def _setup_ai_features() -> None:
     ))
 
     if not Confirm.ask("Enable AI scoring and resume tailoring?", default=True):
-        console.print("[dim]Discovery-only mode. You can configure AI later with [bold]divapply init[/bold].[/dim]")
+            console.print("[dim]Discovery-only mode. You can configure AI later with [bold]divapply init[/bold].[/dim]")
         return
 
     console.print("Supported providers: [bold]Gemini[/bold] (recommended, free tier), OpenAI, local (Ollama/llama.cpp)")
@@ -252,7 +252,7 @@ def _setup_ai_features() -> None:
         default="gemini",
     )
 
-    env_lines = ["# DivApply configuration", ""]
+        env_lines = ["# divapply configuration", ""]
 
     if provider == "gemini":
         api_key = Prompt.ask("Gemini API key (from aistudio.google.com)")
@@ -283,16 +283,16 @@ def _setup_auto_apply() -> None:
     """Configure autonomous job application (requires an apply agent CLI)."""
     console.print(Panel(
         "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
-        "DivApply can autonomously fill and submit job applications\n"
+        "divapply can autonomously fill and submit job applications\n"
         "using Codex or Claude Code as the browser agent."
     ))
 
     if not Confirm.ask("Enable autonomous job applications?", default=True):
-        console.print("[dim]You can apply manually using the tailored resumes DivApply generates.[/dim]")
+        console.print("[dim]You can apply manually using the tailored resumes divapply generates.[/dim]")
         return
 
     # Check for an apply agent CLI
-    from applypilot.config import get_apply_backend, get_apply_backend_label
+    from divapply.config import get_apply_backend, get_apply_backend_label
     backend = get_apply_backend()
     if backend:
         console.print(f"[green]{get_apply_backend_label(backend)} detected.[/green]")
@@ -316,7 +316,7 @@ def _setup_auto_apply() -> None:
                     encoding="utf-8",
                 )
         else:
-            ENV_PATH.write_text(f"# DivApply configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
+            ENV_PATH.write_text(f"# divapply configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
         console.print("[green]CapSolver key saved.[/green]")
     else:
         console.print("[dim]Skipped. Add CAPSOLVER_API_KEY to .env later if needed.[/dim]")
@@ -331,7 +331,7 @@ def run_wizard() -> None:
     console.print()
     console.print(
         Panel.fit(
-            "[bold green]DivApply Setup Wizard[/bold green]\n\n"
+            "[bold green]divapply Setup Wizard[/bold green]\n\n"
             "This will create your configuration at:\n"
             f"  [cyan]{APP_DIR}[/cyan]\n\n"
             "You can re-run this anytime with [bold]divapply init[/bold].",
@@ -362,8 +362,8 @@ def run_wizard() -> None:
     _setup_auto_apply()
     console.print()
 
-    # Done — show tier status
-    from applypilot.config import get_tier, TIER_LABELS, TIER_COMMANDS
+    # Done â€” show tier status
+    from divapply.config import get_tier, TIER_LABELS, TIER_COMMANDS
 
     tier = get_tier()
 
@@ -372,11 +372,11 @@ def run_wizard() -> None:
         label = TIER_LABELS[t]
         cmds = ", ".join(f"[bold]{c}[/bold]" for c in TIER_COMMANDS[t])
         if t <= tier:
-            tier_lines.append(f"  [green]✓ Tier {t} — {label}[/green]  ({cmds})")
+            tier_lines.append(f"  [green]âœ“ Tier {t} â€” {label}[/green]  ({cmds})")
         elif t == tier + 1:
-            tier_lines.append(f"  [yellow]→ Tier {t} — {label}[/yellow]  ({cmds})")
+            tier_lines.append(f"  [yellow]â†’ Tier {t} â€” {label}[/yellow]  ({cmds})")
         else:
-            tier_lines.append(f"  [dim]✗ Tier {t} — {label}  ({cmds})[/dim]")
+            tier_lines.append(f"  [dim]âœ— Tier {t} â€” {label}  ({cmds})[/dim]")
 
     unlock_hint = ""
     if tier == 1:
@@ -387,9 +387,10 @@ def run_wizard() -> None:
     console.print(
         Panel.fit(
             "[bold green]Setup complete![/bold green]\n\n"
-            f"[bold]Your tier: Tier {tier} — {TIER_LABELS[tier]}[/bold]\n\n"
+            f"[bold]Your tier: Tier {tier} â€” {TIER_LABELS[tier]}[/bold]\n\n"
             + "\n".join(tier_lines)
             + unlock_hint,
             border_style="green",
         )
     )
+

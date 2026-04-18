@@ -1,4 +1,4 @@
-"""Job fit scoring: LLM-powered evaluation of candidate-job match quality.
+﻿"""Job fit scoring: LLM-powered evaluation of candidate-job match quality.
 
 Scores jobs on a 1-10 scale by comparing the user's resume against each
 job description. All personal data is loaded at runtime from the user's
@@ -11,14 +11,14 @@ import re
 import time
 from datetime import datetime, timezone
 
-from applypilot.config import RESUME_PATH, load_profile
-from applypilot.database import get_connection, get_jobs_by_stage
-from applypilot.llm import get_client_for_stage
+from divapply.config import RESUME_PATH, load_profile
+from divapply.database import get_connection, get_jobs_by_stage
+from divapply.llm import get_client_for_stage
 
 log = logging.getLogger(__name__)
 
 
-# ── Scoring Prompt ────────────────────────────────────────────────────────
+# â”€â”€ Scoring Prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 SCORE_PROMPT = """You are a neutral job fit evaluator. Read the candidate's resume and the job posting carefully, then score how well the candidate qualifies for this specific role on a 1-10 scale.
 
@@ -29,7 +29,7 @@ SCORING CRITERIA:
 - 3-4: Weak match. Some transferable skills but significant gaps. Candidate could apply but is unlikely to be competitive.
 - 1-2: Incompatible. Role requires specific licensure, certification, or field experience the candidate does not have and cannot substitute.
 
-AUTOMATIC SCORE = 1 (do not evaluate further) if ANY of these are true — SCAM/JUNK SIGNALS:
+AUTOMATIC SCORE = 1 (do not evaluate further) if ANY of these are true â€” SCAM/JUNK SIGNALS:
 - Job description is vague, generic, or could apply to any industry with no specific duties
 - Company name is missing, hidden, or listed only as "Confidential" or "Our Client"
 - No company website, physical address, or verifiable business presence mentioned
@@ -227,3 +227,4 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
         "distribution": distribution,
         "pruned": pruned,
     }
+

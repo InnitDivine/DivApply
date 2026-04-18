@@ -1,4 +1,4 @@
-"""AI-powered smart extraction: discovers jobs from arbitrary websites.
+﻿"""AI-powered smart extraction: discovers jobs from arbitrary websites.
 
 Two-phase approach:
   Phase 1: Lightweight intelligence (JSON-LD, API responses, data-testids, DOM stats)
@@ -28,10 +28,10 @@ import yaml
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from applypilot import config
-from applypilot.config import CONFIG_DIR
-from applypilot.database import get_connection, init_db, store_jobs, get_stats
-from applypilot.llm import get_client
+from divapply import config
+from divapply.config import CONFIG_DIR
+from divapply.database import get_connection, init_db, store_jobs, get_stats
+from divapply.llm import get_client
 
 log = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
-# Selector cache — stores winning extraction plans so LLM discovery is skipped on re-runs
+# Selector cache â€” stores winning extraction plans so LLM discovery is skipped on re-runs
 _PLAN_CACHE_PATH = config.APP_DIR / "selector_cache.json"
 
 
@@ -213,7 +213,7 @@ def collect_page_intelligence(url: str, headless: bool = True) -> dict:
         try:
             page.wait_for_load_state("networkidle", timeout=60000)
         except Exception:
-            # networkidle timeout is non-fatal — use whatever was captured
+            # networkidle timeout is non-fatal â€” use whatever was captured
             pass
 
         intel["page_title"] = page.title()
@@ -918,7 +918,7 @@ def execute_css_selectors(intel: dict) -> tuple[dict, list[dict]]:
 
 
 def apply_css_selectors_cached(intel: dict, selectors: dict) -> list[dict]:
-    """Apply pre-cached CSS selectors to page HTML — no LLM call needed."""
+    """Apply pre-cached CSS selectors to page HTML â€” no LLM call needed."""
     full_html = intel.get("full_html", "")
     if not full_html:
         return []
@@ -964,7 +964,7 @@ def _run_one_site(name: str, url: str, cached_plan: dict | None = None) -> dict:
     try:
         intel = collect_page_intelligence(url)
     except Exception as e:
-        log.warning("Page load failed for %s: %s — skipping", url[:80], e)
+        log.warning("Page load failed for %s: %s â€” skipping", url[:80], e)
         return {"name": name, "status": "SKIP", "error": str(e), "total": 0,
                 "titles": 0, "jobs": [], "plan": None, "cache_hit": False}
     collect_time = time.time() - t0
@@ -988,10 +988,10 @@ def _run_one_site(name: str, url: str, cached_plan: dict | None = None) -> dict:
         log.warning("CAPTCHA/rate-limit detected -- skipping headful retry")
 
     if cached_plan:
-        # Cache hit — skip all LLM calls, apply stored strategy directly
+        # Cache hit â€” skip all LLM calls, apply stored strategy directly
         plan = cached_plan
         strategy = plan.get("strategy", "?")
-        log.info("[CACHE HIT] strategy=%s — skipping LLM discovery", strategy)
+        log.info("[CACHE HIT] strategy=%s â€” skipping LLM discovery", strategy)
     else:
         # Step 1.5: Judge filters API responses
         if intel["api_responses"]:
@@ -1185,7 +1185,7 @@ def _run_all(
             cached = cache.get(target["name"])
         r = _run_one_site(target["name"], target["url"], cached_plan=cached)
         if r.get("cache_hit") and r["status"] == "FAIL":
-            log.info("Cache invalid for %s — re-discovering", target["name"])
+            log.info("Cache invalid for %s â€” re-discovering", target["name"])
             with cache_lock:
                 cache.pop(target["name"], None)
             r = _run_one_site(target["name"], target["url"])
@@ -1265,3 +1265,4 @@ def run_smart_extract(
              search_sites, static_sites, len(targets), workers)
 
     return _run_all(targets, accept_locs, reject_locs, title_excludes, workers=workers)
+
