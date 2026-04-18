@@ -1,12 +1,12 @@
-# Contributing to divapply
+# Contributing to DivApply
 
-Thanks for helping improve divapply. This project is a Windows-first, AI-assisted job application pipeline, and changes should be checked carefully before merge.
+Thanks for helping improve DivApply. This project is a Windows-first, AI-assisted job application pipeline, and changes should be checked carefully before merge.
 
 ## Local Setup
 
 ```bash
-git clone https://github.com/InnitDivine/divapply.git
-cd divapply
+git clone https://github.com/InnitDivine/DivApply.git
+cd DivApply
 pip install -e ".[dev]"
 divapply --version
 ```
@@ -19,6 +19,6 @@ divapply --version
 
 ## Contributing Notes
 
-- Keep the public CLI and docs aligned with `divapply`.
+- Keep the public CLI and docs aligned with DivApply.
 - Prefer small, reviewable changes.
 - If you use AI-assisted code generation, review the result before commit.

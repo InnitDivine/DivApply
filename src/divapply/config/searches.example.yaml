@@ -1,5 +1,5 @@
 ﻿# DivApply search configuration
-# Copy to ~/.DivApply/searches.yaml and customize for your job search.
+# Copy to ~/.divapply/searches.yaml and customize for your job search.
 # The wizard (divapply init) generates a basic version automatically.
 
 # Search queries -- each has a query string and priority tier.

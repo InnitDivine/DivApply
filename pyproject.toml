@@ -1,7 +1,7 @@
 [project]
 name = "divapply"
 version = "0.3.0"
-description = "divapply: AI-assisted end-to-end job application pipeline"
+description = "DivApply: AI-assisted end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
 requires-python = ">=3.11"
@@ -35,9 +35,9 @@ dev = ["pytest>=7.0", "ruff>=0.1"]
 divapply = "divapply.cli:app"
 
 [project.urls]
-Homepage = "https://github.com/InnitDivine/divapply"
-Repository = "https://github.com/InnitDivine/divapply"
-Issues = "https://github.com/InnitDivine/divapply/issues"
+Homepage = "https://github.com/InnitDivine/DivApply"
+Repository = "https://github.com/InnitDivine/DivApply"
+Issues = "https://github.com/InnitDivine/DivApply/issues"
 
 [build-system]
 requires = ["hatchling"]

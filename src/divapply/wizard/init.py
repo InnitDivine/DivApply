@@ -252,7 +252,7 @@ def _setup_ai_features() -> None:
         default="gemini",
     )
 
-        env_lines = ["# divapply configuration", ""]
+    env_lines = ["# DivApply configuration", ""]
 
     if provider == "gemini":
         api_key = Prompt.ask("Gemini API key (from aistudio.google.com)")
@@ -283,12 +283,12 @@ def _setup_auto_apply() -> None:
     """Configure autonomous job application (requires an apply agent CLI)."""
     console.print(Panel(
         "[bold]Step 5: Auto-Apply (optional)[/bold]\n"
-        "divapply can autonomously fill and submit job applications\n"
+        "DivApply can autonomously fill and submit job applications\n"
         "using Codex or Claude Code as the browser agent."
     ))
 
     if not Confirm.ask("Enable autonomous job applications?", default=True):
-        console.print("[dim]You can apply manually using the tailored resumes divapply generates.[/dim]")
+        console.print("[dim]You can apply manually using the tailored resumes DivApply generates.[/dim]")
         return
 
     # Check for an apply agent CLI
@@ -316,7 +316,7 @@ def _setup_auto_apply() -> None:
                     encoding="utf-8",
                 )
         else:
-            ENV_PATH.write_text(f"# divapply configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
+            ENV_PATH.write_text(f"# DivApply configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
         console.print("[green]CapSolver key saved.[/green]")
     else:
         console.print("[dim]Skipped. Add CAPSOLVER_API_KEY to .env later if needed.[/dim]")
@@ -331,7 +331,7 @@ def run_wizard() -> None:
     console.print()
     console.print(
         Panel.fit(
-            "[bold green]divapply Setup Wizard[/bold green]\n\n"
+            "[bold green]DivApply Setup Wizard[/bold green]\n\n"
             "This will create your configuration at:\n"
             f"  [cyan]{APP_DIR}[/cyan]\n\n"
             "You can re-run this anytime with [bold]divapply init[/bold].",

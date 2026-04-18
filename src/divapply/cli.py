@@ -38,8 +38,8 @@ VALID_STAGES = ("discover", "enrich", "score", "tailor", "cover", "pdf")
 
 def _bootstrap() -> None:
     """Common setup: load env, create dirs, init DB."""
-from divapply.config import load_env, ensure_dirs
-from divapply.database import init_db
+    from divapply.config import load_env, ensure_dirs
+    from divapply.database import init_db
 
     load_env()
     ensure_dirs()
