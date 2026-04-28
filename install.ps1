@@ -1,4 +1,5 @@
 param(
+    [switch]$Help,
     [switch]$Dev,
     [switch]$Recreate,
     [switch]$SkipJobSpy,
@@ -11,6 +12,26 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Help) {
+    Write-Host @"
+DivApply installer
+
+Usage:
+  install
+  install -Dev
+  install -Init
+  install -Recreate
+  install -SkipBrowsers
+  install -SkipJobSpy
+  install -Browsers all
+
+PowerShell:
+  .\install.ps1
+  .\install.ps1 -Help
+"@
+    exit 0
+}
 
 $bootstrap = Join-Path $PSScriptRoot "tools\bootstrap.ps1"
 if (-not (Test-Path $bootstrap)) {

@@ -28,34 +28,57 @@ DivApply runs in stages:
 
 ## Install
 
-### Quick install from GitHub on Windows
+### Quick Install From GitHub On Windows
 
 1. Install Git.
 2. Install the official Python 3.11+ release from [python.org](https://www.python.org/downloads/).
 3. Clone the repo and run the installer:
 
-```powershell
+```bat
 git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
-.\install.ps1
+install
 ```
 
 The installer creates a local `.venv`, installs DivApply, installs JobSpy support, downloads the Playwright browsers used for PDF export and auto-apply, prepares `~/.divapply`, and runs `divapply doctor`.
 
-If PowerShell blocks local scripts, run this once from the repo folder:
+If you are already inside PowerShell, either command works:
 
 ```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\install.ps1
 ```
 
-If you want an editable development setup, use:
+If PowerShell blocks local scripts, run this from the repo folder:
 
 ```powershell
-.\install.ps1 -Dev
+powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
 ```
 
-To run the interactive setup wizard immediately after install:
+Or from Command Prompt:
+
+```bat
+install
+```
+
+If you want an editable development setup from Command Prompt, use:
+
+```bat
+install -Dev
+```
+
+From PowerShell:
+
+```powershell
+.\install.ps1
+```
+
+To run the interactive setup wizard immediately after install from Command Prompt:
+
+```bat
+install -Init
+```
+
+From PowerShell:
 
 ```powershell
 .\install.ps1 -Init
@@ -91,12 +114,24 @@ bash ./install.sh --python /path/to/python3.11
 
 ### Installer options
 
+```bat
+install -Dev              # editable install with test/lint tools
+install -Recreate         # rebuild the .venv from scratch
+install -SkipBrowsers     # skip Playwright browser downloads
+install -SkipJobSpy       # skip python-jobspy
+install -Browsers all     # install chromium, firefox, and webkit
+install -Help             # show installer help
+```
+
+PowerShell users can use the same options with `.\install.ps1`:
+
 ```powershell
 .\install.ps1 -Dev              # editable install with test/lint tools
 .\install.ps1 -Recreate         # rebuild the .venv from scratch
 .\install.ps1 -SkipBrowsers     # skip Playwright browser downloads
 .\install.ps1 -SkipJobSpy       # skip python-jobspy
 .\install.ps1 -Browsers all     # install chromium, firefox, and webkit
+.\install.ps1 -Help             # show installer help
 ```
 
 ### Manual install

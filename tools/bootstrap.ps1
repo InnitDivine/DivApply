@@ -1,4 +1,5 @@
 param(
+    [switch]$Help,
     [switch]$Dev,
     [switch]$Recreate,
     [switch]$SkipJobSpy,
@@ -11,6 +12,33 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($Help) {
+    Write-Host @"
+DivApply installer
+
+Usage:
+  install
+  install -Dev
+  install -Init
+  install -Recreate
+  install -SkipBrowsers
+  install -SkipJobSpy
+  install -Browsers all
+
+Options:
+  -Dev             Install editable development dependencies.
+  -Recreate        Delete and recreate the virtual environment.
+  -SkipJobSpy      Skip python-jobspy install.
+  -SkipBrowsers    Skip Playwright browser downloads.
+  -SkipDoctor      Skip divapply doctor after install.
+  -Init            Run the interactive divapply init wizard.
+  -PythonCommand   Python 3.11+ interpreter to use.
+  -VenvDir         Virtual environment directory. Default: .venv
+  -Browsers        chromium, firefox, webkit, all, or none.
+"@
+    exit 0
+}
 
 function Write-Step {
     param([string]$Message)
