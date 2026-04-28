@@ -28,11 +28,40 @@ DivApply runs in stages:
 
 ## Install
 
-### Quick Install From GitHub On Windows
+### Quick Install
 
-1. Install Git.
-2. Install the official Python 3.11+ release from [python.org](https://www.python.org/downloads/).
-3. Clone the repo and run the installer:
+Once DivApply is published to PyPI:
+
+```bash
+pip install divapply
+pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex
+python -m playwright install chromium firefox
+divapply init              # one-time setup: resume, profile, preferences, API keys
+divapply doctor            # verify setup and show what's missing
+divapply run               # discover > enrich > score > tailor > cover letters
+divapply run -w 4          # same but parallel
+divapply apply             # autonomous browser-driven submission
+divapply apply -w 3        # parallel apply workers
+divapply apply --dry-run   # fill forms without submitting
+```
+
+Before the first PyPI release is published, install directly from GitHub:
+
+```bash
+pip install git+https://github.com/InnitDivine/DivApply.git
+pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex
+python -m playwright install chromium firefox
+```
+
+Why the second install command? `python-jobspy` pins an exact NumPy version in its metadata that can fight pip's resolver. Installing JobSpy with `--no-deps`, then installing its real runtime dependencies separately, avoids that resolver trap.
+
+`divapply apply` also needs Node.js 18+ for `npx` and either the Codex CLI or Claude Code CLI.
+
+### Clone Install
+
+Use this if you want a local checkout, development setup, or the all-in-one installer.
+
+Windows Command Prompt:
 
 ```bat
 git clone https://github.com/InnitDivine/DivApply.git
@@ -40,51 +69,13 @@ cd DivApply
 install
 ```
 
-The installer creates a local `.venv`, installs DivApply, installs JobSpy support, downloads the Playwright browsers used for PDF export and auto-apply, prepares `~/.divapply`, and runs `divapply doctor`.
-
-If you are already inside PowerShell, either command works:
+PowerShell:
 
 ```powershell
 .\install.ps1
 ```
 
-If PowerShell blocks local scripts, run this from the repo folder:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\install.ps1
-```
-
-Or from Command Prompt:
-
-```bat
-install
-```
-
-If you want an editable development setup from Command Prompt, use:
-
-```bat
-install -Dev
-```
-
-From PowerShell:
-
-```powershell
-.\install.ps1
-```
-
-To run the interactive setup wizard immediately after install from Command Prompt:
-
-```bat
-install -Init
-```
-
-From PowerShell:
-
-```powershell
-.\install.ps1 -Init
-```
-
-### macOS and Linux
+macOS/Linux:
 
 ```bash
 git clone https://github.com/InnitDivine/DivApply.git
@@ -92,30 +83,15 @@ cd DivApply
 bash ./install.sh
 ```
 
-For editable development:
+The clone installer creates a local `.venv`, installs DivApply, installs JobSpy support, downloads Playwright browsers, prepares `~/.divapply`, and runs `divapply doctor`.
 
-```bash
-bash ./install.sh --dev
-```
+### Installer Options
 
-### If `python` is not on PATH
-
-If Windows cannot find `python` or `py`, point the installer at a full interpreter path:
-
-```powershell
-.\install.ps1 -PythonCommand "C:\Path\To\python.exe"
-```
-
-On macOS/Linux:
-
-```bash
-bash ./install.sh --python /path/to/python3.11
-```
-
-### Installer options
+Windows Command Prompt:
 
 ```bat
 install -Dev              # editable install with test/lint tools
+install -Init             # run divapply init after installing
 install -Recreate         # rebuild the .venv from scratch
 install -SkipBrowsers     # skip Playwright browser downloads
 install -SkipJobSpy       # skip python-jobspy
@@ -123,18 +99,35 @@ install -Browsers all     # install chromium, firefox, and webkit
 install -Help             # show installer help
 ```
 
-PowerShell users can use the same options with `.\install.ps1`:
+PowerShell:
 
 ```powershell
-.\install.ps1 -Dev              # editable install with test/lint tools
-.\install.ps1 -Recreate         # rebuild the .venv from scratch
-.\install.ps1 -SkipBrowsers     # skip Playwright browser downloads
-.\install.ps1 -SkipJobSpy       # skip python-jobspy
-.\install.ps1 -Browsers all     # install chromium, firefox, and webkit
-.\install.ps1 -Help             # show installer help
+.\install.ps1 -Dev
+.\install.ps1 -Init
+.\install.ps1 -Recreate
+.\install.ps1 -SkipBrowsers
+.\install.ps1 -SkipJobSpy
+.\install.ps1 -Browsers all
+.\install.ps1 -Help
 ```
 
-### Manual install
+macOS/Linux:
+
+```bash
+bash ./install.sh --dev
+bash ./install.sh --init
+bash ./install.sh --recreate
+bash ./install.sh --skip-browsers
+bash ./install.sh --skip-jobspy
+bash ./install.sh --browsers all
+bash ./install.sh --python /path/to/python3.11
+```
+
+### Publishing To PyPI
+
+This repo includes a GitHub Actions workflow for PyPI Trusted Publishing. See [PUBLISHING.md](PUBLISHING.md) for the one-time PyPI setup and release commands.
+
+### Manual Local Install
 
 If you already have a working Python 3.11+ environment:
 
