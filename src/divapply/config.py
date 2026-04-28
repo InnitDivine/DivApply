@@ -375,16 +375,21 @@ def get_apply_browser_label(browser: str | None) -> str:
     return APPLY_BROWSER_LABELS.get(browser, browser)
 
 
-def get_tier() -> int:
-    """Detect the current tier based on available dependencies."""
+def get_tier(preferred_backend: str | None = None, preferred_browser: str | None = None) -> int:
+    """Detect the current tier based on available dependencies.
+
+    Args:
+        preferred_backend: Optional backend to evaluate instead of the env/default backend.
+        preferred_browser: Optional browser to evaluate instead of the env/default browser.
+    """
     load_env()
 
     has_llm = any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL"))
     if not has_llm:
         return 1
 
-    has_apply_agent = get_apply_backend() is not None
-    browser = get_apply_browser()
+    has_apply_agent = get_apply_backend(preferred_backend) is not None
+    browser = get_apply_browser(preferred_browser)
     has_browser = True
     if browser == "chrome":
         try:
@@ -392,15 +397,20 @@ def get_tier() -> int:
         except FileNotFoundError:
             has_browser = False
 
-    if has_apply_agent and has_browser:
+    if has_apply_agent and has_browser and shutil.which("npx") is not None:
         return 3
 
     return 2
 
 
-def check_tier(required: int, feature: str) -> None:
+def check_tier(
+    required: int,
+    feature: str,
+    preferred_backend: str | None = None,
+    preferred_browser: str | None = None,
+) -> None:
     """Raise SystemExit with a clear message if the current tier is too low."""
-    current = get_tier()
+    current = get_tier(preferred_backend=preferred_backend, preferred_browser=preferred_browser)
     if current >= required:
         return
 
@@ -412,11 +422,11 @@ def check_tier(required: int, feature: str) -> None:
     if required >= 2 and not any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
         missing.append("LLM API key â€” run [bold]divapply init[/bold] or set GEMINI_API_KEY")
     if required >= 3:
-        if get_apply_backend() is None:
+        if get_apply_backend(preferred_backend) is None:
             missing.append("Apply agent CLI â€” install Codex or Claude Code for auto-apply")
         if shutil.which("npx") is None:
             missing.append("Node.js / npx â€” install Node.js 18+ for Playwright MCP")
-        if get_apply_browser() == "chrome":
+        if get_apply_browser(preferred_browser) == "chrome":
             try:
                 get_chrome_path()
             except FileNotFoundError:

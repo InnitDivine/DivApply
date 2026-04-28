@@ -28,32 +28,75 @@ DivApply runs in stages:
 
 ## Install
 
-### Quick install from GitHub
+### Quick install from GitHub on Windows
 
 1. Install Git.
 2. Install the official Python 3.11+ release from [python.org](https://www.python.org/downloads/).
-3. Clone the repo and run the bootstrap script:
+3. Clone the repo and run the installer:
 
 ```powershell
 git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
-.\tools\bootstrap.ps1
+.\install.ps1
 ```
 
-That script creates a local `.venv`, installs DivApply, and runs `divapply doctor` for you.
+The installer creates a local `.venv`, installs DivApply, installs JobSpy support, downloads the Playwright browsers used for PDF export and auto-apply, prepares `~/.divapply`, and runs `divapply doctor`.
+
+If PowerShell blocks local scripts, run this once from the repo folder:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\install.ps1
+```
 
 If you want an editable development setup, use:
 
 ```powershell
-.\tools\bootstrap.ps1 -Dev
+.\install.ps1 -Dev
+```
+
+To run the interactive setup wizard immediately after install:
+
+```powershell
+.\install.ps1 -Init
+```
+
+### macOS and Linux
+
+```bash
+git clone https://github.com/InnitDivine/DivApply.git
+cd DivApply
+bash ./install.sh
+```
+
+For editable development:
+
+```bash
+bash ./install.sh --dev
 ```
 
 ### If `python` is not on PATH
 
-If Windows cannot find `python` or `py`, point the bootstrap script at a full interpreter path:
+If Windows cannot find `python` or `py`, point the installer at a full interpreter path:
 
 ```powershell
-.\tools\bootstrap.ps1 -PythonCommand "C:\Path\To\python.exe"
+.\install.ps1 -PythonCommand "C:\Path\To\python.exe"
+```
+
+On macOS/Linux:
+
+```bash
+bash ./install.sh --python /path/to/python3.11
+```
+
+### Installer options
+
+```powershell
+.\install.ps1 -Dev              # editable install with test/lint tools
+.\install.ps1 -Recreate         # rebuild the .venv from scratch
+.\install.ps1 -SkipBrowsers     # skip Playwright browser downloads
+.\install.ps1 -SkipJobSpy       # skip python-jobspy
+.\install.ps1 -Browsers all     # install chromium, firefox, and webkit
 ```
 
 ### Manual install
@@ -61,13 +104,17 @@ If Windows cannot find `python` or `py`, point the bootstrap script at a full in
 If you already have a working Python 3.11+ environment:
 
 ```powershell
-pip install .
+pip install ".[full]"
+pip install --no-deps python-jobspy
+python -m playwright install chromium firefox
 ```
 
 For editable development:
 
 ```powershell
-pip install -e .
+pip install -e ".[dev,full]"
+pip install --no-deps python-jobspy
+python -m playwright install chromium firefox
 ```
 
 After installing, run:
@@ -152,5 +199,5 @@ python -m py_compile src/divapply/**/*.py
 - The codebase uses the `divapply` Python package.
 - The primary public branding and CLI entry point is `DivApply`.
 - Migration notes and legacy compatibility items live in [MIGRATION_CHECKLIST.md](MIGRATION_CHECKLIST.md).
-- Auto-apply on a fresh machine usually needs Node.js `npx` plus Playwright browser binaries. If Firefox is missing, run `npx playwright install firefox` once before using `divapply apply`.
+- Auto-apply on a fresh machine needs Node.js `npx`, an apply agent CLI such as Codex or Claude Code, and Playwright browser binaries. The installer downloads the browser binaries; rerun `.\install.ps1 -Browsers firefox` if Firefox is missing.
 - Browser-based auto-apply can be risky. Use dry runs and review the generated prompt files if you are testing a new setup.

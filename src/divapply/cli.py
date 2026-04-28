@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 from typing import Optional
 from pathlib import Path
 
@@ -307,16 +308,17 @@ def apply(
 
     # --- Full apply mode ---
 
-    # Check 1: Tier 3 required (apply agent CLI + Chrome)
+    # Check 1: Tier 3 required (apply agent CLI + browser runtime + Node.js)
     resolved_browser = get_apply_browser(browser)
+    resolved_backend = get_apply_backend(backend)
+    default_model = "sonnet" if resolved_backend == "claude" else "gpt-5.4-mini"
     resolved_model = (
         model
         or os.environ.get("LLM_MODEL_APPLY")
         or os.environ.get("LLM_MODEL")
-        or "gpt-5.4-mini"
+        or default_model
     )
-    check_tier(3, "auto-apply")
-    resolved_backend = get_apply_backend(backend)
+    check_tier(3, "auto-apply", preferred_backend=backend, preferred_browser=browser)
     if resolved_backend is None:
         console.print(
             "[red]No supported apply backend found.[/red]\n"

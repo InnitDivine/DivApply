@@ -242,7 +242,7 @@ def _setup_ai_features() -> None:
     ))
 
     if not Confirm.ask("Enable AI scoring and resume tailoring?", default=True):
-            console.print("[dim]Discovery-only mode. You can configure AI later with [bold]divapply init[/bold].[/dim]")
+        console.print("[dim]Discovery-only mode. You can configure AI later with [bold]divapply init[/bold].[/dim]")
         return
 
     console.print("Supported providers: [bold]Gemini[/bold] (recommended, free tier), OpenAI, local (Ollama/llama.cpp)")
