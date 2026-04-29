@@ -25,7 +25,7 @@ Options:
   --skip-browsers       Skip Playwright browser downloads.
   --skip-doctor         Skip divapply doctor after install.
   --init                Run the interactive divapply init wizard.
-  --python PATH         Python 3.11+ interpreter to use.
+  --python PATH         Python interpreter to use. Python 3.12 recommended; JobSpy needs 3.11 or 3.12.
   --venv DIR            Virtual environment directory. Default: .venv
   --browsers LIST       Playwright browsers: chromium,firefox,webkit,all,none.
   -h, --help            Show this help.
@@ -88,6 +88,10 @@ fi
 
 step "Checking Python version"
 "$venv_python" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 'DivApply requires Python 3.11+')"
+
+if [[ "$skip_jobspy" -eq 0 ]]; then
+  "$venv_python" -c "import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 13) else 'Full JobSpy setup requires Python 3.11 or 3.12 because python-jobspy pins numpy==1.26.3. Use Python 3.12, set DIVAPPLY_PYTHON, pass --python, or rerun with --skip-jobspy.')"
+fi
 
 step "Upgrading pip"
 "$venv_python" -m pip install --upgrade pip setuptools wheel
