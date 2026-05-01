@@ -244,6 +244,54 @@ def load_search_config() -> dict:
     return yaml.safe_load(raw)
 
 
+def validate_search_config(cfg: dict | None = None) -> dict:
+    """Validate search config shape without contacting job boards."""
+    if cfg is None:
+        cfg = load_search_config()
+    cfg = cfg or {}
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    queries = cfg.get("queries", [])
+    locations = cfg.get("locations", [])
+    if not isinstance(queries, list) or not queries:
+        errors.append("searches.yaml needs a non-empty queries list")
+    if not isinstance(locations, list) or not locations:
+        errors.append("searches.yaml needs a non-empty locations list")
+
+    for idx, query in enumerate(queries if isinstance(queries, list) else []):
+        if not isinstance(query, dict) or not query.get("query"):
+            errors.append(f"queries[{idx}] needs a query string")
+
+    for idx, location in enumerate(locations if isinstance(locations, list) else []):
+        if not isinstance(location, dict) or not location.get("location"):
+            errors.append(f"locations[{idx}] needs a location string")
+
+    boards = cfg.get("sites") or cfg.get("boards") or []
+    if boards and not isinstance(boards, list):
+        errors.append("sites/boards must be a list")
+
+    filters = cfg.get("filters", {}) or {}
+    list_fields = (
+        "exclude_titles",
+        "title_blacklist",
+        "company_blacklist",
+        "required_keywords",
+        "excluded_keywords",
+    )
+    for key in list_fields:
+        value = cfg.get(key, filters.get(key, []))
+        if value and not isinstance(value, list):
+            errors.append(f"{key} must be a list")
+
+    remote_pref = str(cfg.get("remote_preference") or filters.get("remote_preference") or "any").lower()
+    if remote_pref not in {"any", "all", "none", "no_preference", "remote", "remote_only", "hybrid", "hybrid_only", "onsite", "on_site", "office"}:
+        warnings.append(f"remote_preference '{remote_pref}' is unknown; it will be treated as any")
+
+    return {"passed": not errors, "errors": errors, "warnings": warnings}
+
+
 def load_sites_config() -> dict:
     """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
     import yaml

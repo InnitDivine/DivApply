@@ -32,9 +32,9 @@ DivApply runs in stages:
 
 Use Python 3.12 for the full DivApply setup.
 
-DivApply core supports Python 3.11+, but full job-board discovery uses `python-jobspy`, and JobSpy currently pins `numpy==1.26.3`. That NumPy version does not have wheels for newer Python releases such as Python 3.14. If you want JobSpy-backed discovery, use Python 3.11 or 3.12; Python 3.12 is recommended.
+DivApply core supports Python 3.11+, but full job-board discovery uses `python-jobspy`, and JobSpy currently pins `numpy==1.26.3`. That NumPy pin can fail on newer Python releases such as Python 3.13 and Python 3.14. If you want JobSpy-backed discovery, use Python 3.11 or 3.12; Python 3.12 is recommended.
 
-Avoid Python 3.14 for the full setup until JobSpy updates its dependency pins.
+Avoid Python 3.13/3.14 for the full setup until JobSpy updates its dependency pins.
 
 Windows example:
 
@@ -63,9 +63,10 @@ divapply init              # one-time setup: resume, profile, preferences, API k
 divapply doctor            # verify setup and show what's missing
 divapply run               # discover > enrich > score > tailor > cover letters
 divapply run -w 4          # same but parallel
-divapply apply             # autonomous browser-driven submission
+divapply apply --dry-run   # browser test without final submit
+divapply apply --yes       # confirmed autonomous browser-driven submission
 divapply apply -w 3        # parallel apply workers
-divapply apply --dry-run   # fill forms without submitting
+divapply selfcheck         # offline local sanity check
 ```
 
 Before the first PyPI release is published, install directly from GitHub:
@@ -80,6 +81,8 @@ python -m playwright install chromium firefox
 Why the separate JobSpy install commands? `python-jobspy` pins an exact NumPy version in its metadata. Installing JobSpy with `--no-deps`, then installing the compatible runtime pins separately, avoids resolver conflicts and makes Python-version problems obvious.
 
 `divapply apply` also needs Node.js 18+ for `npx` and either the Codex CLI or Claude Code CLI.
+
+Privacy details live in [docs/PRIVACY.md](docs/PRIVACY.md).
 
 ### Clone Install
 
@@ -208,8 +211,49 @@ divapply apply --dry-run
 divapply status
 divapply dashboard
 divapply import-coursework path\to\transcript.json
+divapply coursework-summary
+divapply export jobs --out jobs.csv
+divapply selfcheck
 divapply migrate
 ```
+
+## Master Resume Workflow
+
+Treat `~/.divapply/resume.txt` as the master resume. Keep it broad, truthful, and complete enough to cover real work history, projects, skills, education, and certifications. DivApply never treats tailored resumes as new facts; each generated resume is a job-specific view of the master resume plus profile data and hidden coursework summaries.
+
+Recommended loop:
+
+1. Update `resume.txt` and `profile.json` with only verified facts.
+2. Run `divapply run score tailor --validation strict` for high-risk roles or `--validation normal` for daily use.
+3. Review generated resumes and reports in `~/.divapply/tailored_resumes/`.
+4. Convert/export only after factuality and coherence checks pass.
+
+Validation modes:
+
+- `strict`: banned wording, structure issues, fabrication, and judge failures block output.
+- `normal`: banned wording warns; fabrication and structure issues block output.
+- `lenient`: skips style strictness and LLM judge, but keeps core fabrication checks.
+- `none`: skips validation; use only for debugging.
+
+Tailoring rules:
+
+- Never invent jobs, employers, credentials, licenses, degrees, skills, coursework, tools, dates, or metrics.
+- Rephrase and emphasize only truthful material already in `resume.txt`, `profile.json`, or hidden coursework summaries.
+- Coursework can influence matching/tailoring decisions, but it is not copied into resumes unless it already belongs in the resume.
+
+## Scoring Transparency
+
+Scoring stores safe, human-readable fields:
+
+- `fit_score`
+- `score_reasoning`
+- `matched_skills`
+- `missing_skills`
+- `keyword_hits`
+- `risk_flags`
+- `apply_or_skip_reason`
+
+Status/export commands do not print full private resume, profile, transcript, or database text.
 
 ## Configuration
 
@@ -229,6 +273,7 @@ You can add coursework with:
 
 ```bash
 divapply import-coursework path\to\file.json
+divapply coursework-summary
 ```
 
 Supported import formats:
@@ -237,6 +282,61 @@ Supported import formats:
 - CSV
 - plain text
 - PDF transcripts if `pypdf` is installed
+
+`divapply coursework-summary` shows only row count, schools, subject areas, inferred skills, and import sources. It never dumps transcript text.
+
+## Search Filters
+
+`searches.yaml` supports safe filters:
+
+```yaml
+filters:
+  company_blacklist:
+    - "Example Staffing"
+  title_blacklist:
+    - "intern"
+  required_keywords:
+    - "python"
+  excluded_keywords:
+    - "clearance"
+  remote_preference: "remote"  # any, remote, hybrid, onsite
+```
+
+Older keys still work: `exclude_titles`, `title_blacklist`, `company_blacklist`, `required_keywords`, `excluded_keywords`, and `remote_preference`.
+
+## Export And Tracking
+
+Export safe job tracking fields:
+
+```bash
+divapply export jobs --out jobs.csv
+divapply export jobs --out jobs.json --format json
+```
+
+Exported columns: title, site, url, application_url, fit_score, apply_status, discovered_at, scored_at, tailored_at, applied_at, and a redacted apply_error snippet.
+
+## Auto-Apply Safety
+
+No real submissions are run unless you confirm them.
+
+```bash
+divapply apply --dry-run
+divapply apply --gen --url https://example.com/job
+divapply apply --mark-applied https://example.com/job
+divapply apply --mark-failed https://example.com/job --fail-reason "manual review"
+divapply apply --reset-failed
+divapply apply --yes
+```
+
+Use `--dry-run` first on new sites. `--gen --url ...` writes a prompt for manual review. `--yes` confirms real browser submission mode.
+
+## Offline Selfcheck
+
+```bash
+divapply selfcheck
+```
+
+Selfcheck verifies imports, Python version, JobSpy import, config paths, DB init, coursework count, and local directories. It does not call job boards, LLMs, browsers, apply agents, or external sites.
 
 ## Build
 

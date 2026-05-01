@@ -29,6 +29,10 @@ Usage:
 PowerShell:
   .\install.ps1
   .\install.ps1 -Help
+
+Python:
+  Python 3.12 is recommended for full JobSpy support.
+  Python 3.13/3.14 may fail with python-jobspy/numpy pins.
 "@
     exit 0
 }

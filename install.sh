@@ -26,6 +26,7 @@ Options:
   --skip-doctor         Skip divapply doctor after install.
   --init                Run the interactive divapply init wizard.
   --python PATH         Python interpreter to use. Python 3.12 recommended; JobSpy needs 3.11 or 3.12.
+                        Python 3.13/3.14 may fail with python-jobspy/numpy pins.
   --venv DIR            Virtual environment directory. Default: .venv
   --browsers LIST       Playwright browsers: chromium,firefox,webkit,all,none.
   -h, --help            Show this help.

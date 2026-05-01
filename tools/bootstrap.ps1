@@ -34,6 +34,7 @@ Options:
   -SkipDoctor      Skip divapply doctor after install.
   -Init            Run the interactive divapply init wizard.
   -PythonCommand   Python interpreter to use. Python 3.12 recommended; JobSpy needs 3.11 or 3.12.
+                   Python 3.13/3.14 may fail with python-jobspy/numpy pins.
   -VenvDir         Virtual environment directory. Default: .venv
   -Browsers        chromium, firefox, webkit, all, or none.
 "@

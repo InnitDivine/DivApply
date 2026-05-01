@@ -54,9 +54,13 @@ IMPORTANT NOTES:
 - Use only evidence from the resume and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
-SCORE: [1-10]
-KEYWORDS: [comma-separated ATS keywords from the job description matching the candidate]
-REASONING: [1-2 sentences]"""
+FIT_SCORE: [1-10]
+MATCHED_SKILLS: [comma-separated verified candidate skills that match this job]
+MISSING_SKILLS: [comma-separated important requirements not supported by the resume/coursework, or "none"]
+KEYWORD_HITS: [comma-separated job-description keywords that are truthfully supported]
+RISK_FLAGS: [comma-separated concerns like scam, license gap, location, low detail, or "none"]
+APPLY_OR_SKIP_REASON: [one short human-readable apply/skip reason]
+SCORE_REASONING: [1-2 sentences explaining the score]"""
 
 
 def _parse_score_response(response: str) -> dict:
@@ -66,26 +70,41 @@ def _parse_score_response(response: str) -> dict:
         response: Raw LLM response text.
 
     Returns:
-        {"score": int, "keywords": str, "reasoning": str}
+        Structured scoring fields ready for database storage.
     """
     score = 0
-    keywords = ""
-    reasoning = response
+    fields = {
+        "matched_skills": "",
+        "missing_skills": "",
+        "keyword_hits": "",
+        "risk_flags": "",
+        "apply_or_skip_reason": "",
+        "reasoning": response.strip(),
+    }
 
     for line in response.split("\n"):
         line = line.strip()
-        if line.startswith("SCORE:"):
+        upper = line.upper()
+        if upper.startswith(("FIT_SCORE:", "SCORE:")):
             try:
                 score = int(re.search(r"\d+", line).group())
                 score = max(1, min(10, score))
             except (AttributeError, ValueError):
                 score = 0
-        elif line.startswith("KEYWORDS:"):
-            keywords = line.replace("KEYWORDS:", "").strip()
-        elif line.startswith("REASONING:"):
-            reasoning = line.replace("REASONING:", "").strip()
+        elif upper.startswith("MATCHED_SKILLS:"):
+            fields["matched_skills"] = line.split(":", 1)[1].strip()
+        elif upper.startswith("MISSING_SKILLS:"):
+            fields["missing_skills"] = line.split(":", 1)[1].strip()
+        elif upper.startswith(("KEYWORD_HITS:", "KEYWORDS:")):
+            fields["keyword_hits"] = line.split(":", 1)[1].strip()
+        elif upper.startswith("RISK_FLAGS:"):
+            fields["risk_flags"] = line.split(":", 1)[1].strip()
+        elif upper.startswith("APPLY_OR_SKIP_REASON:"):
+            fields["apply_or_skip_reason"] = line.split(":", 1)[1].strip()
+        elif upper.startswith(("SCORE_REASONING:", "REASONING:")):
+            fields["reasoning"] = line.split(":", 1)[1].strip()
 
-    return {"score": score, "keywords": keywords, "reasoning": reasoning}
+    return {"score": score, **fields}
 
 
 def score_job(
@@ -101,7 +120,7 @@ def score_job(
         job: Job dict with keys: title, site, location, full_description.
 
     Returns:
-        {"score": int, "keywords": str, "reasoning": str}
+        Structured scoring fields.
     """
     job_text = (
         f"TITLE: {job['title']}\n"
@@ -128,7 +147,15 @@ def score_job(
         return _parse_score_response(response)
     except Exception as e:
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
-        return {"score": 0, "keywords": "", "reasoning": f"LLM error: {e}"}
+        return {
+            "score": 0,
+            "matched_skills": "",
+            "missing_skills": "",
+            "keyword_hits": "",
+            "risk_flags": "llm_error",
+            "apply_or_skip_reason": "Skip until scoring succeeds.",
+            "reasoning": f"LLM error: {e}",
+        }
 
 
 def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> dict:
@@ -192,8 +219,29 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
     now = datetime.now(timezone.utc).isoformat()
     for r in results:
         conn.execute(
-            "UPDATE jobs SET fit_score = ?, score_reasoning = ?, scored_at = ? WHERE url = ?",
-            (r["score"], f"{r['keywords']}\n{r['reasoning']}", now, r["url"]),
+            """
+            UPDATE jobs
+            SET fit_score = ?,
+                score_reasoning = ?,
+                matched_skills = ?,
+                missing_skills = ?,
+                keyword_hits = ?,
+                risk_flags = ?,
+                apply_or_skip_reason = ?,
+                scored_at = ?
+            WHERE url = ?
+            """,
+            (
+                r["score"],
+                r["reasoning"],
+                r.get("matched_skills", ""),
+                r.get("missing_skills", ""),
+                r.get("keyword_hits", ""),
+                r.get("risk_flags", ""),
+                r.get("apply_or_skip_reason", ""),
+                now,
+                r["url"],
+            ),
         )
     conn.commit()
 

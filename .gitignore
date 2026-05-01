@@ -1,19 +1,33 @@
 # User data (NEVER commit)
+.divapply/
+.applypilot/
 profile.json
 resume.txt
 resume.pdf
 *.env
 .env.*
 !.env.example
+coursework/
+transcripts/
 
 # Runtime artifacts
 *.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+divapply.db*
+applypilot.db*
 tailored_resumes/
 cover_letters/
 chrome-workers/
 apply-workers/
 apply_logs/
 logs/
+*.log
+screenshots/
+social_screenshots/
+.mcp-apply-*.json
 .venv/
 .vendor/
 academic_progress.txt

@@ -83,14 +83,64 @@ def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
 
     Falls back to sensible defaults if not defined in the YAML.
     """
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
+    location_cfg = search_cfg.get("location", {}) or {}
+    accept = (
+        search_cfg.get("location_accept")
+        or location_cfg.get("accept_patterns")
+        or []
+    )
+    reject = (
+        search_cfg.get("location_reject_non_remote")
+        or location_cfg.get("reject_patterns")
+        or []
+    )
     return accept, reject
 
 
 def _load_title_excludes(search_cfg: dict) -> list[str]:
     """Load title exclusion patterns from search config (case-insensitive)."""
-    return [t.lower() for t in search_cfg.get("exclude_titles", [])]
+    raw = []
+    raw.extend(search_cfg.get("exclude_titles", []) or [])
+    raw.extend(search_cfg.get("title_blacklist", []) or [])
+    filters = search_cfg.get("filters", {}) or {}
+    raw.extend(filters.get("title_blacklist", []) or [])
+    return [str(t).lower() for t in raw if str(t).strip()]
+
+
+def _load_filter_rules(search_cfg: dict) -> dict:
+    """Load optional AIHawk-style filters from search config."""
+    filters = search_cfg.get("filters", {}) or {}
+    return {
+        "company_blacklist": [
+            str(v).lower() for v in (
+                search_cfg.get("company_blacklist", [])
+                or filters.get("company_blacklist", [])
+                or []
+            )
+            if str(v).strip()
+        ],
+        "required_keywords": [
+            str(v).lower() for v in (
+                search_cfg.get("required_keywords", [])
+                or filters.get("required_keywords", [])
+                or []
+            )
+            if str(v).strip()
+        ],
+        "excluded_keywords": [
+            str(v).lower() for v in (
+                search_cfg.get("excluded_keywords", [])
+                or filters.get("excluded_keywords", [])
+                or []
+            )
+            if str(v).strip()
+        ],
+        "remote_preference": str(
+            search_cfg.get("remote_preference")
+            or filters.get("remote_preference")
+            or "any"
+        ).strip().lower(),
+    }
 
 
 def _title_ok(title: str | None, excludes: list[str]) -> bool:
@@ -99,6 +149,67 @@ def _title_ok(title: str | None, excludes: list[str]) -> bool:
         return True
     t = title.lower()
     return not any(ex in t for ex in excludes)
+
+
+def _row_text(row) -> str:
+    """Combine safe job fields for keyword filtering."""
+    parts = []
+    for key in ("title", "company", "location", "description"):
+        val = row.get(key, "")
+        if val is not None and str(val) != "nan":
+            parts.append(str(val))
+    return " ".join(parts).lower()
+
+
+def _company_ok(company: str | None, blacklist: list[str]) -> bool:
+    if not company or not blacklist:
+        return True
+    c = company.lower()
+    return not any(blocked in c for blocked in blacklist)
+
+
+def _keywords_ok(text: str, required: list[str], excluded: list[str]) -> bool:
+    if required and not all(keyword in text for keyword in required):
+        return False
+    return not any(keyword in text for keyword in excluded)
+
+
+def _remote_preference_ok(row, preference: str) -> bool:
+    """Best-effort remote/on-site preference filter."""
+    if preference in ("", "any", "all", "no_preference", "none"):
+        return True
+
+    location = str(row.get("location", "") or "").lower()
+    description = str(row.get("description", "") or "").lower()
+    is_remote = bool(row.get("is_remote", False)) or any(
+        token in f"{location} {description}"
+        for token in ("remote", "work from home", "wfh", "anywhere", "distributed")
+    )
+    is_hybrid = "hybrid" in f"{location} {description}"
+    is_onsite = any(token in f"{location} {description}" for token in ("onsite", "on-site", "in office"))
+
+    if preference in ("remote", "remote_only"):
+        return is_remote
+    if preference in ("hybrid", "hybrid_only"):
+        return is_hybrid
+    if preference in ("onsite", "on_site", "office"):
+        return is_onsite or not is_remote
+    return True
+
+
+def _job_row_passes_filters(row, filter_rules: dict) -> bool:
+    """Apply optional company/keyword/remote filters to one JobSpy row."""
+    company = str(row.get("company", "")) if str(row.get("company", "")) != "nan" else None
+    text = _row_text(row)
+    return (
+        _company_ok(company, filter_rules.get("company_blacklist", []))
+        and _keywords_ok(
+            text,
+            filter_rules.get("required_keywords", []),
+            filter_rules.get("excluded_keywords", []),
+        )
+        and _remote_preference_ok(row, filter_rules.get("remote_preference", "any"))
+    )
 
 
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
@@ -211,6 +322,7 @@ def _run_one_search(
     reject_locs: list[str],
     glassdoor_map: dict,
     title_excludes: list[str] | None = None,
+    filter_rules: dict | None = None,
 ) -> dict:
     """Run a single search query and store results in DB."""
     s = search
@@ -302,6 +414,12 @@ def _run_one_search(
         ), axis=1)]
         filtered_title = before_title - len(df)
 
+    filtered_rules = 0
+    if filter_rules:
+        before_rules = len(df)
+        df = df[df.apply(lambda row: _job_row_passes_filters(row, filter_rules), axis=1)]
+        filtered_rules = before_rules - len(df)
+
     conn = get_connection()
     new, existing = store_jobspy_results(conn, df, s["query"])
 
@@ -310,13 +428,15 @@ def _run_one_search(
         msg += f", {filtered_loc} filtered (location)"
     if filtered_title:
         msg += f", {filtered_title} filtered (title)"
+    if filtered_rules:
+        msg += f", {filtered_rules} filtered (rules)"
     log.info(msg)
 
     return {
         "new": new,
         "existing": existing,
         "errors": 0,
-        "filtered": filtered_loc + filtered_title,
+        "filtered": filtered_loc + filtered_title + filtered_rules,
         "total": before,
         "label": label,
     }
@@ -418,6 +538,7 @@ def _full_crawl(
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
     accept_locs, reject_locs = _load_location_config(search_cfg)
     title_excludes = _load_title_excludes(search_cfg)
+    filter_rules = _load_filter_rules(search_cfg)
 
     if tiers:
         queries = [q for q in queries if q.get("tier") in tiers]
@@ -467,6 +588,7 @@ def _full_crawl(
             proxy_cfg, defaults, max_retries,
             accept_locs, reject_locs, glassdoor_map,
             title_excludes,
+            filter_rules,
         )
 
     if workers > 1:
@@ -536,7 +658,7 @@ def run_discovery(cfg: dict | None = None, workers: int = 4) -> dict:
         return {"new": 0, "existing": 0, "errors": 0, "db_total": 0, "queries": 0}
 
     proxy = cfg.get("proxy")
-    sites = cfg.get("sites")
+    sites = cfg.get("sites") or cfg.get("boards")
     results_per_site = cfg.get("defaults", {}).get("results_per_site", 100)
     hours_old = cfg.get("defaults", {}).get("hours_old", 72)
     tiers = cfg.get("tiers")

@@ -29,6 +29,11 @@ def _resolve_db_path(db_path: Path | str | None = None) -> Path:
     return DB_PATH
 
 
+def get_active_db_path(db_path: Path | str | None = None) -> Path:
+    """Return the database path DivApply will use."""
+    return _resolve_db_path(db_path)
+
+
 def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
     """Get a thread-local cached SQLite connection with WAL mode enabled.
 
@@ -81,7 +86,8 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     Schema columns by stage:
       - Discovery:  url, title, salary, description, location, site, strategy, discovered_at
       - Enrichment: full_description, application_url, detail_scraped_at, detail_error
-      - Scoring:    fit_score, score_reasoning, scored_at
+      - Scoring:    fit_score, score_reasoning, matched_skills, missing_skills,
+                   keyword_hits, risk_flags, apply_or_skip_reason, scored_at
       - Tailoring:  tailored_resume_path, tailored_at, tailor_attempts
       - Cover:      cover_letter_path, cover_letter_at, cover_attempts
       - Apply:      applied_at, apply_status, apply_error, apply_attempts,
@@ -121,6 +127,11 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             -- Scoring stage (job_scorer)
             fit_score             INTEGER,
             score_reasoning       TEXT,
+            matched_skills        TEXT,
+            missing_skills        TEXT,
+            keyword_hits          TEXT,
+            risk_flags            TEXT,
+            apply_or_skip_reason  TEXT,
             scored_at             TEXT,
 
             -- Tailoring stage (resume tailor)
@@ -178,6 +189,11 @@ _ALL_COLUMNS: dict[str, str] = {
     # Scoring
     "fit_score": "INTEGER",
     "score_reasoning": "TEXT",
+    "matched_skills": "TEXT",
+    "missing_skills": "TEXT",
+    "keyword_hits": "TEXT",
+    "risk_flags": "TEXT",
+    "apply_or_skip_reason": "TEXT",
     "scored_at": "TEXT",
     # Tailoring
     "tailored_resume_path": "TEXT",
@@ -422,6 +438,54 @@ def get_coursework(conn: sqlite3.Connection | None = None) -> list[dict]:
 
     columns = rows[0].keys()
     return [dict(zip(columns, row)) for row in rows]
+
+
+def get_coursework_summary(conn: sqlite3.Connection | None = None) -> dict:
+    """Return safe coursework metadata without transcript text."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_coursework_table(conn)
+    rows = conn.execute(
+        """
+        SELECT school, subject_area, source, skills
+        FROM coursework
+        ORDER BY school, subject_area, source
+        """
+    ).fetchall()
+
+    schools: set[str] = set()
+    subject_areas: set[str] = set()
+    import_sources: set[str] = set()
+    inferred_skills: set[str] = set()
+
+    for row in rows:
+        if row["school"]:
+            schools.add(str(row["school"]).strip())
+        if row["subject_area"]:
+            subject_areas.add(str(row["subject_area"]).strip())
+        if row["source"]:
+            import_sources.add(str(row["source"]).strip())
+
+        raw_skills = row["skills"] or ""
+        parsed: list[str]
+        if isinstance(raw_skills, str):
+            try:
+                loaded = json.loads(raw_skills)
+                parsed = loaded if isinstance(loaded, list) else []
+            except json.JSONDecodeError:
+                parsed = [part.strip() for part in raw_skills.split(",") if part.strip()]
+        else:
+            parsed = []
+        inferred_skills.update(str(skill).strip() for skill in parsed if str(skill).strip())
+
+    return {
+        "row_count": len(rows),
+        "schools": sorted(schools),
+        "subject_areas": sorted(subject_areas),
+        "inferred_skills": sorted(inferred_skills),
+        "import_sources": sorted(import_sources),
+    }
 
 
 def get_stats(conn: sqlite3.Connection | None = None) -> dict:

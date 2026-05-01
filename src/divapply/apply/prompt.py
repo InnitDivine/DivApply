@@ -29,6 +29,7 @@ def _build_profile_summary(profile: dict) -> str:
     exp = p.get("experience", {})
     avail = p.get("availability", {})
     eeo = p.get("eeo_voluntary", {})
+    standard = p.get("standard_answers", {})
 
     lines = [
         f"Name: {personal['full_name']}",
@@ -74,13 +75,13 @@ def _build_profile_summary(profile: dict) -> str:
     # Availability
     lines.append(f"Available: {avail.get('earliest_start_date', 'Immediately')}")
 
-    # Standard responses
+    # Standard responses stay profile-driven. Use "See profile" when absent.
     lines.extend([
-        "Age 18+: Yes",
-        "Background Check: Yes",
-        "Felony: No",
-        "Previously Worked Here: No",
-        "How Heard: Online Job Board",
+        f"Age 18+: {standard.get('age_18_plus', 'See profile')}",
+        f"Background Check: {standard.get('background_check', 'See profile')}",
+        f"Felony: {standard.get('felony', 'See profile')}",
+        f"Previously Worked Here: {standard.get('previously_worked_here', 'See profile')}",
+        f"How Heard: {standard.get('how_heard', 'Online Job Board')}",
     ])
 
     # EEO
@@ -201,6 +202,66 @@ Decision tree:
 6. Hourly rate? -> Divide your annual answer by 2080. ({hourly_line})"""
 
 
+def _build_education_rules(profile: dict) -> str:
+    """Build education form instructions from profile schools."""
+    schools = profile.get("education_schools", [])
+    if not schools:
+        return "Education: answer from the profile/resume only. Do not invent schools, degrees, dates, GPA, or credentials."
+
+    lines = [
+        "EDUCATION FORM RULES (all ATS/government education sections):",
+        f"  Enter up to {len(schools)} school(s), most recent first, if the form allows it.",
+        "  Highest education should match the most recent/current school in the profile.",
+    ]
+    for idx, school in enumerate(schools, 1):
+        received = school.get("degree_received", False)
+        end_year = school.get("end_year", "")
+        if not received and str(end_year).lower() == "present":
+            status = "in progress"
+        elif not received:
+            status = "not completed"
+        else:
+            status = "received"
+        minor = f" | Minor: {school.get('minor')}" if school.get("minor") else ""
+        gpa = f" | GPA: {school.get('gpa')}" if school.get("gpa") else ""
+        lines.append(
+            f"    {idx}. {school.get('school', 'School')} | {school.get('city_state', '')} | "
+            f"Major: {school.get('major', 'N/A')}{minor} | Degree: {school.get('degree', 'N/A')} "
+            f"({status}) | Units: {school.get('units', 'N/A')} {school.get('units_type', 'units')}"
+            f"{gpa} | {school.get('start_year', '')}-{end_year}"
+        )
+    lines.append("  If the form has fewer school slots, enter the most recent/current schools first.")
+    lines.append("  Do not copy transcript text into essays unless the question specifically asks for coursework.")
+    return "\n".join(lines)
+
+
+def _build_application_context(profile: dict) -> str:
+    """Build a safe source-fact block for open-ended application answers."""
+    facts: list[str] = []
+    for key in ("application_context", "answer_context", "supplemental_context"):
+        value = profile.get(key)
+        if isinstance(value, list):
+            facts.extend(str(item).strip() for item in value if str(item).strip())
+        elif isinstance(value, str) and value.strip():
+            facts.append(value.strip())
+
+    resume_facts = profile.get("resume_facts", {})
+    for company in resume_facts.get("preserved_companies", [])[:4]:
+        facts.append(f"Real employer to preserve when relevant: {company}")
+    for project in resume_facts.get("preserved_projects", [])[:3]:
+        facts.append(f"Real project to preserve when relevant: {project}")
+    for metric in resume_facts.get("real_metrics", [])[:5]:
+        facts.append(f"Verified metric: {metric}")
+
+    coursework_skills = profile.get("coursework_skills", [])
+    if coursework_skills:
+        facts.append("Coursework skill map, internal only: " + "; ".join(coursework_skills[:3]))
+
+    if not facts:
+        return "Use only the profile, tailored resume, cover letter, and job description. Do not invent examples."
+    return "\n".join(f"  - {fact}" for fact in facts)
+
+
 def _build_screening_section(profile: dict) -> str:
     """Build the screening questions guidance section."""
     personal = profile["personal"]
@@ -209,6 +270,9 @@ def _build_screening_section(profile: dict) -> str:
     years = exp.get("years_of_experience_total", "multiple")
     target_role = exp.get("target_role", personal.get("current_job_title", "software engineer"))
     work_auth = profile["work_authorization"]
+    eeo = profile.get("eeo_voluntary", {})
+    background_block = _build_application_context(profile)
+    education_rules = _build_education_rules(profile)
 
     return f"""== SCREENING QUESTIONS (be strategic) ==
 Hard facts -> answer truthfully from the profile. No guessing. This includes:
@@ -217,7 +281,7 @@ Hard facts -> answer truthfully from the profile. No guessing. This includes:
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
 
-Skills and tools -> be confident. This candidate is a {target_role} with {years} years experience. If the question asks "Do you have experience with [tool]?" and it's in the same domain (DevOps, backend, ML, cloud, automation), answer YES. Software engineers learn tools fast. Don't sell short.
+Skills and tools -> answer only from verified profile/resume/coursework facts. This candidate is a {target_role} with {years} years experience, but total experience does not mean direct experience with every tool. If unsupported, answer No or explain transferable experience honestly.
 
 ABSOLUTE RULE: NEVER leave ANY required field blank. NEVER click Next or Submit with unanswered required fields.
   - If a field has "Error: This field is required" or an asterisk (*), it MUST be filled before proceeding.
@@ -232,19 +296,15 @@ Open-ended / essay questions -> NEVER leave a required text field blank. You MUS
   5. If the question is about an area where experience is indirect, connect transferable skills honestly.
   6. If the candidate has NO experience in the area asked, be honest but frame it constructively: "While I do not have direct [X] experience, I bring [transferable skill] from [real experience]." NEVER leave it blank.
 
-BACKGROUND FOR COMMUNITY/RECREATION/SENIOR PROGRAM QUESTIONS:
-  - Candidate currently works at City of Roseville Parks, Recreation & Libraries -- direct public recreation experience
-  - Serves the public daily at a high-volume municipal counter across Parks, Recreation, and Libraries divisions
-  - Has processed program registrations, facility permits, and fee payments for recreation programs
-  - Public Health degree (in progress) includes coursework relevant to community health and services
-  - Government operations experience spans multiple departments and age groups
-  Use this context when answering questions about senior programs, recreation coordination, community engagement, or working with the public.
+SAFE ANSWER CONTEXT:
+{background_block}
+Use only these facts, the profile, the tailored resume, the cover letter, and the job description. Never invent employer duties, credentials, tools, coursework, or dates.
 
-CalPERS questions -> "Are you a CalPERS member?" = No. "Are you a CalPERS retiree?" = No.
-Previously employed here -> No (unless the job site matches current/former employers in the profile).
-Related to employee -> No.
-Under 18 / work permit -> N/A (candidate is an adult).
-Acknowledge salary / background check checkboxes -> Always check/acknowledge these.
+Retirement system questions -> answer from profile/question bank only.
+Previously employed here -> answer from current/former employers in the profile.
+Related to employee -> answer from profile/question bank only.
+Under 18 / work permit -> answer from profile/question bank only.
+Acknowledge salary / background check checkboxes when they are required acknowledgments and do not contradict profile facts.
 
 RADIO BUTTON + CONDITIONAL TEXT BOX PATTERN (extremely common on government forms):
 Many questions are a Yes/No radio followed by a text box. The text box may say "If yes, explain", "If no, put N/A", or it may say NOTHING at all â€” just a blank text box sitting below the radio.
@@ -258,40 +318,30 @@ RULES:
   - The text box may be on the NEXT line, indented, or appear after a follow-up question number â€” scroll carefully and check every field after each radio answer
 
 COMMON RADIO ANSWERS for government applications:
-  - "Have you ever been employed here before?" -> No -> text box = N/A
-  - "Are you related to a current employee?" -> No -> text box = N/A
-  - "Are you a CalPERS member/retiree?" -> No
-  - "Are you under 18?" -> No (or N/A on permit field)
-  - "Do you have a valid driver's license?" -> Yes (candidate has a license)
-  - "Are you willing to work overtime?" -> Yes
-  - "Are you willing to work weekends/evenings?" -> Yes
-  - Shift availability checkboxes -> Check ALL options available: Day âœ…, Evening âœ…, Nights âœ…, Weekends âœ…, Holidays âœ… â€” select everything, candidate is fully flexible
-  - "Where did you hear about this position?" -> GovernmentJobs Website / Internet / Other (pick whichever matches the site)
+  - "Have you ever been employed here before?" -> answer from profile and current/former employer list; if no match, No -> text box = N/A
+  - "Are you related to a current employee?" -> answer from profile/question bank; if unknown, No -> text box = N/A
+  - Retirement system membership -> answer from profile/question bank only
+  - "Are you under 18?" -> answer from profile; adult applicants usually answer No
+  - "Do you have a valid driver's license?" -> answer from profile/question bank only
+  - Overtime/weekend/evening availability -> answer from profile availability only
+  - Shift availability checkboxes -> select only options supported by profile availability
+  - "Where did you hear about this position?" -> choose the closest truthful source, usually online job board
 
-EEO / Voluntary Self-Identification / Agency Questions -> Use the REAL answers below. Do NOT select "Decline to state" or "Prefer not to say":
-  - Gender: Male
-  - Preferred Pronoun: he/him
-  - Race/Ethnicity: White (Not Hispanic or Latino) â€” pick whichever option matches "White" and is NOT Hispanic/Latino
-  - Veteran status: I am not a protected veteran / Not a veteran / No (select whatever option means not a veteran)
-  - Disability status: I do not have a disability / No disability (do NOT select "Decline to state" or "I don't wish to answer")
+EEO / Voluntary Self-Identification / Agency Questions -> Use the profile's real voluntary answers. Do not guess:
+  - Gender: {eeo.get('gender', 'Decline to self-identify')}
+  - Preferred Pronoun: {eeo.get('preferred_pronoun', eeo.get('pronouns', 'Decline to self-identify'))}
+  - Race/Ethnicity: {eeo.get('race_ethnicity', 'Decline to self-identify')}
+  - Veteran status: {eeo.get('veteran_status', 'Decline to self-identify')}
+  - Disability status: {eeo.get('disability_status', 'Decline to self-identify')}
   - Related to employee at this agency: No -> text box = N/A
   - Currently employed at this agency: No
   - How did you hear about this position: GovernmentJobs.com (or closest match like "Internet", "Online Job Board", "Government Jobs Website")
   - If "Other" for how heard: leave blank or type "Online Job Board"
   - Tribal affiliation: N/A
-  These are voluntary disclosures â€” always fill them with the real answer, never decline.
+  These are voluntary disclosures. Use the profile's real answer, including decline/prefer-not-to-answer when that is what the profile says.
   CRITICAL: Agency Questions sections often appear BEFORE supplemental questions. Fill ALL of them. Do not skip any.
 
-EDUCATION FORM RULES (applies to all ATS / government application education sections):
-  The candidate's education path: UNR (first) â†’ TMCC (transferred, got Associate's) â†’ University of the Cumberlands (current/highest, pursuing Bachelor's).
-  "Highest education" = University of the Cumberlands (B.S. in progress). On dropdowns, select "Bachelor's Degree" or "Some College" â€” never stop at "Associate's" even though that's the highest completed.
-  Always enter all THREE schools, most recent first:
-    1. University of the Cumberlands â€” Williamsburg, KY â€” Major: Public Health â€” Minor: Business â€” Degree: Bachelor of Science (in progress) â€” Degree received: No â€” ~101 semester units â€” GPA 3.692 â€” 2024â€“present
-    2. Truckee Meadows Community College â€” Reno, NV â€” Major: General Studies â€” Minor: Business â€” Degree: Associate of General Studies â€” Degree received: Yes (May 2024) â€” 17 semester units â€” GPA 2.92 â€” 2023â€“2024
-    3. University of Nevada, Reno â€” Reno, NV â€” Major: Community Health Sciences â€” Minor: Business â€” Degree: Bachelor of Science (not completed) â€” Degree received: No â€” 71 semester units â€” GPA 3.358 â€” 2019â€“2022
-  If the form only allows 2 schools, enter #1 and #2 and skip #3.
-  If the form has an "Add Another School" or "+ Add Education" button, click it to add the third entry.
-  Never leave UNR out if there is room for it.
+{education_rules}
 
 CIVIL SERVICE / GOVERNMENT SUPPLEMENTAL QUESTIONNAIRE RULES:
 Government agencies (NEOGOV, GovernmentJobs, Workday government portals) often have a dedicated "Supplemental Questions" page. These are MANDATORY â€” you cannot submit without answering all of them.
@@ -343,50 +393,15 @@ browser_evaluate function: () => {{
     return false;
   }}
 
-  // === IT ENVIRONMENTS / TOOLS (Q04 equivalent â€” 21 options) ===
-  results.it_env = checkAll(['applications development','cloud applications','computer hardware','desktop operating system','enterprise resource planning','help desk','service desk','i.t. security','it security','microsoft office','network connectivity','remote assistance','server applications','server operating system','training end users','other']);
+  // === CHECKBOX / RADIO GROUPS ===
+  // Do not bulk-select skill boxes here. Read each question first and select only options supported by profile/resume facts.
+  results.supported_only = true;
 
-  // === IT SUPPORT EXPERIENCE (Q05 equivalent) ===
-  results.it_support = checkAll(['deploying devices','end user technical support','installing','configuring','monitoring applications','monitoring devices','file backup','service request','user account administration']);
+  // Acknowledgments, career-fair radios, and skill boxes need question-specific factual answers.
+  results.manual_review_required = true;
 
-  // === FORMAL TRAINING (Q03 equivalent) ===
-  results.training = checkAll(['business software','computer hardware diagnostic','computer operating system','computer programming','customer service','cybersecurity','enterprise resource planning','network operations','server operations','other']);
-
-  // === DOCUMENTATION EXPERIENCE (Q07 equivalent) ===
-  results.docs = checkAll(['application software operation','equipment operating','program documentation','training materials','troubleshooting procedure','other']);
-
-  // === YEARS EXPERIENCE RADIO â€” pick "3 years or more" or highest bracket ===
-  results.yrs = clickRadio('3 years or more') || clickRadio('3 or more') || clickRadio('more than 2');
-
-  // === ACKNOWLEDGMENTS â€” drug test, read requirements, "I have read" ===
-  results.ack = checkAll(['i have read','i understand']) + (clickRadio('yes') ? 1 : 0);
-
-  // === CAREER FAIR RADIO ===
-  results.fair = clickRadio('have not attended') || clickRadio('not attended');
-
-  // === CAREER FAIR TEXT ===
-  results.fairText = fillArea('career fair', 'None') || fillArea('name of event', 'None') || fillArea('event', 'None');
-
-  // === ESSAY / NARRATIVE (Q08) â€” fill with candidate experience ===
-  const essay = `Job Title: Customer Service Specialist
-Employer: City of Roseville
-Department/Unit: Parks, Recreation & Libraries
-Dates: September 2025 â€“ Present
-Duties: Tier 1 IT support for public kiosks and payment terminals via SSH and remote desktop tools. Active Directory user and group account administration. Documented recurring technical issues and authored a troubleshooting reference guide for front desk staff, reducing repeat IT escalations. High-volume transaction processing and real-time system error resolution at public counter.
-
-Job Title: Senior Accounting Assistant
-Employer: Nevada County Treasurer-Tax Collector
-Department/Unit: Treasurer-Tax Collector
-Dates: January 2025 â€“ May 2025
-Duties: Operated Megabyte Property Tax System and Workday ERP to process property tax transactions and vendor payments. Researched and resolved data discrepancies in the automated system. Maintained audit-ready documentation of financial workflows. Assisted staff with ERP navigation, data entry procedures, and issue resolution.
-
-Self-Directed IT Training â€“ Home Lab Administration (3+ years, ongoing):
-Administer Oracle Cloud Infrastructure running Ubuntu and Oracle Linux 9 servers with Docker containerization. Configure DNS, DHCP, SSH tunnels, port forwarding, and firewall rules. Deploy and monitor web server, media server, and application server environments. File backup and recovery via NAS. Python and Bash automation scripting. PC hardware builds, POST diagnostics, BIOS recovery. Active Directory user account management.
-
-Education:
-- B.S. Public Health (Business Administration minor) â€” University of the Cumberlands, GPA 3.692, in progress (2024â€“present)
-- A.A. General Studies â€” Truckee Meadows Community College (May 2024)
-- 71 semester credits â€” University of Nevada, Reno (2019â€“2022)`;
+  // === ESSAY / NARRATIVE ===
+  const essay = `Use only the APPLICANT PROFILE, RESUME TEXT, COVER LETTER TEXT, SAFE ANSWER CONTEXT, and JOB DESCRIPTION. Write 2-4 factual sentences. Do not invent tools, duties, credentials, schools, dates, coursework, or metrics.`;
   results.essay = fillArea('describe', essay) || fillArea('detail', essay) || fillArea('experience', essay) || fillArea('education', essay);
 
   return results;
@@ -411,24 +426,15 @@ CRITICAL: Do NOT skip a question because it appears to have some boxes checked. 
   NO for all checkbox questions: any skill, system, or certification that is not supported by the profile. "None of the above" only if it is the best factual choice.
 
 YEARS OF EXPERIENCE radios:
-  IT-specific: 3+ years -> select "3 years or more" or highest bracket
-  General experience: 8 years -> select highest available bracket
+  Select only the bracket supported by the profile/resume for the skill or job family being asked.
+  Do not reuse total work history as direct experience for a specialized skill unless the profile supports it.
 
 NARRATIVE / ESSAY text areas â€” write inline, do NOT leave blank:
-  City of Roseville, Parks Recreation & Libraries | Customer Service Specialist | Sept 2025â€“Present:
-  Tier 1 IT support for public kiosks and payment terminals via SSH and remote tools. Active Directory user/group administration. Documented recurring issues; authored troubleshooting reference guide for front desk staff. High-volume transaction processing and real-time system error resolution.
+{background_block}
 
-  Nevada County Treasurer-Tax Collector | Senior Accounting Assistant | Janâ€“May 2025:
-  Operated Megabyte Property Tax System and Workday ERP for property tax processing and vendor payments. Researched and resolved discrepancies in automated financial system records. Maintained audit-ready documentation of workflows. Assisted staff with ERP navigation and data entry.
-
-  Self-Directed Home Lab (3+ years ongoing):
-  Administer Oracle Cloud Infrastructure running Ubuntu/Oracle Linux 9 servers with Docker containers. Configure DNS, DHCP, SSH tunnels, port forwarding, and firewall rules. Deploy and monitor applications (web server, Jellyfin, game servers). NAS backup and recovery. Python/Bash automation scripting. PC builds, POST diagnostics, BIOS recovery.
-
-  Education: B.S. Public Health (Business minor) â€” University of the Cumberlands (GPA 3.692, in progress). A.A. General Studies â€” TMCC (May 2024). 71 credits â€” UNR (2019â€“2022).
-
-DRUG TEST / BACKGROUND CHECK acknowledgment -> ALWAYS "Yes". This is required and is often near the bottom of the page.
+DRUG TEST / BACKGROUND CHECK acknowledgment -> answer from profile/question bank; if it is an acknowledgement of a required hiring step, acknowledge it.
 GENERAL REQUIREMENTS / "I have read the job announcement" acknowledgment -> ALWAYS select/check it. Required.
-CAREER FAIR ATTENDANCE -> "Have not attended a career fair and/or job event." -> follow-up text = None.
+CAREER FAIR ATTENDANCE -> answer from profile/question bank; if absent, choose the closest truthful option and use N/A/None for follow-up only when true.
 HOW DID YOU HEAR -> GovernmentJobs Website / Online Job Board.
 
 BEFORE CLICKING PROCEED/NEXT â€” MANDATORY VERIFICATION:

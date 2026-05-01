@@ -26,6 +26,8 @@ app = typer.Typer(
     help="DivApply, an AI-powered end-to-end job application pipeline.",
     no_args_is_help=True,
 )
+export_app = typer.Typer(help="Export safe DivApply data.")
+app.add_typer(export_app, name="export")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -51,6 +53,19 @@ def _version_callback(value: bool) -> None:
     if value:
         console.print(f"[bold]DivApply[/bold] {__version__}")
         raise typer.Exit()
+
+
+def _safe_apply_error(value: str | None) -> str:
+    """Redact likely personal/secret data from exported error snippets."""
+    if not value:
+        return ""
+    import re
+
+    text = str(value)
+    text = re.sub(r"[\w.\-+]+@[\w.\-]+\.\w+", "[email]", text)
+    text = re.sub(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b", "[phone]", text)
+    text = re.sub(r"(?i)(api[_-]?key|token|password|secret)=\S+", r"\1=[redacted]", text)
+    return text[:240]
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +197,32 @@ def import_coursework(
     console.print(f"[green]Imported coursework entries:[/green] {inserted}")
 
 
+@app.command("coursework-summary")
+def coursework_summary() -> None:
+    """Show safe metadata about hidden coursework knowledge."""
+    _bootstrap()
+
+    from divapply.database import get_coursework_summary
+
+    summary = get_coursework_summary()
+
+    table = Table(title="Coursework Summary", show_header=True, header_style="bold cyan")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+
+    def _join(items: list[str]) -> str:
+        return ", ".join(items) if items else "none"
+
+    table.add_row("Rows", str(summary["row_count"]))
+    table.add_row("Schools", _join(summary["schools"]))
+    table.add_row("Subject areas", _join(summary["subject_areas"]))
+    table.add_row("Inferred skills", _join(summary["inferred_skills"]))
+    table.add_row("Import sources", _join(summary["import_sources"]))
+    console.print()
+    console.print(table)
+    console.print("[dim]Coursework is hidden matching/tailoring knowledge. Transcript text is not shown or exported.[/dim]\n")
+
+
 @app.command()
 def run(
     stages: Optional[list[str]] = typer.Argument(
@@ -271,6 +312,7 @@ def apply(
     mark_failed: Optional[str] = typer.Option(None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm real browser submission mode."),
 ) -> None:
     """Launch auto-apply to submit job applications."""
     _bootstrap()
@@ -391,6 +433,14 @@ def apply(
         console.print(f"  Target:   {url}")
     console.print()
 
+    if not dry_run and not yes:
+        confirmed = typer.confirm(
+            "Real auto-apply mode may click final Submit/Apply buttons. Continue?"
+        )
+        if not confirmed:
+            console.print("[dim]Cancelled. Use --dry-run to test safely or --yes to confirm real submissions.[/dim]")
+            return
+
     apply_main(
         limit=effective_limit,
         target_url=url,
@@ -410,9 +460,12 @@ def status() -> None:
     """Show pipeline statistics from the database."""
     _bootstrap()
 
-    from divapply.database import get_stats
+    import sys
+    from divapply.config import TAILORED_DIR, COVER_LETTER_DIR, PROFILE_PATH, RESUME_PATH, SEARCH_CONFIG_PATH
+    from divapply.database import get_active_db_path, get_coursework_summary, get_stats
 
     stats = get_stats()
+    coursework = get_coursework_summary()
 
     console.print("\n[bold]DivApply Pipeline Status[/bold]\n")
 
@@ -435,6 +488,20 @@ def status() -> None:
     summary.add_row("Apply errors", str(stats["apply_errors"]))
 
     console.print(summary)
+
+    runtime = Table(title="\nRuntime", show_header=True, header_style="bold blue")
+    runtime.add_column("Check", style="bold")
+    runtime.add_column("Value")
+    runtime.add_row("Python", f"{sys.version.split()[0]} ({sys.executable})")
+    runtime.add_row("DivApply", __version__)
+    runtime.add_row("Database", str(get_active_db_path()))
+    runtime.add_row("Coursework rows", str(coursework["row_count"]))
+    runtime.add_row("profile.json", "present" if PROFILE_PATH.exists() else "missing")
+    runtime.add_row("resume.txt", "present" if RESUME_PATH.exists() else "missing")
+    runtime.add_row("searches.yaml", "present" if SEARCH_CONFIG_PATH.exists() else "missing")
+    runtime.add_row("Tailored resume dir", "present" if TAILORED_DIR.exists() else "missing")
+    runtime.add_row("Cover letter dir", "present" if COVER_LETTER_DIR.exists() else "missing")
+    console.print(runtime)
 
     # Score distribution
     if stats["score_distribution"]:
@@ -471,6 +538,63 @@ def status() -> None:
     console.print()
 
 
+@export_app.command("jobs")
+def export_jobs(
+    out: Path = typer.Option(Path("jobs.csv"), "--out", "-o", help="Output file path."),
+    fmt: str = typer.Option("csv", "--format", help="Export format: csv or json."),
+) -> None:
+    """Export safe job tracking fields."""
+    _bootstrap()
+
+    from divapply.database import get_connection
+
+    fmt = fmt.lower().strip()
+    if fmt not in {"csv", "json"}:
+        console.print("[red]--format must be csv or json[/red]")
+        raise typer.Exit(code=1)
+
+    safe_columns = [
+        "title",
+        "site",
+        "url",
+        "application_url",
+        "fit_score",
+        "apply_status",
+        "discovered_at",
+        "scored_at",
+        "tailored_at",
+        "applied_at",
+        "apply_error",
+    ]
+
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT title, site, url, application_url, fit_score, apply_status,
+               discovered_at, scored_at, tailored_at, applied_at, apply_error
+        FROM jobs
+        ORDER BY discovered_at DESC, fit_score DESC
+        """
+    ).fetchall()
+
+    payload = []
+    for row in rows:
+        item = {key: row[key] for key in safe_columns}
+        item["apply_error"] = _safe_apply_error(item.get("apply_error"))
+        payload.append(item)
+
+    out.parent.mkdir(parents=True, exist_ok=True)
+    if fmt == "json":
+        out.write_text(json.dumps(payload, indent=2, ensure_ascii=True), encoding="utf-8")
+    else:
+        with out.open("w", newline="", encoding="utf-8") as fh:
+            writer = csv.DictWriter(fh, fieldnames=safe_columns)
+            writer.writeheader()
+            writer.writerows(payload)
+
+    console.print(f"[green]Exported {len(payload)} job row(s):[/green] {out}")
+
+
 @app.command()
 def dashboard() -> None:
     """Generate and open the HTML dashboard in your browser."""
@@ -482,22 +606,143 @@ def dashboard() -> None:
 
 
 @app.command()
+def selfcheck() -> None:
+    """Run offline sanity checks without calling job boards, LLMs, browsers, or apply agents."""
+    import sys
+
+    from divapply.config import (
+        APP_DIR,
+        COVER_LETTER_DIR,
+        PROFILE_PATH,
+        RESUME_PATH,
+        SEARCH_CONFIG_PATH,
+        TAILORED_DIR,
+        ensure_dirs,
+        load_env,
+        load_search_config,
+        validate_search_config,
+    )
+    from divapply.database import get_active_db_path, get_coursework_summary, init_db
+
+    load_env()
+    ensure_dirs()
+
+    checks: list[tuple[str, str, str]] = []
+
+    def add(name: str, ok: bool, note: str = "", warn: bool = False) -> None:
+        if ok:
+            status = "[green]OK[/green]"
+        elif warn:
+            status = "[yellow]WARN[/yellow]"
+        else:
+            status = "[red]FAIL[/red]"
+        checks.append((name, status, note))
+
+    py = sys.version_info
+    add("Python version", py >= (3, 11), f"{sys.version.split()[0]} ({sys.executable})")
+    add(
+        "JobSpy Python",
+        py < (3, 13),
+        "Python 3.12 recommended; Python 3.13/3.14 may fail with python-jobspy/numpy pins",
+        warn=True,
+    )
+
+    for module in ("typer", "rich", "yaml", "playwright"):
+        try:
+            __import__(module)
+            add(f"import {module}", True)
+        except Exception as exc:
+            add(f"import {module}", False, str(exc))
+
+    try:
+        __import__("jobspy")
+        add("import jobspy", True)
+    except Exception as exc:
+        add("import jobspy", False, str(exc), warn=True)
+
+    add("profile.json", PROFILE_PATH.exists(), str(PROFILE_PATH), warn=True)
+    add("resume.txt", RESUME_PATH.exists(), str(RESUME_PATH), warn=True)
+    add("searches.yaml", SEARCH_CONFIG_PATH.exists(), str(SEARCH_CONFIG_PATH), warn=True)
+
+    try:
+        conn = init_db()
+        conn.execute("SELECT 1 FROM jobs LIMIT 1")
+        add("DB init", True, str(get_active_db_path()))
+    except Exception as exc:
+        add("DB init", False, str(exc))
+
+    try:
+        summary = get_coursework_summary()
+        add("coursework rows", True, str(summary["row_count"]))
+    except Exception as exc:
+        add("coursework rows", False, str(exc), warn=True)
+
+    try:
+        search_report = validate_search_config(load_search_config())
+        note = "; ".join(search_report["errors"] + search_report["warnings"])
+        add("search config", search_report["passed"], note or "valid", warn=not search_report["passed"])
+    except Exception as exc:
+        add("search config", False, str(exc), warn=True)
+
+    for path in (APP_DIR, TAILORED_DIR, COVER_LETTER_DIR):
+        add(f"dir {path.name}", path.exists(), str(path))
+
+    table = Table(title="DivApply Offline Selfcheck", show_header=True, header_style="bold cyan")
+    table.add_column("Check", style="bold")
+    table.add_column("Status")
+    table.add_column("Note")
+    for row in checks:
+        table.add_row(*row)
+    console.print()
+    console.print(table)
+    console.print("[dim]Offline only: no job boards, LLMs, browsers, apply agents, or external sites called.[/dim]\n")
+
+    failed = [name for name, status, _ in checks if "FAIL" in status]
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def doctor() -> None:
     """Check your setup and diagnose missing requirements."""
     import shutil
+    import sys
     from divapply.config import (
-        load_env, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        SEARCH_CONFIG_PATH, ENV_PATH, get_chrome_path,
+        load_env, ensure_dirs, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
+        SEARCH_CONFIG_PATH, TAILORED_DIR, COVER_LETTER_DIR, get_chrome_path,
         get_apply_browser, get_apply_browser_label,
     )
+    from divapply.database import get_active_db_path, get_coursework_summary, init_db
 
     load_env()
+    ensure_dirs()
+    init_db()
 
     ok_mark = "[green]OK[/green]"
     fail_mark = "[red]MISSING[/red]"
     warn_mark = "[yellow]WARN[/yellow]"
 
     results: list[tuple[str, str, str]] = []  # (check, status, note)
+
+    results.append(("DivApply version", ok_mark, __version__))
+    results.append(("Python executable", ok_mark, sys.executable))
+    results.append(("Python version", ok_mark, sys.version.split()[0]))
+    if sys.version_info >= (3, 13):
+        results.append((
+            "JobSpy Python",
+            warn_mark,
+            "Python 3.12 recommended; Python 3.13/3.14 may fail with python-jobspy/numpy pins",
+        ))
+    else:
+        results.append(("JobSpy Python", ok_mark, "Python 3.12 recommended for full JobSpy support"))
+    results.append(("database path", ok_mark, str(get_active_db_path())))
+    try:
+        coursework = get_coursework_summary()
+        results.append(("coursework rows", ok_mark, str(coursework["row_count"])))
+    except Exception as exc:
+        results.append(("coursework rows", warn_mark, str(exc)))
+    results.append(("generated resume dir", ok_mark if TAILORED_DIR.exists() else warn_mark, str(TAILORED_DIR)))
+    results.append(("cover letter dir", ok_mark if COVER_LETTER_DIR.exists() else warn_mark, str(COVER_LETTER_DIR)))
 
     # --- Tier 1 checks ---
     # Profile

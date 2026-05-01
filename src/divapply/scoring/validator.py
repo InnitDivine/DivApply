@@ -9,6 +9,7 @@ Validation modes
 strict  -- banned words = hard errors that trigger retries (original behavior)
 normal  -- banned words = warnings only; fabrication/structure = errors (default)
 lenient -- banned words ignored; only fabrication and required structure checked
+none    -- validation skipped entirely; use only for debugging
 """
 
 import re
@@ -102,10 +103,11 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     Args:
         data:    Parsed JSON from the LLM (title, summary, skills, experience, projects, education).
         profile: User profile dict from load_profile().
-        mode:    Validation strictness â€” "strict", "normal", or "lenient".
+        mode:    Validation strictness â€” "strict", "normal", "lenient", or "none".
                  strict  â†’ banned words are errors (trigger retries)
                  normal  â†’ banned words are warnings (no retry)
                  lenient â†’ banned words ignored entirely
+                 none    â†’ skip validation entirely
 
     Returns:
         {"passed": bool, "errors": list[str], "warnings": list[str]}
@@ -321,10 +323,11 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
 
     Args:
         text: The cover letter text to validate.
-        mode: Validation strictness â€” "strict", "normal", or "lenient".
+        mode: Validation strictness â€” "strict", "normal", "lenient", or "none".
               strict  â†’ banned words are errors (trigger retries); word limit enforced
               normal  â†’ banned words are warnings; word limit is soft (+25 words)
               lenient â†’ banned words ignored; word count not checked
+              none    â†’ skip validation entirely
 
     Returns:
         {"passed": bool, "errors": list[str], "warnings": list[str]}

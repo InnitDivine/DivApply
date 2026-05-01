@@ -77,6 +77,14 @@ def _build_tailor_prompt(profile: dict) -> str:
     education_level = education.get("education_level", "")
     coursework_block = "\n".join(f"- {item}" for item in coursework) if coursework else "N/A"
     coursework_skills_block = "\n".join(f"- {item}" for item in coursework_skills) if coursework_skills else "N/A"
+    truth_items: list[str] = []
+    for key in ("truthfulness_rules", "application_context", "answer_context"):
+        value = profile.get(key)
+        if isinstance(value, list):
+            truth_items.extend(str(item).strip() for item in value if str(item).strip())
+        elif isinstance(value, str) and value.strip():
+            truth_items.append(value.strip())
+    truth_block = "\n".join(f"- {item}" for item in truth_items) if truth_items else "N/A"
 
     return f"""You are a neutral resume editor rewriting a resume using only verified facts.
 
@@ -131,18 +139,16 @@ BULLETS: Strong verb + what you built + quantified impact. Vary verbs (Built, De
 - Leave enough room for the code-injected EDUCATION section at the bottom.
 
 ## TRUTHFULNESS RULES (critical â€” violating these = immediate rejection):
-- The candidate's IT skills come from PERSONAL PROJECTS (home lab, PC building), NOT from paid jobs
-- City of Roseville role is a CUSTOMER SERVICE front desk position at Parks & Rec â€” do NOT add IT duties like "network troubleshooting", "server administration", "SSH", or "Tier 1 support" to this role. Systems used: When To Work (scheduling), Microsoft Teams, payment processing, and a registration/permit application (name TBD).
-- Nevada County role is ACCOUNTING â€” reconciliation, data entry, financial records. Not IT. Systems used: Workday ERP (financial/accounting), Megabyte Property Tax Systems (tax collection).
-- Theatre Manager at UEC is REAL management â€” P&L, hiring, scheduling, vendor coordination. Systems used: RTS (Ready Theatre Systems), NCR Radiant POS, projection equipment.
-- Banquet Captain at Ridge Golf is EVENT SETUP and SERVICE â€” not management or IT. Systems used: point-of-sale, event management.
-- Fitness Representative at Montreux Golf is FRONT DESK â€” member check-ins, enrollment, records. Systems used: Jonas Club Software (member management).
-- You MAY reframe bullets to emphasize relevant soft skills (communication, problem-solving, data accuracy) but NEVER add technical duties that didn't happen in that job
-- Project-based IT skills belong in the PROJECTS section only when they are truly project work.
+- Use only facts from the original resume, profile, and hidden coursework summaries.
+- Never move a skill from coursework or personal projects into paid work history unless the source resume/profile says it happened in that job.
+- You MAY reframe bullets to emphasize relevant transferable skills, but NEVER add duties that did not happen in that role.
 - Do not steer toward one job family over another. Use the same factual standard for every role.
 - Do NOT invent metrics or percentages (e.g. "99% accuracy rate", "reduced time by 40%", "processed 500+ transactions daily"). If the original resume does not contain a specific number, do NOT add one. Use qualitative descriptions instead.
-- Do NOT add tools or systems the candidate has not used professionally. "ticketing systems", "incident documentation", "ServiceNow", "Jira", "ITSM" â€” NONE of these belong on this resume unless they appear in the original.
-- The "subtitle" field under each experience entry should contain the COMPANY NAME and DATE RANGE only (e.g. "City of Roseville Parks, Recreation & Libraries | September 2025 - Present"). Do NOT put "Tech" or any category tag in the subtitle.
+- Do NOT add tools, systems, certifications, licenses, degrees, employers, or coursework the candidate has not actually used or completed.
+- The "subtitle" field under each experience entry should contain the company name and date range only. Do NOT put category tags in the subtitle.
+
+## PROFILE-SPECIFIC FACT GUARDS:
+{truth_block}
 
 ## OUTPUT: Return ONLY valid JSON. No markdown fences. No commentary. No "here is" preamble.
 Education is injected automatically by code â€” do NOT include an education field. Omit it entirely.
@@ -166,7 +172,7 @@ def _build_judge_prompt(profile: dict) -> str:
     real_metrics = resume_facts.get("real_metrics", [])
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
 
-    return f"""You are a resume quality judge. A tailoring engine rewrote a resume to target a specific job. Your job is to catch LIES, not style changes.
+    return f"""You are a final factuality and coherence judge. A tailoring engine rewrote a resume to target a specific job. Your job is to catch lies, unsupported claims, contradictions, and incoherent output.
 
 You must answer with EXACTLY this format:
 VERDICT: PASS or FAIL
@@ -187,6 +193,9 @@ ISSUES: (list any problems, or "none")
 3. Inventing work that has no basis in any original bullet (completely new achievements).
 4. Adding companies, roles, or degrees that don't exist.
 5. Changing real numbers (inflating 80% to 95%, 500 nodes to 1000 nodes).
+6. Adding coursework, credentials, certifications, licenses, clearances, or degrees that are not present in the profile/resume.
+7. Moving project-only skills into paid work history unless the original resume supports that job context.
+8. Claiming direct professional experience where only coursework, personal projects, or transferable experience exists.
 
 ## WHAT IS NOT FABRICATION (do NOT fail for these):
 - Rewording any bullet, even heavily, as long as the underlying work is real
@@ -199,14 +208,13 @@ ISSUES: (list any problems, or "none")
 - EDUCATION: The education section is ALWAYS auto-generated by code from the candidate's profile â€” it will look different from the original resume text. NEVER flag education formatting, location, date, or wording differences as fabrication.
 - OFFICE TOOLS: Microsoft Teams, Outlook, Excel, Word, Office 365, and similar general workplace tools are in the candidate's real skills and may appear in any professional context. Do NOT flag these as fabricated.
 
-## TOLERANCE RULE:
-The goal is to get interviews, not to be a perfect fact-checker. Allow up to 3 minor stretches per resume:
-- Adding a closely related tool the candidate could realistically know is a MINOR STRETCH, not fabrication.
-- Reframing a metric with slightly different wording is a MINOR STRETCH.
-- Adding any LEARNABLE skill given their existing stack is a MINOR STRETCH.
-- Only FAIL if there are MAJOR lies: completely invented projects, fake companies, fake degrees, wildly inflated numbers, or skills from a completely different domain.
+## COHERENCE CHECKS (FAIL for these):
+- Repeated or contradictory sections
+- Summary says a skill or credential that no section supports
+- Bullets imply a different job, company, degree, or certification than the source
+- Keyword stuffing that makes the resume read as false or incoherent
 
-Be strict about major lies. Be lenient about minor stretches and learnable skills. Do not fail for style, tone, or restructuring."""
+Strict rule: no minor stretches. If a fact is not supported by the original resume/profile, fail. Do not fail for style, tone, or restructuring."""
 
 
 # â”€â”€ JSON Extraction â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -546,7 +554,7 @@ def tailor_resume(
         job:              Job dict with title, site, location, full_description.
         profile:          User profile dict.
         max_retries:      Maximum retry attempts.
-        validation_mode:  "strict", "normal", or "lenient".
+        validation_mode:  "strict", "normal", "lenient", or "none".
                           strict  -- banned words trigger retries; judge must pass
                           normal  -- banned words = warnings only; judge can fail on last retry
                           lenient -- banned words ignored; LLM judge skipped

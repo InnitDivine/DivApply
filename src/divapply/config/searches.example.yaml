@@ -111,3 +111,12 @@ exclude_titles:
   - "TS/SCI"
   - "principal scientist"
 
+# Optional AIHawk-style filters. These run after JobSpy returns results and
+# before jobs are stored. Keep them broad; scoring handles nuance later.
+filters:
+  company_blacklist: []
+  title_blacklist: []
+  required_keywords: []
+  excluded_keywords:
+    - "clearance required"
+  remote_preference: "any"  # any, remote, hybrid, onsite
