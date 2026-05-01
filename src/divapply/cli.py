@@ -64,7 +64,12 @@ def _safe_apply_error(value: str | None) -> str:
     text = str(value)
     text = re.sub(r"[\w.\-+]+@[\w.\-]+\.\w+", "[email]", text)
     text = re.sub(r"\b(?:\+?1[-.\s]?)?(?:\(?\d{3}\)?[-.\s]?)\d{3}[-.\s]?\d{4}\b", "[phone]", text)
-    text = re.sub(r"(?i)(api[_-]?key|token|password|secret)=\S+", r"\1=[redacted]", text)
+    text = re.sub(r"(?i)(api[_-]?key|token|password|secret)\s*[=:]\s*\S+", r"\1=[redacted]", text)
+    text = re.sub(r"(?i)\bbearer\s+[A-Za-z0-9._\-]+", "Bearer [redacted]", text)
+    text = re.sub(r"(?i)\boauth:[A-Za-z0-9._\-]+", "oauth:[redacted]", text)
+    # Long opaque strings (32+ chars of base64/hex/JWT-ish content) are almost
+    # always credentials, signed URLs, or session ids -- mask them.
+    text = re.sub(r"\b[A-Za-z0-9_\-]{32,}\b", "[redacted-key]", text)
     return text[:240]
 
 
@@ -128,11 +133,21 @@ def migrate(
 @app.command("import-coursework")
 def import_coursework(
     path: Path = typer.Argument(..., exists=True, readable=True, resolve_path=True, help="Transcript or coursework file to import."),
+    replace: bool = typer.Option(
+        False,
+        "--replace",
+        help="Wipe existing coursework before importing. Default appends new rows and skips exact duplicates so prior transcripts stay intact.",
+    ),
 ) -> None:
-    """Import coursework knowledge into the hidden SQLite coursework table."""
+    """Import coursework knowledge into the hidden SQLite coursework table.
+
+    By default, new entries are appended and rows that already exist
+    (matching school + course code + course title + term) are skipped.
+    Pass --replace to wipe the existing coursework table first.
+    """
     _bootstrap()
 
-    from divapply.database import replace_coursework
+    from divapply.database import append_coursework, replace_coursework
 
     entries: list[dict] = []
     suffix = path.suffix.lower()
@@ -193,8 +208,18 @@ def import_coursework(
         text = path.read_text(encoding="utf-8", errors="ignore")
         entries.append({"source": path.name, "raw_text": text, "notes": "Imported plain text transcript"})
 
-    inserted = replace_coursework(entries)
-    console.print(f"[green]Imported coursework entries:[/green] {inserted}")
+    if replace:
+        inserted = replace_coursework(entries)
+        console.print(
+            f"[yellow]Replaced coursework table:[/yellow] {inserted} row(s) inserted "
+            "(prior coursework wiped)."
+        )
+    else:
+        result = append_coursework(entries)
+        console.print(
+            f"[green]Appended coursework:[/green] {result['inserted']} new, "
+            f"{result['skipped']} duplicate(s) skipped."
+        )
 
 
 @app.command("coursework-summary")

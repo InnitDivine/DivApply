@@ -195,17 +195,30 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
 
 # â”€â”€ Full Resume Text Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def validate_tailored_resume(text: str, profile: dict, original_text: str = "") -> dict:
+def validate_tailored_resume(
+    text: str,
+    profile: dict,
+    original_text: str = "",
+    mode: str = "normal",
+) -> dict:
     """Programmatic validation of a tailored resume against the user's profile.
 
     Args:
         text: The tailored resume text to validate.
         profile: User profile dict from load_profile().
         original_text: The original base resume text (for fabrication comparison).
+        mode: Validation strictness (matches validate_json_fields):
+              strict  -> banned words = errors (trigger retries)
+              normal  -> banned words = warnings (no retry)
+              lenient -> banned words ignored entirely
+              none    -> skip validation entirely
 
     Returns:
         {"passed": bool, "errors": list[str], "warnings": list[str]}
     """
+    if mode == "none":
+        return {"passed": True, "errors": [], "warnings": []}
+
     errors: list[str] = []
     warnings: list[str] = []
     text_lower = text.lower()
@@ -213,12 +226,13 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     personal = profile.get("personal", {})
     resume_facts = profile.get("resume_facts", {})
 
-    # 1. Check required sections exist (flexible matching)
+    # 1. Check required sections exist (flexible matching). PROJECTS is
+    # optional: the tailor prompt explicitly allows an empty projects list,
+    # in which case assemble_resume_text drops the section entirely.
     section_variants: dict[str, list[str]] = {
         "SUMMARY": ["summary", "professional summary", "profile"],
         "TECHNICAL SKILLS": ["technical skills", "skills", "tech stack", "core skills", "technologies"],
         "EXPERIENCE": ["experience", "work experience", "professional experience"],
-        "PROJECTS": ["projects", "personal projects", "key projects", "selected projects"],
         "EDUCATION": ["education", "academic background"],
     }
     for section, variants in section_variants.items():
@@ -277,10 +291,17 @@ def validate_tailored_resume(text: str, profile: dict, original_text: str = "") 
     if "\u2014" in text or "\u2013" in text:
         errors.append("Contains em dash or en dash.")
 
-    # 10. Banned words (word-boundary matching)
-    found_banned = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
-    if found_banned:
-        errors.append(f"Banned words: {', '.join(found_banned[:5])}")
+    # 10. Banned words (word-boundary matching). Severity respects the
+    # caller's validation mode so "normal"/"lenient" don't force retries
+    # over filler-word complaints.
+    if mode != "lenient":
+        found_banned = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
+        if found_banned:
+            msg = f"Banned words: {', '.join(found_banned[:5])}"
+            if mode == "strict":
+                errors.append(msg)
+            else:  # normal
+                warnings.append(msg)
 
     # 11. LLM self-talk leak detection
     found_leaks = [p for p in LLM_LEAK_PHRASES if p in text_lower]

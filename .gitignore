@@ -9,6 +9,10 @@ resume.pdf
 !.env.example
 coursework/
 transcripts/
+# Local search config can carry personal targeting rules; the example
+# version (src/divapply/config/searches.example.yaml) stays tracked.
+/searches.yaml
+searches.local.yaml
 
 # Runtime artifacts
 *.db

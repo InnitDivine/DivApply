@@ -378,44 +378,109 @@ def seed_coursework_if_empty(conn: sqlite3.Connection | None = None) -> int:
 
 
 def replace_coursework(entries: list[dict], conn: sqlite3.Connection | None = None) -> int:
-    """Replace all stored coursework rows with a new set of entries."""
+    """Replace all stored coursework rows with a new set of entries.
+
+    Destructive: deletes everything in the coursework table first. Prefer
+    append_coursework() when importing additional transcripts so prior data
+    is preserved.
+    """
     if conn is None:
         conn = get_connection()
 
     ensure_coursework_table(conn)
     conn.execute("DELETE FROM coursework")
+    return _insert_coursework_rows(entries, conn)
 
+
+def append_coursework(entries: list[dict], conn: sqlite3.Connection | None = None) -> dict:
+    """Append coursework rows, skipping duplicates already in the table.
+
+    Two rows are treated as duplicates when (school, course_code,
+    course_title, term) all match (case-insensitive, trimmed). Rows that
+    duplicate something already stored are skipped, not updated.
+
+    Returns counts: {"inserted": int, "skipped": int}.
+    """
+    if conn is None:
+        conn = get_connection()
+
+    ensure_coursework_table(conn)
+
+    existing_keys: set[tuple[str, str, str, str]] = set()
+    for row in conn.execute(
+        "SELECT school, course_code, course_title, term FROM coursework"
+    ).fetchall():
+        existing_keys.add(_coursework_dedup_key(row[0], row[1], row[2], row[3]))
+
+    now = datetime.now(timezone.utc).isoformat()
+    inserted = 0
+    skipped = 0
+    for entry in entries:
+        normalized = _normalize_coursework_entry(entry, now)
+        key = _coursework_dedup_key(
+            normalized.get("school"),
+            normalized.get("course_code"),
+            normalized.get("course_title"),
+            normalized.get("term"),
+        )
+        if key in existing_keys:
+            skipped += 1
+            continue
+        existing_keys.add(key)
+        _insert_coursework_row(normalized, conn)
+        inserted += 1
+
+    conn.commit()
+    return {"inserted": inserted, "skipped": skipped}
+
+
+def _coursework_dedup_key(
+    school: str | None,
+    course_code: str | None,
+    course_title: str | None,
+    term: str | None,
+) -> tuple[str, str, str, str]:
+    def _norm(value: str | None) -> str:
+        return str(value or "").strip().casefold()
+
+    return (_norm(school), _norm(course_code), _norm(course_title), _norm(term))
+
+
+def _insert_coursework_rows(entries: list[dict], conn: sqlite3.Connection) -> int:
     now = datetime.now(timezone.utc).isoformat()
     inserted = 0
     for entry in entries:
         normalized = _normalize_coursework_entry(entry, now)
-        conn.execute(
-            """
-            INSERT INTO coursework (
-                school, course_code, course_title, subject_area,
-                term, status, credits, grade, source, notes, skills, raw_text, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                normalized.get("school"),
-                normalized.get("course_code"),
-                normalized.get("course_title"),
-                normalized.get("subject_area"),
-                normalized.get("term"),
-                normalized.get("status"),
-                normalized.get("credits"),
-                normalized.get("grade"),
-                normalized.get("source"),
-                normalized.get("notes"),
-                normalized.get("skills"),
-                normalized.get("raw_text"),
-                normalized.get("created_at"),
-            ),
-        )
+        _insert_coursework_row(normalized, conn)
         inserted += 1
-
     conn.commit()
     return inserted
+
+
+def _insert_coursework_row(normalized: dict, conn: sqlite3.Connection) -> None:
+    conn.execute(
+        """
+        INSERT INTO coursework (
+            school, course_code, course_title, subject_area,
+            term, status, credits, grade, source, notes, skills, raw_text, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            normalized.get("school"),
+            normalized.get("course_code"),
+            normalized.get("course_title"),
+            normalized.get("subject_area"),
+            normalized.get("term"),
+            normalized.get("status"),
+            normalized.get("credits"),
+            normalized.get("grade"),
+            normalized.get("source"),
+            normalized.get("notes"),
+            normalized.get("skills"),
+            normalized.get("raw_text"),
+            normalized.get("created_at"),
+        ),
+    )
 
 
 def get_coursework(conn: sqlite3.Connection | None = None) -> list[dict]:

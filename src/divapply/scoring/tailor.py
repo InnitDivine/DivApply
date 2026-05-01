@@ -626,7 +626,9 @@ def tailor_resume(
         tailored = assemble_resume_text(data, profile)
 
         # Layer 2: Programmatic text validation, including one-page length checks.
-        text_validation = validate_tailored_resume(tailored, profile, original_text=resume_text)
+        text_validation = validate_tailored_resume(
+            tailored, profile, original_text=resume_text, mode=validation_mode
+        )
         report["text_validator"] = text_validation
 
         if not text_validation["passed"]:
