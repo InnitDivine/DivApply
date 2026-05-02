@@ -518,7 +518,7 @@ def judge_tailored_resume(
         )},
     ]
 
-    client = get_client_for_stage("tailor")
+    client = get_client_for_stage("judge")
     response = client.chat(messages, max_tokens=512, temperature=0.1)
 
     passed = "VERDICT: PASS" in response.upper()
@@ -562,11 +562,26 @@ def tailor_resume(
     Returns:
         (tailored_text, report) where report contains validation details.
     """
+    gap_targets = ""
+    if job.get("score_breakdown"):
+        try:
+            breakdown = json.loads(job["score_breakdown"])
+            gaps = breakdown.get("skill_gaps") or breakdown.get("keyword", {}).get("misses") or []
+            gaps = [str(gap) for gap in gaps if str(gap).strip()][:10]
+            if gaps:
+                gap_targets = (
+                    "\n\nSCORING GAPS TO ADDRESS ONLY IF TRUTHFULLY SUPPORTED BY THE RESUME:\n"
+                    + ", ".join(gaps)
+                )
+        except (TypeError, json.JSONDecodeError):
+            gap_targets = ""
+
     job_text = (
         f"TITLE: {job['title']}\n"
         f"COMPANY: {job['site']}\n"
         f"LOCATION: {job.get('location', 'N/A')}\n\n"
         f"DESCRIPTION:\n{(job.get('full_description') or '')[:4000]}"
+        f"{gap_targets}"
     )
 
     report: dict = {

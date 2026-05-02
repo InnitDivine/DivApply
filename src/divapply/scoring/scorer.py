@@ -1,8 +1,8 @@
-﻿"""Job fit scoring: LLM-powered evaluation of candidate-job match quality.
+﻿"""Job fit scoring: hybrid evaluation of candidate-job match quality.
 
-Scores jobs on a 1-10 scale by comparing the user's resume against each
-job description. All personal data is loaded at runtime from the user's
-profile and resume file.
+Scores jobs on a 1-10 scale by blending keyword hit-rate, local hashed
+embedding similarity, and the LLM evaluator. All personal data is loaded at
+runtime from the user's profile and resume file.
 """
 
 import json
@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from divapply.config import RESUME_PATH, load_profile
 from divapply.database import get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
+from divapply.scoring.composite import composite_score
 
 log = logging.getLogger(__name__)
 
@@ -144,11 +145,29 @@ def score_job(
     try:
         client = get_client_for_stage("score")
         response = client.chat(messages, max_tokens=4096, temperature=0.1)
-        return _parse_score_response(response)
+        llm_result = _parse_score_response(response)
+        hybrid = composite_score(
+            job_description=job_text,
+            resume_text=resume_text,
+            llm_result=llm_result,
+        )
+        return {
+            **llm_result,
+            **hybrid,
+            "matched_skills": llm_result.get("matched_skills", ""),
+            "risk_flags": llm_result.get("risk_flags", ""),
+            "apply_or_skip_reason": llm_result.get("apply_or_skip_reason", ""),
+            "reasoning": llm_result.get("reasoning", ""),
+        }
     except Exception as e:
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), e)
         return {
             "score": 0,
+            "llm_score": 0,
+            "keyword_score": 0.0,
+            "embedding_score": 0.0,
+            "composite_score": 0.0,
+            "score_breakdown": "",
             "matched_skills": "",
             "missing_skills": "",
             "keyword_hits": "",
@@ -222,6 +241,11 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
             """
             UPDATE jobs
             SET fit_score = ?,
+                llm_score = ?,
+                keyword_score = ?,
+                embedding_score = ?,
+                composite_score = ?,
+                score_breakdown = ?,
                 score_reasoning = ?,
                 matched_skills = ?,
                 missing_skills = ?,
@@ -233,6 +257,11 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
             """,
             (
                 r["score"],
+                r.get("llm_score"),
+                r.get("keyword_score"),
+                r.get("embedding_score"),
+                r.get("composite_score"),
+                r.get("score_breakdown", ""),
                 r["reasoning"],
                 r.get("matched_skills", ""),
                 r.get("missing_skills", ""),

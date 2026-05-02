@@ -213,6 +213,10 @@ divapply dashboard
 divapply import-coursework path\to\transcript.json
 divapply coursework-summary
 divapply export jobs --out jobs.csv
+divapply explain https://example.com/job
+divapply track screening https://example.com/job --follow-up 2026-05-15
+divapply followups
+divapply answers add "Years of Python?" "2 years."
 divapply selfcheck
 divapply migrate
 ```
@@ -243,9 +247,16 @@ Tailoring rules:
 
 ## Scoring Transparency
 
+Scoring is hybrid: keyword hit-rate + local hashed embedding similarity + the existing LLM judgment. Default weights are 30% keyword, 30% embedding, 40% LLM.
+
 Scoring stores safe, human-readable fields:
 
 - `fit_score`
+- `llm_score`
+- `keyword_score`
+- `embedding_score`
+- `composite_score`
+- `score_breakdown`
 - `score_reasoning`
 - `matched_skills`
 - `missing_skills`
@@ -253,7 +264,19 @@ Scoring stores safe, human-readable fields:
 - `risk_flags`
 - `apply_or_skip_reason`
 
+Use `divapply explain JOB_URL` to view the breakdown for one job. Existing legacy rows show missing hybrid fields until you run `divapply rescore`. Tailoring reads score gaps as targets, but only addresses a gap when the master resume/profile already supports it.
+
 Status/export commands do not print full private resume, profile, transcript, or database text.
+
+Stage-specific LLM aliases are supported:
+
+```bash
+DIVAPPLY_LLM_SCORER=openai:gpt-5.4-mini
+DIVAPPLY_LLM_TAILOR=ollama:qwen2.5:14b
+DIVAPPLY_LLM_JUDGE=gemini:gemini-2.0-flash
+```
+
+Old `LLM_MODEL_SCORE`, `LLM_MODEL_TAILOR`, and `LLM_MODEL_COVER` variables still work.
 
 ## Configuration
 
@@ -314,6 +337,32 @@ divapply export jobs --out jobs.json --format json
 ```
 
 Exported columns: title, site, url, application_url, fit_score, apply_status, discovered_at, scored_at, tailored_at, applied_at, and a redacted apply_error snippet.
+
+Track lifecycle events after applying:
+
+```bash
+divapply track applied https://example.com/job
+divapply track screening https://example.com/job --follow-up 2026-05-15 --notes "Recruiter screen"
+divapply track interview https://example.com/job
+divapply track offer https://example.com/job
+divapply track rejection https://example.com/job
+divapply followups
+divapply analytics
+```
+
+Lifecycle data is append-only in `application_events`. The current state is mirrored to the jobs table for status/dashboard compatibility.
+
+## Answer Bank
+
+`~/.divapply/answers.yaml` stores reusable answers for employer form questions. It is local-only and ignored by git.
+
+```bash
+divapply answers add "How many years of Python experience do you have?" "2 years."
+divapply answers list
+divapply answers match "Years using Python?"
+```
+
+The apply agent receives the answer bank in its prompt and reuses close matches for differently worded questions. Answers must stay factual and supported by the profile/resume.
 
 ## Auto-Apply Safety
 

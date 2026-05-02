@@ -25,7 +25,7 @@ from rich.console import Console
 from rich.live import Live
 
 from divapply import config
-from divapply.database import get_connection
+from divapply.database import add_application_event, get_connection
 from divapply.apply import chrome, dashboard, prompt as prompt_mod
 from divapply.apply.chrome import (
     launch_chrome, cleanup_worker, kill_all_chrome,
@@ -205,6 +205,7 @@ def mark_result(url: str, status: str, error: str | None = None,
                            apply_duration_ms = ?, apply_task_id = ?
             WHERE url = ?
         """, (now, duration_ms, task_id, url))
+        add_application_event(url, "applied", notes="Auto-apply submitted", ts=now, conn=conn)
     else:
         if permanent:
             conn.execute("""
@@ -221,6 +222,7 @@ def mark_result(url: str, status: str, error: str | None = None,
                                apply_duration_ms = ?, apply_task_id = ?
                 WHERE url = ?
             """, (status, error or "unknown", duration_ms, task_id, url))
+        add_application_event(url, status, notes=error or "unknown", ts=now, conn=conn)
     conn.commit()
 
 
@@ -291,12 +293,14 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
                            apply_error = NULL, agent_id = NULL
             WHERE url = ?
         """, (now, url))
+        add_application_event(url, "applied", notes="Manually marked applied", ts=now, conn=conn)
     else:
         conn.execute("""
             UPDATE jobs SET apply_status = 'failed', apply_error = ?,
                            apply_attempts = 99, agent_id = NULL
             WHERE url = ?
         """, (reason or "manual", url))
+        add_application_event(url, "failed", notes=reason or "manual", ts=now, conn=conn)
     conn.commit()
 
 

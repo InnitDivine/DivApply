@@ -721,6 +721,11 @@ def build_prompt(job: dict, tailored_resume: str,
     screening_section = _build_screening_section(profile)
     hard_rules = _build_hard_rules(profile)
     captcha_section = _build_captcha_section()
+    try:
+        from divapply.apply.answers import render_answer_bank_for_prompt
+        answer_bank = render_answer_bank_for_prompt()
+    except Exception:
+        answer_bank = "Answer bank unavailable. Compose factual answers from the profile and resume."
 
     # Cover letter fallback text
     city = personal.get("city", "the area")
@@ -811,6 +816,10 @@ IMPORTANT: These files are pre-staged in your working directory. When using brow
 
 == APPLICANT PROFILE ==
 {profile_summary}
+
+== SAVED ANSWER BANK ==
+Use these saved Q&A entries for repeated employer questions. Match phrasing fuzzily; if a form asks the same idea with different words, reuse the closest factual answer. If no saved entry fits, answer only from the profile, resume, cover letter, coursework-safe context, and job description.
+{answer_bank}
 
 == YOUR MISSION ==
 Submit a complete, accurate application. Use the profile and resume as source data -- adapt to fit each form's format.

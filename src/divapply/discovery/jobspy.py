@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from jobspy import scrape_jobs
 
 from divapply import config
-from divapply.database import get_connection, init_db, store_jobs
+from divapply.database import canonical_job_key, get_connection, init_db, store_jobs
 
 log = logging.getLogger(__name__)
 
@@ -275,6 +275,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
         description = str(row.get("description", "")) if str(row.get("description", "")) != "nan" else None
         site_name = str(row.get("site", source_label))
         is_remote = row.get("is_remote", False)
+        canonical_key = canonical_job_key(title, company, location_str)
 
         site_label = f"{site_name}"
         if is_remote:
@@ -293,11 +294,19 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
 
         try:
+            if canonical_key:
+                found = conn.execute(
+                    "SELECT 1 FROM jobs WHERE canonical_key = ? LIMIT 1",
+                    (canonical_key,),
+                ).fetchone()
+                if found:
+                    existing += 1
+                    continue
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at, "
+                "INSERT INTO jobs (url, canonical_key, title, company, salary, description, location, site, strategy, discovered_at, "
                 "full_description, application_url, detail_scraped_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, title, salary, description, location_str, site_label, strategy, now,
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (url, canonical_key, title, company, salary, description, location_str, site_label, strategy, now,
                  full_description, apply_url, detail_scraped_at),
             )
             new += 1

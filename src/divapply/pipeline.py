@@ -37,7 +37,7 @@ STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover", "pdf")
 STAGE_META: dict[str, dict] = {
     "discover": {"desc": "Job discovery (JobSpy + Workday + smart extract)"},
     "enrich":   {"desc": "Detail enrichment (full descriptions + apply URLs)"},
-    "score":    {"desc": "LLM scoring (fit 1-10)"},
+    "score":    {"desc": "Hybrid scoring (keyword + embedding + LLM)"},
     "tailor":   {"desc": "Resume tailoring (LLM + validation)"},
     "cover":    {"desc": "Cover letter generation"},
     "pdf":      {"desc": "PDF conversion (tailored resumes + cover letters)"},
@@ -111,7 +111,7 @@ def _run_enrich(workers: int = 1) -> dict:
 
 
 def _run_score(prune_below: int = 0) -> dict:
-    """Stage: LLM scoring â€” assign fit scores 1-10."""
+    """Stage: hybrid scoring -- assign calibrated fit scores 1-10."""
     try:
         from divapply.scoring.scorer import run_scoring
         result = run_scoring(prune_below=prune_below)

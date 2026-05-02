@@ -27,7 +27,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 export_app = typer.Typer(help="Export safe DivApply data.")
+answers_app = typer.Typer(help="Manage saved application question answers.")
 app.add_typer(export_app, name="export")
+app.add_typer(answers_app, name="answers")
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -503,13 +505,14 @@ def status() -> None:
     summary.add_row("With full description", str(stats["with_description"]))
     summary.add_row("Pending enrichment", str(stats["pending_detail"]))
     summary.add_row("Enrichment errors", str(stats["detail_errors"]))
-    summary.add_row("Scored by LLM", str(stats["scored"]))
+    summary.add_row("Scored", str(stats["scored"]))
     summary.add_row("Pending scoring", str(stats["unscored"]))
     summary.add_row("Tailored resumes", str(stats["tailored"]))
     summary.add_row("Pending tailoring (7+)", str(stats["untailored_eligible"]))
     summary.add_row("Cover letters", str(stats["with_cover_letter"]))
     summary.add_row("Ready to apply", str(stats["ready_to_apply"]))
     summary.add_row("Applied", str(stats["applied"]))
+    summary.add_row("Due follow-ups", str(stats.get("due_followups", 0)))
     summary.add_row("Apply errors", str(stats["apply_errors"]))
 
     console.print(summary)
@@ -618,6 +621,220 @@ def export_jobs(
             writer.writerows(payload)
 
     console.print(f"[green]Exported {len(payload)} job row(s):[/green] {out}")
+
+
+@answers_app.command("add")
+def answers_add(
+    question: str = typer.Argument(..., help="Employer question text."),
+    answer: str = typer.Argument(..., help="Factual answer to reuse."),
+    tag: Optional[list[str]] = typer.Option(None, "--tag", help="Optional tag; repeatable."),
+) -> None:
+    """Add or replace a saved answer-bank entry."""
+    _bootstrap()
+
+    from divapply.apply.answers import add_answer
+    result = add_answer(question, answer, tags=tag or [])
+    verb = "Updated" if result["replaced"] else "Added"
+    console.print(f"[green]{verb} answer:[/green] {question}")
+
+
+@answers_app.command("list")
+def answers_list() -> None:
+    """List saved answer-bank questions without dumping secrets elsewhere."""
+    _bootstrap()
+
+    from divapply.apply.answers import load_answer_bank
+    entries = load_answer_bank()
+    table = Table(title="Answer Bank", show_header=True, header_style="bold cyan")
+    table.add_column("#", justify="right")
+    table.add_column("Question")
+    table.add_column("Answer")
+    for idx, entry in enumerate(entries, start=1):
+        answer = entry["answer"]
+        if len(answer) > 120:
+            answer = answer[:117] + "..."
+        table.add_row(str(idx), entry["question"], answer)
+    console.print()
+    console.print(table)
+    console.print(f"[dim]{len(entries)} saved answer(s). Stored locally in ~/.divapply/answers.yaml.[/dim]\n")
+
+
+@answers_app.command("match")
+def answers_match(
+    question: str = typer.Argument(..., help="Question text to fuzzy-match."),
+    limit: int = typer.Option(3, "--limit", "-n", help="Number of matches."),
+) -> None:
+    """Fuzzy-match a form question against saved answers."""
+    _bootstrap()
+
+    from divapply.apply.answers import match_answers
+    matches = match_answers(question, limit=limit)
+    table = Table(title="Answer Matches", show_header=True, header_style="bold cyan")
+    table.add_column("Score", justify="right")
+    table.add_column("Question")
+    table.add_column("Answer")
+    for entry in matches:
+        answer = entry["answer"]
+        if len(answer) > 120:
+            answer = answer[:117] + "..."
+        table.add_row(f"{entry['score']:.2f}", entry["question"], answer)
+    console.print()
+    console.print(table)
+
+
+@app.command()
+def track(
+    event: str = typer.Argument(..., help="Lifecycle event: applied, screening, interview, offer, rejection, withdrawn."),
+    job_url: str = typer.Argument(..., help="Job URL to track."),
+    follow_up: Optional[str] = typer.Option(None, "--follow-up", help="Follow-up date YYYY-MM-DD."),
+    notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Short private note."),
+) -> None:
+    """Append an application lifecycle event."""
+    _bootstrap()
+
+    from divapply.database import add_application_event, get_application_timeline
+
+    valid = {"applied", "screening", "interview", "offer", "rejection", "rejected", "withdrawn", "failed"}
+    normalized = event.strip().lower().replace("-", "_")
+    if normalized not in valid:
+        console.print(f"[red]Unknown event:[/red] {event}. Use: {', '.join(sorted(valid))}")
+        raise typer.Exit(code=1)
+    if follow_up:
+        import re
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", follow_up):
+            console.print("[red]--follow-up must be YYYY-MM-DD[/red]")
+            raise typer.Exit(code=1)
+
+    event_id = add_application_event(job_url, normalized, notes=notes, follow_up_at=follow_up)
+    console.print(f"[green]Tracked {normalized} event #{event_id}[/green] for {job_url}")
+
+    timeline = get_application_timeline(job_url)
+    if timeline:
+        table = Table(title="Timeline", show_header=True, header_style="bold cyan")
+        table.add_column("When")
+        table.add_column("Event")
+        table.add_column("Follow-up")
+        table.add_column("Notes")
+        for row in timeline[-6:]:
+            table.add_row(row["ts"], row["event_type"], row.get("follow_up_at") or "", row.get("notes") or "")
+        console.print(table)
+
+
+@app.command()
+def followups() -> None:
+    """Show application follow-ups due today or earlier."""
+    _bootstrap()
+
+    from divapply.database import get_due_followups
+    rows = get_due_followups()
+    table = Table(title="Due Follow-ups", show_header=True, header_style="bold cyan")
+    table.add_column("Due")
+    table.add_column("Event")
+    table.add_column("Title")
+    table.add_column("Company/Source")
+    table.add_column("URL")
+    for row in rows:
+        table.add_row(
+            row.get("follow_up_at") or "",
+            row.get("event_type") or "",
+            row.get("title") or "",
+            row.get("company") or row.get("site") or "",
+            row.get("job_url") or "",
+        )
+    console.print()
+    console.print(table)
+    console.print(f"[dim]{len(rows)} due follow-up(s).[/dim]\n")
+
+
+@app.command()
+def analytics() -> None:
+    """Show application lifecycle analytics."""
+    _bootstrap()
+
+    from divapply.database import get_application_analytics
+    data = get_application_analytics()
+
+    states = Table(title="Application States", show_header=True, header_style="bold cyan")
+    states.add_column("State")
+    states.add_column("Count", justify="right")
+    for state, count in data["states"]:
+        states.add_row(state, str(count))
+
+    events = Table(title="Lifecycle Events", show_header=True, header_style="bold magenta")
+    events.add_column("Event")
+    events.add_column("Count", justify="right")
+    for event, count in data["events"]:
+        events.add_row(event, str(count))
+
+    console.print()
+    console.print(states)
+    console.print(events)
+    console.print(f"[bold]Due follow-ups:[/bold] {data['due_followups']}\n")
+
+
+@app.command()
+def explain(
+    job_url: str = typer.Argument(..., help="Job URL or URL fragment to explain."),
+) -> None:
+    """Explain one job's hybrid score without printing resume/profile text."""
+    _bootstrap()
+
+    from divapply.database import get_connection
+
+    like = f"%{job_url.strip().rstrip('/')}%"
+    conn = get_connection()
+    row = conn.execute(
+        """
+        SELECT title, company, site, url, fit_score, llm_score, keyword_score,
+               embedding_score, composite_score, score_breakdown, score_reasoning,
+               matched_skills, missing_skills, keyword_hits, risk_flags,
+               apply_or_skip_reason
+        FROM jobs
+        WHERE url = ? OR url LIKE ? OR application_url LIKE ?
+        ORDER BY scored_at DESC
+        LIMIT 1
+        """,
+        (job_url, like, like),
+    ).fetchone()
+    if not row:
+        console.print("[red]No matching job found.[/red]")
+        raise typer.Exit(code=1)
+
+    table = Table(title="Score Explain", show_header=True, header_style="bold cyan")
+    table.add_column("Field", style="bold")
+    table.add_column("Value")
+    for key in (
+        "title", "company", "site", "fit_score", "llm_score",
+        "keyword_score", "embedding_score", "composite_score",
+        "matched_skills", "missing_skills", "keyword_hits",
+        "risk_flags", "apply_or_skip_reason", "score_reasoning",
+    ):
+        table.add_row(key, str(row[key] if row[key] is not None else "legacy/missing"))
+    console.print()
+    console.print(table)
+
+    if row["score_breakdown"]:
+        try:
+            data = json.loads(row["score_breakdown"])
+            misses = data.get("keyword", {}).get("misses", [])[:12]
+            if misses:
+                console.print("[yellow]What to improve:[/yellow] " + ", ".join(misses))
+        except json.JSONDecodeError:
+            pass
+    else:
+        console.print("[dim]Legacy score: run `divapply rescore` for hybrid breakdown.[/dim]")
+
+
+@app.command()
+def rescore(
+    limit: int = typer.Option(0, "--limit", "-l", help="Max rows to rescore; 0 = all."),
+) -> None:
+    """Recompute hybrid scores for existing enriched jobs."""
+    _bootstrap()
+
+    from divapply.scoring.scorer import run_scoring
+    result = run_scoring(limit=limit, rescore=True)
+    console.print(f"[green]Rescored {result['scored']} job(s).[/green] Errors: {result['errors']}")
 
 
 @app.command()

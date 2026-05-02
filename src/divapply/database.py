@@ -6,12 +6,15 @@ without migration ordering issues.
 """
 
 import json
+import hashlib
+import re
 import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
 from divapply.config import DB_PATH, LEGACY_DB_PATH
+from divapply.migrations import run_migrations
 
 # Thread-local connection storage â€” each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
@@ -84,10 +87,13 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     so it won't destroy existing data.
 
     Schema columns by stage:
-      - Discovery:  url, title, salary, description, location, site, strategy, discovered_at
+      - Discovery:  url, canonical_key, title, company, salary, description,
+                   location, site, strategy, discovered_at
       - Enrichment: full_description, application_url, detail_scraped_at, detail_error
-      - Scoring:    fit_score, score_reasoning, matched_skills, missing_skills,
-                   keyword_hits, risk_flags, apply_or_skip_reason, scored_at
+      - Scoring:    fit_score, llm_score, keyword_score, embedding_score,
+                   composite_score, score_breakdown, score_reasoning,
+                   matched_skills, missing_skills, keyword_hits, risk_flags,
+                   apply_or_skip_reason, scored_at
       - Tailoring:  tailored_resume_path, tailored_at, tailor_attempts
       - Cover:      cover_letter_path, cover_letter_at, cover_attempts
       - Apply:      applied_at, apply_status, apply_error, apply_attempts,
@@ -110,7 +116,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS jobs (
             -- Discovery stage (smart_extract / job_search)
             url                   TEXT PRIMARY KEY,
+            canonical_key         TEXT,
             title                 TEXT,
+            company               TEXT,
             salary                TEXT,
             description           TEXT,
             location              TEXT,
@@ -126,6 +134,11 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 
             -- Scoring stage (job_scorer)
             fit_score             INTEGER,
+            llm_score             INTEGER,
+            keyword_score         REAL,
+            embedding_score       REAL,
+            composite_score       REAL,
+            score_breakdown       TEXT,
             score_reasoning       TEXT,
             matched_skills        TEXT,
             missing_skills        TEXT,
@@ -162,8 +175,12 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_coursework_table(conn)
     seed_coursework_if_empty(conn)
 
-    # Run migrations for any columns added after initial schema
+    # Run schema-versioned migrations, then the additive column safety net.
+    run_migrations(conn)
     ensure_columns(conn)
+    ensure_job_indexes(conn)
+    ensure_application_events_table(conn)
+    backfill_application_events(conn)
 
     return conn
 
@@ -174,7 +191,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 _ALL_COLUMNS: dict[str, str] = {
     # Discovery
     "url": "TEXT PRIMARY KEY",
+    "canonical_key": "TEXT",
     "title": "TEXT",
+    "company": "TEXT",
     "salary": "TEXT",
     "description": "TEXT",
     "location": "TEXT",
@@ -188,6 +207,11 @@ _ALL_COLUMNS: dict[str, str] = {
     "detail_error": "TEXT",
     # Scoring
     "fit_score": "INTEGER",
+    "llm_score": "INTEGER",
+    "keyword_score": "REAL",
+    "embedding_score": "REAL",
+    "composite_score": "REAL",
+    "score_breakdown": "TEXT",
     "score_reasoning": "TEXT",
     "matched_skills": "TEXT",
     "missing_skills": "TEXT",
@@ -248,6 +272,193 @@ def ensure_columns(conn: sqlite3.Connection | None = None) -> list[str]:
             added.append(col)
 
     return added
+
+
+def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
+    """Create lightweight lookup indexes used by dedup and CRM commands."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_canonical_key ON jobs(canonical_key)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_apply_status ON jobs(apply_status)")
+    conn.commit()
+
+
+def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> None:
+    """Create the append-only application lifecycle table."""
+    if conn is None:
+        conn = get_connection()
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS application_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_url         TEXT NOT NULL,
+            event_type      TEXT NOT NULL,
+            ts              TEXT NOT NULL,
+            notes           TEXT,
+            follow_up_at    TEXT,
+            created_at      TEXT DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(job_url) REFERENCES jobs(url)
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_job_url ON application_events(job_url)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_follow_up ON application_events(follow_up_at)")
+    conn.commit()
+
+
+def backfill_application_events(conn: sqlite3.Connection | None = None) -> int:
+    """Backfill one synthetic applied event for legacy rows with applied_at."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_application_events_table(conn)
+    rows = conn.execute("""
+        SELECT url, applied_at
+        FROM jobs
+        WHERE applied_at IS NOT NULL
+          AND NOT EXISTS (
+              SELECT 1 FROM application_events
+              WHERE application_events.job_url = jobs.url
+                AND application_events.event_type = 'applied'
+          )
+    """).fetchall()
+
+    inserted = 0
+    for row in rows:
+        conn.execute(
+            """
+            INSERT INTO application_events (job_url, event_type, ts, notes)
+            VALUES (?, 'applied', ?, ?)
+            """,
+            (row["url"], row["applied_at"], "Backfilled from jobs.applied_at"),
+        )
+        inserted += 1
+    conn.commit()
+    return inserted
+
+
+def add_application_event(
+    job_url: str,
+    event_type: str,
+    *,
+    notes: str | None = None,
+    follow_up_at: str | None = None,
+    ts: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    """Append one lifecycle event and sync the legacy job status columns."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_application_events_table(conn)
+    event = event_type.strip().lower().replace("-", "_")
+    now = ts or datetime.now(timezone.utc).isoformat()
+    cursor = conn.execute(
+        """
+        INSERT INTO application_events (job_url, event_type, ts, notes, follow_up_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (job_url, event, now, notes, follow_up_at),
+    )
+
+    status_map = {
+        "applied": "applied",
+        "screening": "screening",
+        "interview": "interview",
+        "offer": "offer",
+        "rejection": "rejected",
+        "rejected": "rejected",
+        "withdrawn": "withdrawn",
+        "failed": "failed",
+    }
+    if event in status_map:
+        applied_at_sql = ", applied_at = COALESCE(applied_at, ?)" if event == "applied" else ""
+        params: tuple
+        if event == "applied":
+            params = (status_map[event], now, job_url)
+        else:
+            params = (status_map[event], job_url)
+        conn.execute(
+            f"UPDATE jobs SET apply_status = ?{applied_at_sql} WHERE url = ?",
+            params,
+        )
+    conn.commit()
+    return int(cursor.lastrowid)
+
+
+def get_due_followups(
+    *,
+    today: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> list[dict]:
+    """Return lifecycle events with follow-ups due today or earlier."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_application_events_table(conn)
+    cutoff = today or datetime.now(timezone.utc).date().isoformat()
+    rows = conn.execute(
+        """
+        SELECT e.id, e.job_url, e.event_type, e.ts, e.notes, e.follow_up_at,
+               j.title, j.company, j.site, j.fit_score, j.apply_status
+        FROM application_events e
+        LEFT JOIN jobs j ON j.url = e.job_url
+        WHERE e.follow_up_at IS NOT NULL
+          AND e.follow_up_at <= ?
+          AND COALESCE(j.apply_status, '') NOT IN ('rejected', 'withdrawn', 'failed')
+        ORDER BY e.follow_up_at ASC, e.ts DESC
+        """,
+        (cutoff,),
+    ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def get_application_analytics(conn: sqlite3.Connection | None = None) -> dict:
+    """Return compact lifecycle analytics for status/CLI display."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_application_events_table(conn)
+    state_rows = conn.execute(
+        """
+        SELECT COALESCE(apply_status, 'untracked') AS state, COUNT(*) AS count
+        FROM jobs
+        GROUP BY COALESCE(apply_status, 'untracked')
+        ORDER BY count DESC
+        """
+    ).fetchall()
+    event_rows = conn.execute(
+        """
+        SELECT event_type, COUNT(*) AS count
+        FROM application_events
+        GROUP BY event_type
+        ORDER BY count DESC
+        """
+    ).fetchall()
+    due = get_due_followups(conn=conn)
+    return {
+        "states": [(row["state"], row["count"]) for row in state_rows],
+        "events": [(row["event_type"], row["count"]) for row in event_rows],
+        "due_followups": len(due),
+    }
+
+
+def get_application_timeline(job_url: str, conn: sqlite3.Connection | None = None) -> list[dict]:
+    """Return lifecycle events for one job in chronological order."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_application_events_table(conn)
+    rows = conn.execute(
+        """
+        SELECT id, job_url, event_type, ts, notes, follow_up_at
+        FROM application_events
+        WHERE job_url = ?
+        ORDER BY ts ASC, id ASC
+        """,
+        (job_url,),
+    ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def ensure_coursework_table(conn: sqlite3.Connection | None = None) -> None:
@@ -657,12 +868,36 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         "AND application_url IS NOT NULL"
     ).fetchone()[0]
 
+    try:
+        stats["due_followups"] = get_application_analytics(conn)["due_followups"]
+    except Exception:
+        stats["due_followups"] = 0
+
     return stats
+
+
+_PUNCT_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _normalize_key_part(value: str | None) -> str:
+    text = str(value or "").casefold()
+    text = _PUNCT_RE.sub(" ", text)
+    text = re.sub(r"\b(inc|llc|ltd|corp|corporation|company|co)\b", " ", text)
+    return " ".join(text.split())
+
+
+def canonical_job_key(title: str | None, company: str | None, location: str | None) -> str | None:
+    """Return a stable soft-dedup key for the same role across boards."""
+    parts = [_normalize_key_part(title), _normalize_key_part(company), _normalize_key_part(location)]
+    if not any(parts):
+        return None
+    raw = "|".join(parts)
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
 def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
                site: str, strategy: str) -> tuple[int, int]:
-    """Store discovered jobs, skipping duplicates by URL.
+    """Store discovered jobs, skipping duplicates by URL or canonical role key.
 
     Args:
         conn: Database connection.
@@ -681,12 +916,24 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
         url = job.get("url")
         if not url:
             continue
+        title = job.get("title")
+        company = job.get("company")
+        location = job.get("location")
+        canonical_key = canonical_job_key(title, company, location)
+        if canonical_key:
+            found = conn.execute(
+                "SELECT 1 FROM jobs WHERE canonical_key = ? LIMIT 1",
+                (canonical_key,),
+            ).fetchone()
+            if found:
+                existing += 1
+                continue
         try:
             conn.execute(
-                "INSERT INTO jobs (url, title, salary, description, location, site, strategy, discovered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, job.get("title"), job.get("salary"), job.get("description"),
-                 job.get("location"), site, strategy, now),
+                "INSERT INTO jobs (url, canonical_key, title, company, salary, description, location, site, strategy, discovered_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (url, canonical_key, title, company, job.get("salary"), job.get("description"),
+                 location, site, strategy, now),
             )
             new += 1
         except sqlite3.IntegrityError:

@@ -4,6 +4,7 @@
 profile.json
 resume.txt
 resume.pdf
+answers.yaml
 *.env
 .env.*
 !.env.example

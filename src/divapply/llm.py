@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 # Provider detection
 # ---------------------------------------------------------------------------
 
-def _detect_provider() -> tuple[str, str, str]:
+def _detect_provider(alias: str | None = None) -> tuple[str, str, str]:
     """Return (base_url, model, api_key) based on environment variables.
 
     Reads env at call time (not module import time) so that load_env() called
@@ -32,6 +32,28 @@ def _detect_provider() -> tuple[str, str, str]:
     openai_key = os.environ.get("OPENAI_API_KEY", "")
     local_url = os.environ.get("LLM_URL", "")
     model_override = os.environ.get("LLM_MODEL", "")
+
+    if alias:
+        provider, _, model = alias.partition(":")
+        provider = provider.strip().casefold()
+        model = model.strip()
+        if not model:
+            model = provider
+            provider = ""
+        if provider in ("openai", "oa"):
+            if not openai_key:
+                raise RuntimeError("DIVAPPLY_LLM alias requested OpenAI but OPENAI_API_KEY is missing.")
+            return ("https://api.openai.com/v1", model or model_override or "gpt-4o-mini", openai_key)
+        if provider in ("gemini", "google"):
+            if not gemini_key:
+                raise RuntimeError("DIVAPPLY_LLM alias requested Gemini but GEMINI_API_KEY is missing.")
+            return ("https://generativelanguage.googleapis.com/v1beta/openai", model or model_override or "gemini-2.0-flash", gemini_key)
+        if provider in ("local", "ollama"):
+            base = local_url or os.environ.get("OLLAMA_URL", "http://localhost:11434/v1")
+            return (base.rstrip("/"), model or model_override or "local-model", os.environ.get("LLM_API_KEY", ""))
+        if provider:
+            # Unknown provider labels are treated as model aliases on the default provider.
+            model_override = alias
 
     if gemini_key and not local_url:
         return (
@@ -324,8 +346,17 @@ _stage_instances: dict[str, LLMClient] = {}
 _STAGE_MODEL_VARS = {
     "score": "LLM_MODEL_SCORE",
     "tailor": "LLM_MODEL_TAILOR",
+    "judge": "LLM_MODEL_JUDGE",
     "cover": "LLM_MODEL_COVER",
     "apply": "LLM_MODEL_APPLY",
+}
+
+_STAGE_ALIAS_VARS = {
+    "score": "DIVAPPLY_LLM_SCORER",
+    "tailor": "DIVAPPLY_LLM_TAILOR",
+    "judge": "DIVAPPLY_LLM_JUDGE",
+    "cover": "DIVAPPLY_LLM_COVER",
+    "apply": "DIVAPPLY_LLM_APPLY",
 }
 
 
@@ -350,7 +381,19 @@ def get_client_for_stage(stage: str) -> LLMClient:
     """
     global _stage_instances
 
-    # Re-read env each call so changes after load_env() are picked up
+    # Re-read env each call so changes after load_env() are picked up.
+    # New alias form: DIVAPPLY_LLM_SCORER=openai:gpt-5.4-mini,
+    # DIVAPPLY_LLM_TAILOR=ollama:qwen2.5:14b, etc.
+    alias_var = _STAGE_ALIAS_VARS.get(stage, "")
+    alias = os.environ.get(alias_var, "") if alias_var else ""
+    if alias:
+        cache_key = f"{stage}:alias:{alias}"
+        if cache_key not in _stage_instances:
+            base_url, model, api_key = _detect_provider(alias)
+            log.info("LLM stage '%s': alias=%s provider=%s model=%s", stage, alias, base_url, model)
+            _stage_instances[cache_key] = LLMClient(base_url, model, api_key)
+        return _stage_instances[cache_key]
+
     stage_var = _STAGE_MODEL_VARS.get(stage, "")
     stage_model = os.environ.get(stage_var, "") if stage_var else ""
 
