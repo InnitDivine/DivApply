@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 
 from divapply.scoring.composite import composite_score
+from divapply.scoring.context import format_job_context
 from divapply.scoring.embedding import embedding_score
 from divapply.scoring.keywords import score_keywords
+from divapply.scoring import scorer
 
 
 def test_keyword_score_reports_hits_and_misses() -> None:
@@ -18,9 +20,38 @@ def test_keyword_score_reports_hits_and_misses() -> None:
     assert "kubernetes" in result["misses"]
 
 
+def test_keyword_score_weights_preferred_certifications_lightly() -> None:
+    jd = "\n".join([
+        "Required skills: Python, SQL.",
+        "Preferred certifications: AWS Certified Cloud Practitioner.",
+    ])
+    resume = "Built Python and SQL reports."
+
+    result = score_keywords(jd, resume)
+
+    assert any("aws" in keyword for keyword in result["preferred_keywords"])
+    assert not any("aws" in keyword for keyword in result["required_keywords"])
+    assert result["score"] >= 0.7
+
+
 def test_embedding_score_is_bounded() -> None:
     score = embedding_score("python sql reporting", "python sql analytics")
     assert 0.0 <= score <= 1.0
+
+
+def test_format_job_context_keeps_company_and_source_separate() -> None:
+    text = format_job_context(
+        {
+            "title": "Support Analyst",
+            "company": "Real Employer",
+            "site": "Indeed",
+            "location": "Remote",
+            "full_description": "Required: Python support.",
+        }
+    )
+
+    assert "COMPANY: Real Employer" in text
+    assert "SOURCE: Indeed" in text
 
 
 def test_composite_score_returns_breakdown_json() -> None:
@@ -37,3 +68,81 @@ def test_composite_score_returns_breakdown_json() -> None:
     breakdown = json.loads(result["score_breakdown"])
     assert "keyword" in breakdown
     assert "skill_gaps" in breakdown
+
+
+def test_composite_score_caps_non_substitutable_requirement_gap() -> None:
+    result = composite_score(
+        job_description="Required: Python, SQL, documentation, CPA license.",
+        resume_text="Python SQL documentation reporting analytics.",
+        llm_result={
+            "score": 1,
+            "risk_flags": "required license gap",
+            "missing_skills": "CPA license",
+            "reasoning": "Posting requires a CPA license not supported by the resume.",
+        },
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] == 1
+    assert breakdown["hard_mismatch_cap"] is True
+
+
+def test_composite_score_does_not_cap_preferred_only_certificate_gap() -> None:
+    result = composite_score(
+        job_description="Required: Python, SQL. Preferred: AWS certification.",
+        resume_text="Python SQL reporting analytics.",
+        llm_result={
+            "score": 2,
+            "risk_flags": "preferred certification missing",
+            "missing_skills": "preferred AWS certification",
+            "reasoning": "Candidate meets required criteria but lacks a preferred certification.",
+        },
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert breakdown["hard_mismatch_cap"] is False
+    assert result["score"] > 2
+
+
+def test_score_job_prompt_uses_company_separate_from_source(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeClient:
+        def chat(self, messages, **kwargs):
+            captured["messages"] = messages
+            return "\n".join([
+                "FIT_SCORE: 7",
+                "MATCHED_SKILLS: Python",
+                "MISSING_SKILLS: none",
+                "KEYWORD_HITS: Python",
+                "RISK_FLAGS: none",
+                "APPLY_OR_SKIP_REASON: Apply.",
+                "SCORE_REASONING: Meets core criteria.",
+            ])
+
+    monkeypatch.setattr(scorer, "get_client_for_stage", lambda stage: FakeClient())
+
+    scorer.score_job(
+        resume_text="Python support work.",
+        job={
+            "title": "Support Analyst",
+            "company": "Real Employer",
+            "site": "Indeed",
+            "location": "Remote",
+            "full_description": "Required: Python support.",
+        },
+    )
+
+    user_prompt = captured["messages"][1]["content"]
+    assert "COMPANY: Real Employer" in user_prompt
+    assert "SOURCE: Indeed" in user_prompt
+
+
+def test_score_prompt_does_not_penalize_job_category_alone() -> None:
+    prompt = scorer.SCORE_PROMPT
+
+    assert "Rank only job fit" in prompt
+    assert "Do not reward or penalize any job family" in prompt
+    assert "Do not penalize legitimate remote" in prompt
+    assert "Preferred/nice-to-have certifications" in prompt
+    assert "required/minimum/must have" in prompt

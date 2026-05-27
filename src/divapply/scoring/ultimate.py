@@ -36,7 +36,7 @@ def _fetch_top_jobs(n: int = 10, min_score: int = 7) -> list[dict]:
     """Pull top-scored jobs from the DB, ordered by fit_score DESC."""
     conn = get_connection()
     rows = conn.execute(
-        "SELECT title, site, location, fit_score, score_reasoning, full_description "
+        "SELECT title, company, site, location, fit_score, score_reasoning, full_description "
         "FROM jobs WHERE fit_score >= ? AND full_description IS NOT NULL "
         "ORDER BY discovered_at DESC, fit_score DESC LIMIT ?",
         (min_score, n),
@@ -67,8 +67,10 @@ def _build_combined_job_brief(jobs: list[dict]) -> str:
                 keywords = first_line
 
         desc_snippet = (job.get("full_description") or "")[:800]
+        company = job.get("company") or "N/A"
+        source = job.get("site") or "N/A"
         parts.append(
-            f"--- JOB {len(parts) + 1}: {title} ({job.get('site', '?')}) "
+            f"--- JOB {len(parts) + 1}: {title} ({company}; source={source}) "
             f"[score={job.get('fit_score', '?')}] ---\n"
             f"Keywords: {keywords}\n"
             f"Description excerpt:\n{desc_snippet}\n"
@@ -211,4 +213,3 @@ def generate_ultimate_resume(
         "jobs_used": len(jobs),
         "elapsed": elapsed,
     }
-

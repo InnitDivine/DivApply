@@ -19,6 +19,7 @@ from pathlib import Path
 from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile
 from divapply.database import get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
+from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
     BANNED_WORDS,
     FABRICATION_WATCHLIST,
@@ -576,13 +577,7 @@ def tailor_resume(
         except (TypeError, json.JSONDecodeError):
             gap_targets = ""
 
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:4000]}"
-        f"{gap_targets}"
-    )
+    job_text = format_job_context(job, description_limit=4000, extra=gap_targets)
 
     report: dict = {
         "attempts": 0, "validator": None, "judge": None,
@@ -822,4 +817,3 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
         "errors": stats.get("error", 0),
         "elapsed": elapsed,
     }
-

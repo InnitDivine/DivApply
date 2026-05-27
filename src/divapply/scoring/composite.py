@@ -10,9 +10,70 @@ from divapply.scoring.keywords import score_keywords
 
 DEFAULT_WEIGHTS = {"keyword": 0.3, "embedding": 0.3, "llm": 0.4}
 
+_HARD_MISMATCH_TERMS = {
+    "clearance",
+    "credential",
+    "certification",
+    "certified",
+    "degree",
+    "incompatible",
+    "license",
+    "licensure",
+    "missing required",
+    "not qualified",
+    "required license",
+    "required certification",
+    "required degree",
+    "scam",
+}
+_REQUIRED_GAP_TERMS = {
+    "cannot substitute",
+    "hard gap",
+    "mandatory certification",
+    "mandatory degree",
+    "mandatory license",
+    "minimum qualification",
+    "must have",
+    "non-substitutable",
+    "required certification",
+    "required credential",
+    "required degree",
+    "required license",
+    "required licensure",
+    "required clearance",
+    "missing required",
+}
+_PREFERRED_ONLY_TERMS = {
+    "bonus",
+    "desired",
+    "nice to have",
+    "nice-to-have",
+    "optional",
+    "plus",
+    "preferred",
+}
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _has_hard_mismatch(llm_result: dict) -> bool:
+    """Return True when the LLM found a non-substitutable requirement gap."""
+    evidence = " ".join(
+        str(llm_result.get(key, ""))
+        for key in ("risk_flags", "missing_skills", "apply_or_skip_reason", "reasoning")
+    ).casefold()
+    has_hard_gap = any(term in evidence for term in _HARD_MISMATCH_TERMS)
+    if not has_hard_gap:
+        return False
+
+    has_required_gap = any(term in evidence for term in _REQUIRED_GAP_TERMS)
+    has_preferred_only_gap = any(term in evidence for term in _PREFERRED_ONLY_TERMS) and not has_required_gap
+    if has_preferred_only_gap:
+        return False
+
+    return has_required_gap or "scam" in evidence or "not qualified" in evidence or "incompatible" in evidence
 
 
 def composite_score(
@@ -38,6 +99,14 @@ def composite_score(
         + active_weights["llm"] * llm_norm
     )
     composite_float = round(_clamp(composite_norm * 10.0, 1.0, 10.0), 2)
+
+    # Hard requirement gaps must not be diluted by broad keyword overlap.
+    # Example: a missing required license can share many words with a resume,
+    # but the candidate still does not meet the posting's minimum criteria.
+    hard_mismatch_cap = llm_score <= 2 and _has_hard_mismatch(llm_result)
+    if hard_mismatch_cap:
+        composite_float = min(composite_float, float(max(1, llm_score)))
+
     fit_score = int(round(composite_float))
 
     keyword_hits = keyword["hits"]
@@ -47,6 +116,10 @@ def composite_score(
             "score": keyword["score"],
             "hits": keyword_hits,
             "misses": keyword_misses,
+            "required_keywords": keyword.get("required_keywords", []),
+            "preferred_keywords": keyword.get("preferred_keywords", []),
+            "preferred_hits": keyword.get("preferred_hits", []),
+            "preferred_misses": keyword.get("preferred_misses", []),
         },
         "embedding": emb,
         "llm": {
@@ -55,6 +128,7 @@ def composite_score(
         },
         "weights": active_weights,
         "composite": composite_float,
+        "hard_mismatch_cap": hard_mismatch_cap,
         "skill_gaps": keyword_misses[:12],
     }
 

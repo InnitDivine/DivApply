@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from divapply.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
 from divapply.database import get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
+from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
@@ -152,12 +153,7 @@ def generate_cover_letter(
     Returns:
         The cover letter text (best attempt even if validation failed).
     """
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:3000]}"
-    )
+    job_text = format_job_context(job, description_limit=3000)
 
     avoid_notes: list[str] = []
     letter = ""
@@ -334,4 +330,3 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
         "errors": error_count,
         "elapsed": elapsed,
     }
-

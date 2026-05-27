@@ -15,6 +15,7 @@ from divapply.config import RESUME_PATH, load_profile
 from divapply.database import get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
 from divapply.scoring.composite import composite_score
+from divapply.scoring.context import format_job_context
 
 log = logging.getLogger(__name__)
 
@@ -23,6 +24,14 @@ log = logging.getLogger(__name__)
 
 SCORE_PROMPT = """You are a neutral job fit evaluator. Read the candidate's resume and the job posting carefully, then score how well the candidate qualifies for this specific role on a 1-10 scale.
 
+CORE POLICY:
+- Rank only job fit: verified candidate evidence against the posting's stated and clearly implied criteria.
+- Do not reward or penalize any job family, industry, employer type, schedule type, or presumed career direction.
+- Use general role sense only to interpret common requirements, not to invent unstated requirements.
+- Transferable experience counts when duties, tools, domain knowledge, education, or coursework reasonably map to the job's work.
+- Non-substitutable requirements such as licenses, clearances, legal credentials, completed degrees, or certifications must be treated as hard gaps when the posting requires them.
+- Preferred/nice-to-have certifications, tools, degrees, or licenses are not hard gaps. Treat them as small tie-breakers after required qualifications.
+
 SCORING CRITERIA:
 - 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
 - 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge.
@@ -30,29 +39,32 @@ SCORING CRITERIA:
 - 3-4: Weak match. Some transferable skills but significant gaps. Candidate could apply but is unlikely to be competitive.
 - 1-2: Incompatible. Role requires specific licensure, certification, or field experience the candidate does not have and cannot substitute.
 
-AUTOMATIC SCORE = 1 (do not evaluate further) if ANY of these are true â€” SCAM/JUNK SIGNALS:
+AUTOMATIC SCORE = 1 (do not evaluate further) only for clear SCAM/JUNK SIGNALS:
 - Job description is vague, generic, or could apply to any industry with no specific duties
 - Company name is missing, hidden, or listed only as "Confidential" or "Our Client"
 - No company website, physical address, or verifiable business presence mentioned
 - Promises unusually high pay for minimal qualifications (e.g. "$50-100/hr, no experience needed")
 - Application asks for SSN, bank account, or payment upfront before hiring
-- Job is "work from home, set your own hours, unlimited earnings" style
+- Job is "work from home, set your own hours, unlimited earnings" style AND also lacks concrete duties or a verifiable employer
 - Recruiter-only posting where the actual employer is never named
-- Job title/description is clearly a data harvesting scheme (brand ambassador, product tester, mystery shopper, chat agent, survey taker, social media evaluator, online rater)
+- Job title/description is clearly a data harvesting scheme (brand ambassador, product tester, mystery shopper, chat agent, survey taker, social media evaluator, online rater) with no concrete employer, duties, or screening process
 - Job redirects to a third-party site asking to "create a profile" before any interview
 - Multiple identical job postings from the same "company" with different salaries
+- Do not penalize legitimate remote, flexible, part-time, entry-level, customer-facing, sales, support, or field roles for category alone.
 
 QUALIFICATION MISMATCH:
 - Required license, certification, clearance, or legal credential is clearly missing and cannot be substituted
 - Job explicitly requires completed education or experience that the resume does not support
 - Job requires field-specific experience that is absent from the resume
+- Missing preferred-only certifications or nice-to-have tools should lower confidence only slightly, not force a low score.
 
 IMPORTANT NOTES:
 - Judge based on the actual job description minimum qualifications, not job title alone.
 - Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family.
 - Do not artificially boost or suppress roles based on a presumed career path.
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
-- Use only evidence from the resume and the job description.
+- Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
+- Use only evidence from the resume, profile-safe coursework summary, and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
 FIT_SCORE: [1-10]
@@ -123,12 +135,7 @@ def score_job(
     Returns:
         Structured scoring fields.
     """
-    job_text = (
-        f"TITLE: {job['title']}\n"
-        f"COMPANY: {job['site']}\n"
-        f"LOCATION: {job.get('location', 'N/A')}\n\n"
-        f"DESCRIPTION:\n{(job.get('full_description') or '')[:3000]}"
-    )
+    job_text = format_job_context(job, description_limit=3000)
 
     coursework_block = coursework_summary.strip() or "N/A"
     coursework_skills_block = coursework_skills_summary.strip() or "N/A"
@@ -304,4 +311,3 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
         "distribution": distribution,
         "pruned": pruned,
     }
-
