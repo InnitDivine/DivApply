@@ -390,6 +390,19 @@ def _sort_experience_recent_first(experience: list[dict]) -> list[dict]:
     return [entry for _, entry in sorted(indexed, key=lambda pair: _experience_sort_key(pair[1], pair[0]))]
 
 
+def _format_job_trace(job: dict) -> str:
+    """Return saved job context with employer and source kept separate."""
+    return (
+        f"Title: {job['title']}\n"
+        f"Company: {job.get('company') or 'N/A'}\n"
+        f"Source: {job.get('site') or 'N/A'}\n"
+        f"Location: {job.get('location', 'N/A')}\n"
+        f"Score: {job.get('fit_score', 'N/A')}\n"
+        f"URL: {job['url']}\n\n"
+        f"{job.get('full_description', '')}"
+    )
+
+
 # â”€â”€ Resume Assembly (profile-driven header) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def assemble_resume_text(data: dict, profile: dict) -> str:
@@ -730,15 +743,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
 
             # Save job description for traceability
             job_path = TAILORED_DIR / f"{prefix}_JOB.txt"
-            job_desc = (
-                f"Title: {job['title']}\n"
-                f"Company: {job['site']}\n"
-                f"Location: {job.get('location', 'N/A')}\n"
-                f"Score: {job.get('fit_score', 'N/A')}\n"
-                f"URL: {job['url']}\n\n"
-                f"{job.get('full_description', '')}"
-            )
-            job_path.write_text(job_desc, encoding="utf-8")
+            job_path.write_text(_format_job_trace(job), encoding="utf-8")
 
             # Save validation report
             report_path = TAILORED_DIR / f"{prefix}_REPORT.json"

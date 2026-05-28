@@ -28,9 +28,9 @@ from divapply.scoring.tailor import (
     _enforce_one_page_shape as _tailor_one_page_shape,
     _sort_experience_recent_first,
 )
-from divapply.scoring.validator import BANNED_WORDS
 
 log = logging.getLogger(__name__)
+
 
 def _fetch_top_jobs(n: int = 10, min_score: int = 7) -> list[dict]:
     """Pull top-scored jobs from the DB, ordered by fit_score DESC."""
@@ -38,13 +38,14 @@ def _fetch_top_jobs(n: int = 10, min_score: int = 7) -> list[dict]:
     rows = conn.execute(
         "SELECT title, company, site, location, fit_score, score_reasoning, full_description "
         "FROM jobs WHERE fit_score >= ? AND full_description IS NOT NULL "
-        "ORDER BY discovered_at DESC, fit_score DESC LIMIT ?",
+        "ORDER BY fit_score DESC, discovered_at DESC LIMIT ?",
         (min_score, n),
     ).fetchall()
     if not rows:
         return []
     columns = rows[0].keys()
     return [dict(zip(columns, row)) for row in rows]
+
 
 def _build_combined_job_brief(jobs: list[dict]) -> str:
     """Condense multiple job postings into a single brief for the LLM."""
@@ -78,6 +79,7 @@ def _build_combined_job_brief(jobs: list[dict]) -> str:
 
     return "\n".join(parts)
 
+
 ULTIMATE_SYSTEM_PROMPT = """You are a senior technical recruiter building a GENERAL-PURPOSE resume.
 
 You are given a base resume and excerpts from {n_jobs} real job postings that scored highest
@@ -100,20 +102,6 @@ Education is injected automatically by code -- do NOT include an education field
 
 {{"title":"Role Title","summary":"2-3 sentences covering the broadest fit.","skills":{{"Category":"skill1, skill2, ..."}},"experience":[{{"header":"Job Title","subtitle":"Company | Dates","bullets":["..."]}}],"projects":[{{"header":"Project","subtitle":"Tech | Date","bullets":["..."]}}]}}"""
 
-def _enforce_one_page_shape(data: dict) -> dict:
-    """Enforce one-page shape by trimming text length."""
-    # Example: If total word count exceeds a limit, truncate
-    total_word_count = sum(len(bullet.split()) for entry in data['experience'] for bullet in entry['bullets'])
-    if total_word_count > 600:  # Set a max word count for one-page resumes
-        # Trim or truncate experience and project sections
-        data['experience'] = data['experience'][:3]  # Keep top 3 experiences
-        for entry in data['experience']:
-            entry['bullets'] = entry['bullets'][:2]  # Limit to 2 bullets per experience
-
-    # Similarly, enforce skills and project section trimming
-    data['projects'] = data['projects'][:1]  # Keep only the top project
-
-    return data
 
 def generate_ultimate_resume(
     top_n: int = 10,

@@ -664,7 +664,7 @@ def build_prompt(job: dict, tailored_resume: str,
     comes from the profile -- nothing is hardcoded.
 
     Args:
-        job: Job dict from the database (must have url, title, site,
+        job: Job dict from the database (must have url, title, company, site,
              application_url, fit_score, tailored_resume_path).
         tailored_resume: Plain-text content of the tailored resume.
         cover_letter: Optional plain-text cover letter content.
@@ -762,6 +762,8 @@ def build_prompt(job: dict, tailored_resume: str,
     preferred_name = personal.get("preferred_name", full_name.split()[0])
     last_name = full_name.split()[-1] if " " in full_name else ""
     display_name = f"{preferred_name} {last_name}".strip()
+    company = job.get("company") or job.get("site") or "Unknown"
+    source = job.get("site") or "N/A"
 
     # Dry-run: override submit instruction
     if dry_run:
@@ -800,7 +802,8 @@ To scroll to bottom: browser_scroll direction: down coordinate: [512, 600] (repe
 == JOB ==
 URL: {job.get('application_url') or job['url']}
 Title: {job['title']}
-Company: {job.get('site', 'Unknown')}
+Company: {company}
+Source: {source}
 Fit Score: {job.get('fit_score', 'N/A')}/10
 
 == FILES (absolute paths â€” use EXACTLY as shown, do NOT modify or retry with different formats) ==
@@ -954,4 +957,3 @@ GOLDEN RULES â€” every action costs tokens, every screenshot costs tokens:
 Stop immediately. Output your RESULT code. Do not loop."""
 
     return prompt
-

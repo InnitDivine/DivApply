@@ -46,6 +46,11 @@ def _load_blocked():
     from divapply.config import load_blocked_sites
     return load_blocked_sites()
 
+
+def _display_company(job: dict) -> str:
+    """Return employer name for user-facing logs, falling back to source."""
+    return job.get("company") or job.get("site") or ""
+
 # Runtime coordination shared by worker threads and Ctrl+C handling.
 POLL_INTERVAL = config.DEFAULTS["poll_interval"]
 _stop_event = threading.Event()
@@ -124,7 +129,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
         if target_url:
             like = f"%{target_url.split('?')[0].rstrip('/')}%"
             row = conn.execute("""
-                SELECT url, title, site, application_url, tailored_resume_path,
+                SELECT url, title, company, site, application_url, tailored_resume_path,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
                 WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
@@ -145,7 +150,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 url_clauses = " ".join(f"AND url NOT LIKE ?" for _ in blocked_patterns)
                 params.extend(blocked_patterns)
             row = conn.execute(f"""
-                SELECT url, title, site, application_url, tailored_resume_path,
+                SELECT url, title, company, site, application_url, tailored_resume_path,
                        fit_score, location, full_description, cover_letter_path
                 FROM jobs
                 WHERE tailored_resume_path IS NOT NULL
@@ -553,19 +558,23 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     env = os.environ.copy()
     env.pop("CLAUDECODE", None)
     env.pop("CLAUDE_CODE_ENTRYPOINT", None)
+    company = _display_company(job)
+    source = job.get("site") or ""
+    source_suffix = f" (source: {source})" if source and source != company else ""
 
     update_state(worker_id, status="applying", job_title=job["title"],
-                 company=job.get("site", ""), score=job.get("fit_score", 0),
+                 company=company, score=job.get("fit_score", 0),
                  start_time=time.time(), actions=0, last_action=f"{backend} starting")
     add_event(
-        f"[W{worker_id}] Starting via {backend}/{browser}: {job['title'][:40]} @ {job.get('site', '')}"
+        f"[W{worker_id}] Starting via {backend}/{browser}: {job['title'][:40]} @ {company}{source_suffix}"
     )
 
     worker_log = config.LOG_DIR / f"worker-{worker_id}.log"
     ts_header = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_header = (
         f"\n{'=' * 60}\n"
-        f"[{ts_header}] {job['title']} @ {job.get('site', '')}\n"
+        f"[{ts_header}] {job['title']} @ {company}\n"
+        f"Source: {source or 'N/A'}\n"
         f"Backend: {backend}\n"
         f"Browser: {browser}\n"
         f"URL: {job.get('application_url') or job['url']}\n"

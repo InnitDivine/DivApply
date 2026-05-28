@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 import json
 
 from divapply.apply import launcher
@@ -59,3 +60,55 @@ def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
     assert cmd[:4] == ["codex", "exec", "--model", "gpt-5.4-mini"]
     assert "--full-auto" in cmd
     assert "mcp_servers.playwright.required=true" in cmd
+
+
+def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            title TEXT,
+            company TEXT,
+            site TEXT,
+            application_url TEXT,
+            tailored_resume_path TEXT,
+            fit_score INTEGER,
+            location TEXT,
+            full_description TEXT,
+            cover_letter_path TEXT,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            last_attempted_at TEXT
+        )
+    """)
+    conn.execute("""
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        "https://jobs.example/1",
+        "Support Analyst",
+        "Real Employer",
+        "Indeed",
+        "https://apply.example/1",
+        "resume.txt",
+        9,
+        "Remote",
+        "Required: Python support.",
+        0,
+    ))
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda url: False, raising=False)
+
+    job = launcher.acquire_job(min_score=7, worker_id=3)
+
+    assert job is not None
+    assert job["company"] == "Real Employer"
+    assert job["site"] == "Indeed"
