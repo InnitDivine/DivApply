@@ -73,7 +73,7 @@ def _has_hard_mismatch(llm_result: dict) -> bool:
     if has_preferred_only_gap:
         return False
 
-    return has_required_gap or "scam" in evidence or "not qualified" in evidence or "incompatible" in evidence
+    return True
 
 
 def composite_score(

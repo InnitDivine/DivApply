@@ -34,6 +34,22 @@ def test_keyword_score_weights_preferred_certifications_lightly() -> None:
     assert result["score"] >= 0.7
 
 
+def test_keyword_score_keeps_preferred_qualifications_out_of_required_bucket() -> None:
+    jd = "\n".join([
+        "Preferred Qualifications:",
+        "- AWS Certified Cloud Practitioner.",
+        "Required Qualifications:",
+        "- Python.",
+        "- SQL.",
+    ])
+    resume = "Built Python and SQL reports."
+
+    result = score_keywords(jd, resume)
+
+    assert any("aws" in keyword for keyword in result["preferred_keywords"])
+    assert not any("aws" in keyword for keyword in result["required_keywords"])
+
+
 def test_embedding_score_is_bounded() -> None:
     score = embedding_score("python sql reporting", "python sql analytics")
     assert 0.0 <= score <= 1.0
@@ -79,6 +95,23 @@ def test_composite_score_caps_non_substitutable_requirement_gap() -> None:
             "risk_flags": "required license gap",
             "missing_skills": "CPA license",
             "reasoning": "Posting requires a CPA license not supported by the resume.",
+        },
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] == 1
+    assert breakdown["hard_mismatch_cap"] is True
+
+
+def test_composite_score_caps_plain_missing_license_gap_when_llm_rejects() -> None:
+    result = composite_score(
+        job_description="Required: Python, SQL, CPA license.",
+        resume_text="Python SQL reporting analytics.",
+        llm_result={
+            "score": 1,
+            "risk_flags": "missing CPA license",
+            "missing_skills": "CPA license",
+            "reasoning": "Missing CPA license.",
         },
     )
 

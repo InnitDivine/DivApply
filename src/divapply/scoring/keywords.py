@@ -55,7 +55,7 @@ def _line_bucket(line: str, current: str | None) -> str | None:
     lowered = line.casefold()
     has_preferred = any(marker in lowered for marker in _PREFERRED_MARKERS)
     has_required = any(marker in lowered for marker in _REQUIRED_MARKERS)
-    if has_preferred and not has_required:
+    if has_preferred:
         return "preferred"
     if has_required:
         return "required"
