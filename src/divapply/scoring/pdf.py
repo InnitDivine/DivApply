@@ -5,6 +5,7 @@ and exports to PDF using headless Chromium via Playwright.
 """
 
 import logging
+from html import escape as _html_escape
 from pathlib import Path
 
 from divapply.config import TAILORED_DIR
@@ -228,6 +229,10 @@ def build_html(resume: dict) -> str:
 
     import re as _re
 
+    def _esc(value: object) -> str:
+        """Escape resume-controlled text before injecting into HTML."""
+        return _html_escape(str(value or ""), quote=True)
+
     def _find_key(secs: dict, *keywords: str) -> str | None:
         """Return first section key that contains any of the given keywords."""
         for k in secs:
@@ -242,7 +247,7 @@ def build_html(resume: dict) -> str:
         skills = parse_skills(sections[skills_key])
         rows = ""
         for cat, val in skills:
-            rows += f'<div class="skill-row"><span class="skill-cat">{cat}:</span> {val}</div>\n'
+            rows += f'<div class="skill-row"><span class="skill-cat">{_esc(cat)}:</span> {_esc(val)}</div>\n'
         skills_html = f'<div class="section"><div class="section-title">Technical Skills</div><div class="skills-grid">{rows}</div></div>'
 
     def _split_date(title: str):
@@ -270,13 +275,13 @@ def build_html(resume: dict) -> str:
             else:
                 subtitle_text = e["subtitle"] if e["subtitle"] and e["subtitle"] != company_or_date else ""
 
-            bullets = "".join(f"<li>{b}</li>" for b in e["bullets"])
-            date_html = f'<div class="entry-date">{date}</div>' if date else ""
-            sub_html = f'<div class="entry-subtitle">{company_or_date}</div>' if company_or_date else ""
+            bullets = "".join(f"<li>{_esc(b)}</li>" for b in e["bullets"])
+            date_html = f'<div class="entry-date">{_esc(date)}</div>' if date else ""
+            sub_html = f'<div class="entry-subtitle">{_esc(company_or_date)}</div>' if company_or_date else ""
             if subtitle_text:
-                sub_html += f'<div class="entry-subtitle">{subtitle_text}</div>'
+                sub_html += f'<div class="entry-subtitle">{_esc(subtitle_text)}</div>'
             items += f'''<div class="entry">
-  <div class="entry-header"><div class="entry-title">{job_title}</div>{date_html}</div>
+  <div class="entry-header"><div class="entry-title">{_esc(job_title)}</div>{date_html}</div>
   {sub_html}
   <ul>{bullets}</ul>
 </div>'''
@@ -305,7 +310,7 @@ def build_html(resume: dict) -> str:
         for line in cert_text.split("\n"):
             line = line.strip().lstrip("-").lstrip("\u2022").strip()
             if line:
-                cert_items += f'<div class="cert-item">{line}</div>\n'
+                cert_items += f'<div class="cert-item">{_esc(line)}</div>\n'
         if cert_items:
             cert_html = f'<div class="section"><div class="section-title">Certifications &amp; Licenses</div>{cert_items}</div>'
 
@@ -322,10 +327,10 @@ def build_html(resume: dict) -> str:
                 continue
             degree = lines[0]
             school = lines[1] if len(lines) > 1 else ""
-            details = " &nbsp;Â·&nbsp; ".join(lines[2:]) if len(lines) > 2 else ""
+            details = " &nbsp;Â·&nbsp; ".join(_esc(line) for line in lines[2:]) if len(lines) > 2 else ""
             edu_items += f'''<div class="edu-entry">
-  <div class="edu-degree">{degree}</div>
-  <div class="edu-school">{school}</div>
+  <div class="edu-degree">{_esc(degree)}</div>
+  <div class="edu-school">{_esc(school)}</div>
   {"<div class='edu-details'>" + details + "</div>" if details else ""}
 </div>'''
         edu_html = f'<div class="section"><div class="section-title">Education</div>{edu_items}</div>'
@@ -334,15 +339,19 @@ def build_html(resume: dict) -> str:
     summary_html = ""
     summary_key = _find_key(sections, "SUMMARY")
     if summary_key:
-        summary_html = f'<div class="section"><div class="section-title">Summary</div><div class="summary">{sections[summary_key].strip()}</div></div>'
+        summary_html = f'<div class="section"><div class="section-title">Summary</div><div class="summary">{_esc(sections[summary_key].strip())}</div></div>'
 
     # Contact line parsing
     contact = resume["contact"]
-    contact_parts = [p.strip() for p in contact.split("|")] if contact else []
+    contact_parts = [_esc(p.strip()) for p in contact.split("|")] if contact else []
     contact_html = " &nbsp;|&nbsp; ".join(contact_parts)
 
-    # Location line (may be empty)
-    location_html = f'<div class="location">{resume["location"]}</div>' if resume["location"] else ""
+    display_name = (
+        _esc(resume["name"])
+        .replace("De Arrieta", "<span>De Arrieta</span>")
+        .replace("de Arrieta", "<span>de Arrieta</span>")
+        .replace("DE ARRIETA", "<span>DE ARRIETA</span>")
+    )
 
     return f"""<!DOCTYPE html>
 <html>
@@ -549,8 +558,8 @@ li::marker {{
 
 <div class="header">
     <div class="header-top">
-        <div class="name">{resume['name'].replace('De Arrieta', '<span>De Arrieta</span>').replace('de Arrieta', '<span>de Arrieta</span>').replace('DE ARRIETA', '<span>DE ARRIETA</span>')}</div>
-        <div class="title">{resume['title']}</div>
+        <div class="name">{display_name}</div>
+        <div class="title">{_esc(resume['title'])}</div>
     </div>
     <div class="contact">{contact_html}</div>
 </div>
@@ -569,6 +578,9 @@ li::marker {{
 
 def build_cover_letter_html(text: str, profile: dict | None = None) -> str:
     """Build a styled cover letter HTML from plain letter text."""
+    def _esc(value: object) -> str:
+        return _html_escape(str(value or ""), quote=True)
+
     personal = (profile or {}).get("personal", {})
     name = personal.get("full_name", "")
     email = personal.get("email", "")
@@ -578,14 +590,14 @@ def build_cover_letter_html(text: str, profile: dict | None = None) -> str:
     location = f"{city}, {state}" if city and state else city or state
 
     contact_parts = [p for p in [phone, email, location] if p]
-    contact_line = "  &nbsp;|&nbsp;  ".join(contact_parts)
+    contact_line = "  &nbsp;|&nbsp;  ".join(_esc(part) for part in contact_parts)
 
     # Split into paragraphs
     paragraphs = [p.strip() for p in text.strip().split("\n\n") if p.strip()]
-    body_html = "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in paragraphs)
+    body_html = "".join(f"<p>{_esc(p).replace(chr(10), '<br>')}</p>" for p in paragraphs)
 
     display_name = (
-        name
+        _esc(name)
         .replace("De Arrieta", "<span>De Arrieta</span>")
         .replace("de Arrieta", "<span>de Arrieta</span>")
         .replace("DE ARRIETA", "<span>DE ARRIETA</span>")
@@ -786,4 +798,3 @@ def batch_convert(limit: int = 50) -> int:
 
     log.info("Done: %d/%d PDFs generated in %s", converted, len(to_convert), TAILORED_DIR)
     return converted
-

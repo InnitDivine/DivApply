@@ -583,6 +583,7 @@ def export_jobs(
 
     safe_columns = [
         "title",
+        "company",
         "site",
         "url",
         "application_url",
@@ -598,10 +599,10 @@ def export_jobs(
     conn = get_connection()
     rows = conn.execute(
         """
-        SELECT title, site, url, application_url, fit_score, apply_status,
+        SELECT title, company, site, url, application_url, fit_score, apply_status,
                discovered_at, scored_at, tailored_at, applied_at, apply_error
         FROM jobs
-        ORDER BY discovered_at DESC, fit_score DESC
+        ORDER BY CASE WHEN fit_score IS NULL THEN 1 ELSE 0 END, fit_score DESC, discovered_at DESC
         """
     ).fetchall()
 
@@ -1249,4 +1250,3 @@ def sync(
 
 if __name__ == "__main__":
     app()
-
