@@ -23,6 +23,14 @@ All notable changes to DivApply will be documented here.
 - Reworked the README around the simple pip-first install path.
 - Kept the GitHub clone installers as fallback/development options.
 
+## 0.4.3
+
+- Fixed neutral job scoring edge cases for preferred qualifications and hard requirement gaps.
+- Kept company and source/job-board fields separate in scoring, apply prompts, logs, traces, and exports.
+- Fixed ultimate resume job selection to prioritize highest fit scores before recency.
+- Hardened resume and cover letter HTML escaping for generated PDFs.
+- Added regression coverage for scoring, apply prompt context, PDF template output, and safe exports.
+
 ## Unreleased
 
 - Future work will continue under the DivApply branding.
