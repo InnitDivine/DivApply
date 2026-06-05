@@ -1,4 +1,4 @@
-﻿"""DivApply CLI â€” the main entry point."""
+"""DivApply CLI - the main entry point."""
 
 from __future__ import annotations
 
@@ -25,9 +25,16 @@ app = typer.Typer(
     name="divapply",
     help="DivApply, an AI-powered end-to-end job application pipeline.",
     no_args_is_help=True,
+    context_settings={"help_option_names": ["--help", "-h"]},
 )
-export_app = typer.Typer(help="Export safe DivApply data.")
-answers_app = typer.Typer(help="Manage saved application question answers.")
+export_app = typer.Typer(
+    help="Export safe DivApply data.",
+    context_settings={"help_option_names": ["--help", "-h"]},
+)
+answers_app = typer.Typer(
+    help="Manage saved application question answers.",
+    context_settings={"help_option_names": ["--help", "-h"]},
+)
 app.add_typer(export_app, name="export")
 app.add_typer(answers_app, name="answers")
 console = Console()
@@ -88,7 +95,7 @@ def main(
         is_eager=True,
     ),
 ) -> None:
-    """DivApply â€” AI-powered end-to-end job application pipeline."""
+    """DivApply - AI-powered end-to-end job application pipeline."""
 
 
 @app.command()
@@ -998,7 +1005,7 @@ def doctor() -> None:
     if RESUME_PATH.exists():
         results.append(("resume.txt", ok_mark, str(RESUME_PATH)))
     elif RESUME_PDF_PATH.exists():
-        results.append(("resume.txt", warn_mark, "Only PDF found â€” plain-text needed for AI stages"))
+        results.append(("resume.txt", warn_mark, "Only PDF found - plain-text needed for AI stages"))
     else:
         results.append(("resume.txt", fail_mark, "Run 'divapply init' to add your resume"))
 
@@ -1006,7 +1013,7 @@ def doctor() -> None:
     if SEARCH_CONFIG_PATH.exists():
         results.append(("searches.yaml", ok_mark, str(SEARCH_CONFIG_PATH)))
     else:
-        results.append(("searches.yaml", warn_mark, "Will use example config â€” run 'divapply init'"))
+        results.append(("searches.yaml", warn_mark, "Will use example config - run 'divapply init'"))
 
     # jobspy (discovery dep installed separately)
     try:
@@ -1135,7 +1142,7 @@ def prune(
     console.print(f"  [bold]Total: {total}[/bold]\n")
 
     if dry_run:
-        console.print("[dim]Dry run â€” no changes made.[/dim]")
+        console.print("[dim]Dry run - no changes made.[/dim]")
         return
 
     if not yes:
@@ -1154,33 +1161,50 @@ def prune(
 
 @app.command()
 def ultimate(
-    top: int = typer.Option(10, "--top", "-n", help="Number of top-scoring jobs to draw from."),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score to include."),
-    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output directory (default: ~/.divapply/)."),
+    job_ref: str = typer.Argument(..., help="Job URL, application URL, URL fragment, or title fragment to target."),
+    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output directory (default: tailored_resumes)."),
+    validation: str = typer.Option(
+        "normal",
+        "--validation",
+        help="Validation strictness: strict, normal, lenient, or none.",
+    ),
 ) -> None:
-    """Generate an ultimate general-purpose resume from your top-scoring jobs."""
+    """Generate one targeted resume for one saved job posting."""
     _bootstrap()
 
     from pathlib import Path
-    from divapply.scoring.ultimate import generate_ultimate_resume
+    from divapply.scoring.ultimate import generate_targeted_resume
+
+    valid_modes = ("strict", "normal", "lenient", "none")
+    if validation not in valid_modes:
+        console.print(
+            f"[red]Invalid --validation value:[/red] '{validation}'. "
+            f"Choose from: {', '.join(valid_modes)}"
+        )
+        raise typer.Exit(code=1)
 
     output_dir = Path(out) if out else None
 
     try:
-        result = generate_ultimate_resume(
-            top_n=top,
-            min_score=min_score,
+        result = generate_targeted_resume(
+            job_ref=job_ref,
             output_dir=output_dir,
+            validation_mode=validation,
         )
     except RuntimeError as e:
         console.print(f"[red]{e}[/red]")
         raise typer.Exit(code=1)
 
-    console.print(f"\n[bold green]Ultimate resume generated![/bold green]")
-    console.print(f"  Jobs used:  {result['jobs_used']}")
+    job = result["job"]
+    console.print(f"\n[bold green]Targeted resume generated.[/bold green]")
+    console.print(f"  Job:        {job.get('title') or job.get('url')}")
+    console.print(f"  Status:     {result['status']}")
+    console.print(f"  Attempts:   {result['attempts']}")
     console.print(f"  Text:       {result['text_path']}")
     if result.get("pdf_path"):
         console.print(f"  PDF:        {result['pdf_path']}")
+    console.print(f"  Job trace:  {result['job_path']}")
+    console.print(f"  Report:     {result['report_path']}")
     console.print(f"  Time:       {result['elapsed']:.1f}s")
     console.print()
 
@@ -1216,7 +1240,7 @@ def sync(
 
     console.print("\n[bold blue]Social Profile Sync[/bold blue]")
     if dry_run:
-        console.print("[dim]Dry run â€” generating content only, no automation.[/dim]")
+        console.print("[dim]Dry run - generating content only, no automation.[/dim]")
     else:
         console.print("[dim]Extracting Firefox cookies for login, launching browser...[/dim]")
     console.print()

@@ -1,4 +1,4 @@
-﻿"""DivApply configuration: paths, platform detection, user data."""
+"""DivApply configuration: paths, platform detection, user data."""
 
 import os
 import platform
@@ -515,17 +515,17 @@ def check_tier(
     missing: list[str] = []
 
     if required >= 2 and not any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
-        missing.append("LLM API key â€” run [bold]divapply init[/bold] or set GEMINI_API_KEY")
+        missing.append("LLM API key - run [bold]divapply init[/bold] or set GEMINI_API_KEY")
     if required >= 3:
         if get_apply_backend(preferred_backend) is None:
-            missing.append("Apply agent CLI â€” install Codex or Claude Code for auto-apply")
+            missing.append("Apply agent CLI - install Codex or Claude Code for auto-apply")
         if shutil.which("npx") is None:
-            missing.append("Node.js / npx â€” install Node.js 18+ for Playwright MCP")
+            missing.append("Node.js / npx - install Node.js 18+ for Playwright MCP")
         if get_apply_browser(preferred_browser) == "chrome":
             try:
                 get_chrome_path()
             except FileNotFoundError:
-                missing.append("Chrome/Chromium â€” install or set CHROME_PATH")
+                missing.append("Chrome/Chromium - install or set CHROME_PATH")
 
     console.print(
         f"\n[red]'{feature}' requires {TIER_LABELS.get(required, f'Tier {required}')} (Tier {required}).[/red]\n"

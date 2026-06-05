@@ -291,11 +291,16 @@ class LLMClient:
                     else:
                         wait = min(_RATE_LIMIT_BASE_WAIT * (2 ** attempt), 60)
 
+                    if self._is_gemini:
+                        tip = "Gemini free tier is low RPM. Consider a paid account or local model."
+                    elif "api.openai.com" in self.base_url:
+                        tip = "OpenAI returned a temporary limit/overload response. Retrying may succeed."
+                    else:
+                        tip = "Provider returned a temporary limit/overload response. Retrying may succeed."
+
                     log.warning(
-                        "LLM rate limited (HTTP %s). Waiting %ds before retry %d/%d. "
-                        "Tip: Gemini free tier = 15 RPM. Consider a paid account "
-                        "or switching to a local model.",
-                        resp.status_code, wait, attempt + 1, _MAX_RETRIES,
+                        "LLM rate limited (HTTP %s). Waiting %ds before retry %d/%d. %s",
+                        resp.status_code, wait, attempt + 1, _MAX_RETRIES, tip,
                     )
                     time.sleep(wait)
                     continue

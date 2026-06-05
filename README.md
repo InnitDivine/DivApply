@@ -86,7 +86,7 @@ Useful targeted runs:
 divapply run discover enrich
 divapply run score tailor cover
 divapply explain https://example.com/job
-divapply ultimate
+divapply ultimate https://example.com/job
 ```
 
 Use dry runs before any real browser submission:
@@ -213,7 +213,7 @@ divapply status
 divapply dashboard
 divapply explain JOB_URL
 divapply export jobs --out jobs.csv
-divapply ultimate
+divapply ultimate JOB_URL_OR_TITLE_FRAGMENT
 divapply apply --dry-run
 divapply apply --yes
 divapply migrate

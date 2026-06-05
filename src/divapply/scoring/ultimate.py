@@ -1,122 +1,73 @@
-﻿"""Ultimate resume generator: mash top-scoring jobs into one general-purpose resume.
+"""Targeted resume generator for one saved job posting."""
 
-Pulls the N highest-scored jobs from the database, extracts their keywords
-and key requirements, then generates a single ATS-optimized resume that
-covers as many of those roles as possible.
-
-Usage (via CLI):
-    DivApply ultimate              # top 10 jobs, default output
-    DivApply ultimate --top 20     # use top 20 jobs
-    DivApply ultimate --out ~/resume_ultimate.pdf
-"""
+from __future__ import annotations
 
 import json
 import logging
+import re
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
-from divapply.config import (
-    APP_DIR, RESUME_PATH, load_profile, load_env, ensure_dirs,
-)
+from divapply.config import RESUME_PATH, TAILORED_DIR, ensure_dirs, load_env, load_profile
 from divapply.database import get_connection, init_db
-from divapply.llm import get_client_for_stage
-from divapply.scoring.tailor import (
-    _build_tailor_prompt,
-    extract_json,
-    _normalize_resume_json,
-    assemble_resume_text,
-    _enforce_one_page_shape as _tailor_one_page_shape,
-    _sort_experience_recent_first,
-)
+from divapply.scoring.tailor import _format_job_trace, tailor_resume
 
 log = logging.getLogger(__name__)
 
 
-def _fetch_top_jobs(n: int = 10, min_score: int = 7) -> list[dict]:
-    """Pull top-scored jobs from the DB, ordered by fit_score DESC."""
+def _fetch_target_job(job_ref: str) -> dict | None:
+    """Find one saved job by exact URL, application URL, URL fragment, or title."""
+    needle = job_ref.strip()
+    if not needle:
+        return None
+
+    like = f"%{needle.rstrip('/')}%"
     conn = get_connection()
-    rows = conn.execute(
-        "SELECT title, company, site, location, fit_score, score_reasoning, full_description "
-        "FROM jobs WHERE fit_score >= ? AND full_description IS NOT NULL "
-        "ORDER BY fit_score DESC, discovered_at DESC LIMIT ?",
-        (min_score, n),
-    ).fetchall()
-    if not rows:
-        return []
-    columns = rows[0].keys()
-    return [dict(zip(columns, row)) for row in rows]
+    row = conn.execute(
+        """
+        SELECT *
+        FROM jobs
+        WHERE url = ?
+           OR application_url = ?
+           OR url LIKE ?
+           OR application_url LIKE ?
+           OR title LIKE ?
+        ORDER BY COALESCE(fit_score, 0) DESC, discovered_at DESC
+        LIMIT 1
+        """,
+        (needle, needle, like, like, like),
+    ).fetchone()
+    if not row:
+        return None
+    return dict(row)
 
 
-def _build_combined_job_brief(jobs: list[dict]) -> str:
-    """Condense multiple job postings into a single brief for the LLM."""
-    parts: list[str] = []
-    seen_titles: set[str] = set()
-
-    for job in jobs:
-        title = job["title"]
-        if title in seen_titles:
-            continue
-        seen_titles.add(title)
-
-        # Extract keywords from score reasoning if available
-        keywords = ""
-        reasoning = job.get("score_reasoning") or ""
-        if reasoning:
-            # First line is usually keywords
-            first_line = reasoning.split("\n")[0].strip()
-            if first_line and not first_line.startswith("REASONING"):
-                keywords = first_line
-
-        desc_snippet = (job.get("full_description") or "")[:800]
-        company = job.get("company") or "N/A"
-        source = job.get("site") or "N/A"
-        parts.append(
-            f"--- JOB {len(parts) + 1}: {title} ({company}; source={source}) "
-            f"[score={job.get('fit_score', '?')}] ---\n"
-            f"Keywords: {keywords}\n"
-            f"Description excerpt:\n{desc_snippet}\n"
-        )
-
-    return "\n".join(parts)
+def _safe_filename_piece(value: str, fallback: str) -> str:
+    """Build a Windows-safe filename piece."""
+    text = re.sub(r"[^\w\s-]", "", str(value or "")).strip().replace(" ", "_")
+    text = re.sub(r"_+", "_", text)[:60].strip("_")
+    if not text:
+        text = fallback
+    if text.upper() in {"CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "LPT1", "LPT2", "LPT3"}:
+        text = f"_{text}"
+    return text
 
 
-ULTIMATE_SYSTEM_PROMPT = """You are a senior technical recruiter building a GENERAL-PURPOSE resume.
-
-You are given a base resume and excerpts from {n_jobs} real job postings that scored highest
-for this candidate. Your job: produce ONE resume that maximizes interview callbacks
-across ALL of these roles simultaneously.
-
-## STRATEGY:
-- Identify the common threads across all job descriptions (recurring skills, keywords, duties)
-- Weight the summary and skills toward the most-repeated requirements
-- Every bullet should pull double duty: relevant to at least 2-3 of the target roles
-- Front-load ATS keywords from the job descriptions into the skills section
-- List experience entries from most recent to oldest.
-- This is a GENERAL resume, not tailored to one job. It should work dropped into any of these postings.
-
-## CONSTRAINTS:
-{tailor_rules}
-
-## OUTPUT: Return ONLY valid JSON. No markdown fences. No commentary.
-Education is injected automatically by code -- do NOT include an education field.
-
-{{"title":"Role Title","summary":"2-3 sentences covering the broadest fit.","skills":{{"Category":"skill1, skill2, ..."}},"experience":[{{"header":"Job Title","subtitle":"Company | Dates","bullets":["..."]}}],"projects":[{{"header":"Project","subtitle":"Tech | Date","bullets":["..."]}}]}}"""
-
-
-def generate_ultimate_resume(
-    top_n: int = 10,
-    min_score: int = 7,
+def generate_targeted_resume(
+    job_ref: str,
     output_dir: Path | None = None,
+    validation_mode: str = "normal",
 ) -> dict:
-    """Generate a general-purpose resume from top-scoring jobs.
+    """Generate one tailored resume for one saved job posting.
 
     Args:
-        top_n: Number of top jobs to pull from the DB.
-        min_score: Minimum fit_score to include.
-        output_dir: Where to write output files. Defaults to APP_DIR.
+        job_ref: Exact URL, application URL, URL fragment, or title fragment.
+        output_dir: Directory for generated files. Defaults to tailored_resumes.
+        validation_mode: strict, normal, lenient, or none.
 
     Returns:
-        {"text_path": str, "pdf_path": str | None, "jobs_used": int, "elapsed": float}
+        Metadata for generated text, PDF, trace, and validation report files.
     """
     t0 = time.time()
 
@@ -124,80 +75,76 @@ def generate_ultimate_resume(
     ensure_dirs()
     init_db()
 
+    job = _fetch_target_job(job_ref)
+    if not job:
+        raise RuntimeError(f"No saved job matched '{job_ref}'. Run discovery/enrichment first.")
+    if not job.get("full_description"):
+        raise RuntimeError(f"Matched job has no full description yet: {job.get('title') or job.get('url')}")
+
     profile = load_profile()
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
 
-    # Fetch top jobs
-    jobs = _fetch_top_jobs(n=top_n, min_score=min_score)
-    if not jobs:
-        raise RuntimeError(
-            f"No jobs with score >= {min_score} found in the database. "
-            "Run `divapply run score` first."
-        )
+    out_dir = output_dir or TAILORED_DIR
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    log.info("Building ultimate resume from %d jobs (scores %d-%d)",
-             len(jobs), jobs[-1]["fit_score"], jobs[0]["fit_score"])
-
-    # Build combined job brief
-    job_brief = _build_combined_job_brief(jobs)
-
-    # Build the tailor prompt base (has all the profile rules)
-    tailor_rules = _build_tailor_prompt(profile)
-
-    # Build the system prompt
-    system = ULTIMATE_SYSTEM_PROMPT.format(
-        n_jobs=len(jobs),
-        tailor_rules=tailor_rules,
+    tailored, report = tailor_resume(
+        resume_text,
+        job,
+        profile,
+        validation_mode=validation_mode,
     )
 
-    user_msg = (
-        f"BASE RESUME:\n{resume_text}\n\n"
-        f"{'=' * 60}\n"
-        f"TARGET JOB POSTINGS (ranked by fit score):\n\n{job_brief}\n\n"
-        f"Generate the ultimate general-purpose resume JSON:"
-    )
+    safe_site = _safe_filename_piece(job.get("site") or job.get("company") or "job", "job")
+    safe_title = _safe_filename_piece(job.get("title") or "targeted_resume", "targeted_resume")
+    prefix = f"targeted_{safe_site}_{safe_title}"
 
-    messages = [
-        {"role": "system", "content": system},
-        {"role": "user", "content": user_msg},
-    ]
+    txt_path = out_dir / f"{prefix}.txt"
+    job_path = out_dir / f"{prefix}_JOB.txt"
+    report_path = out_dir / f"{prefix}_REPORT.json"
 
-    client = get_client_for_stage("tailor")
-    raw = client.chat(messages, max_tokens=2048, temperature=0.3)
+    txt_path.write_text(tailored, encoding="utf-8")
+    job_path.write_text(_format_job_trace(job), encoding="utf-8")
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
 
-    # Parse and assemble
-    data = extract_json(raw)
-    data = _normalize_resume_json(data)
-
-    # Enforce one-page layout
-    data = _tailor_one_page_shape(data)
-
-    # Sort experience by date, latest job first
-    if 'experience' in data:
-        data['experience'] = _sort_experience_recent_first(data['experience'])
-
-    text = assemble_resume_text(data, profile)
-
-    # Write outputs
-    out_dir = output_dir or APP_DIR
-    txt_path = out_dir / "ultimate_resume.txt"
-    txt_path.write_text(text, encoding="utf-8")
-
-    # Generate PDF
     pdf_path = None
-    try:
-        from divapply.scoring.pdf import convert_to_pdf
-        pdf_result = convert_to_pdf(txt_path, output_path=out_dir / "ultimate_resume.pdf")
-        pdf_path = str(pdf_result)
-    except Exception as e:
-        log.warning("PDF generation failed (install playwright?): %s", e)
+    if report.get("status") in {"approved", "approved_with_judge_warning"}:
+        try:
+            from divapply.scoring.pdf import convert_to_pdf
+
+            pdf_path = str(convert_to_pdf(txt_path))
+        except Exception as exc:
+            log.warning("PDF generation failed for %s: %s", txt_path, exc)
+
+    now = datetime.now(timezone.utc).isoformat()
+    conn = get_connection()
+    if report.get("status") in {"approved", "approved_with_judge_warning"}:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET tailored_resume_path = ?,
+                tailored_at = ?,
+                tailor_attempts = COALESCE(tailor_attempts, 0) + 1
+            WHERE url = ?
+            """,
+            (str(txt_path), now, job["url"]),
+        )
+    else:
+        conn.execute(
+            "UPDATE jobs SET tailor_attempts = COALESCE(tailor_attempts, 0) + 1 WHERE url = ?",
+            (job["url"],),
+        )
+    conn.commit()
 
     elapsed = time.time() - t0
-    log.info("Ultimate resume generated in %.1fs: %s", elapsed, txt_path)
+    log.info("Targeted resume generated in %.1fs: %s", elapsed, txt_path)
 
     return {
+        "job": job,
         "text_path": str(txt_path),
         "pdf_path": pdf_path,
-        "jobs_used": len(jobs),
+        "job_path": str(job_path),
+        "report_path": str(report_path),
+        "status": report.get("status", "unknown"),
+        "attempts": report.get("attempts", 0),
         "elapsed": elapsed,
     }
