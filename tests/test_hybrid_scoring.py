@@ -7,6 +7,7 @@ from divapply.scoring.context import format_job_context
 from divapply.scoring.embedding import embedding_score
 from divapply.scoring.keywords import score_keywords
 from divapply.scoring import scorer
+from divapply.scoring.scorer import _build_profile_evidence_context
 
 
 def test_keyword_score_reports_hits_and_misses() -> None:
@@ -179,3 +180,39 @@ def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     assert "Do not penalize legitimate remote" in prompt
     assert "Preferred/nice-to-have certifications" in prompt
     assert "required/minimum/must have" in prompt
+
+
+def test_profile_evidence_context_includes_verified_facts_without_secrets() -> None:
+    profile = {
+        "personal": {
+            "city": "Logan",
+            "province_state": "UT",
+            "password": "do-not-include",
+        },
+        "experience": {
+            "target_role": "IT Support Analyst",
+            "years_of_experience_it": "3",
+            "education_level": "Bachelor's Degree (in progress)",
+        },
+        "skills_boundary": {
+            "infrastructure": ["Oracle Cloud Infrastructure", "Nginx"],
+            "networking": ["DNS", "SSH"],
+        },
+        "application_context": [
+            "Bridgerland Technical College IT certification training is in progress.",
+            "Password should not appear.",
+        ],
+        "resume_facts": {
+            "preserved_projects": ["Oracle Cloud home lab"],
+            "real_metrics": ["3.692 GPA"],
+        },
+    }
+
+    context = _build_profile_evidence_context(profile)
+
+    assert "Location: Logan, UT" in context
+    assert "IT Support Analyst" in context
+    assert "Oracle Cloud Infrastructure" in context
+    assert "Bridgerland Technical College" in context
+    assert "do-not-include" not in context
+    assert "Password should not appear" not in context

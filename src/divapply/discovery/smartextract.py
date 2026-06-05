@@ -21,7 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urljoin
 
 import httpx
 import yaml
@@ -29,7 +29,7 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
 from divapply import config
-from divapply.config import CONFIG_DIR
+from divapply.config import resolve_config_file
 from divapply.database import get_connection, init_db, store_jobs, get_stats
 from divapply.llm import get_client
 
@@ -73,25 +73,43 @@ def _load_location_filter(search_cfg: dict | None = None):
     """Load location accept/reject lists from search config."""
     if search_cfg is None:
         search_cfg = config.load_search_config()
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
+    location_cfg = search_cfg.get("location", {}) or {}
+    accept = search_cfg.get("location_accept") or location_cfg.get("accept_patterns") or []
+    reject = search_cfg.get("location_reject_non_remote") or location_cfg.get("reject_patterns") or []
     return accept, reject
 
 
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
+def _location_ok(
+    location: str | None,
+    accept: list[str],
+    reject: list[str],
+    *,
+    allow_unknown: bool = True,
+) -> bool:
     """Check if a job location passes the user's location filter."""
     if not location:
-        return True
+        return allow_unknown
     loc = location.lower()
     if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
         return True
     for r in reject:
-        if r.lower() in loc:
+        if _term_in_text(loc, r):
             return False
     for a in accept:
-        if a.lower() in loc:
+        if _term_in_text(loc, a):
             return True
     return False
+
+
+def _term_in_text(text: str, term: str) -> bool:
+    """Match config terms without letting short tokens hit inside words."""
+    haystack = str(text or "").lower()
+    needle = str(term).strip().lower()
+    if not needle:
+        return False
+    if re.fullmatch(r"[a-z0-9]+", needle):
+        return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
+    return needle in haystack
 
 
 def _load_title_excludes(search_cfg: dict | None = None) -> list[str]:
@@ -109,11 +127,37 @@ def _title_ok(title: str | None, excludes: list[str]) -> bool:
     return not any(ex in t for ex in excludes)
 
 
+def _normalize_job_url(site: str, url: str | None) -> str | None:
+    """Resolve relative job links against the configured site base URL."""
+    if not url:
+        return None
+    raw = str(url).strip()
+    if raw.startswith(("http://", "https://")):
+        return raw
+    base = config.load_base_urls().get(site)
+    if not base:
+        return raw
+    return urljoin(base.rstrip("/") + "/", raw)
+
+
+def _fallback_item_url(item: dict, site: str) -> str | None:
+    """Pull common URL fields from an API item when LLM plan missed them."""
+    for key in ("jobUrl", "job_url", "url", "applyUrl", "applicationUrl", "externalPath"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    item_id = item.get("id") or item.get("jobId") or item.get("job_id")
+    base = config.load_base_urls().get(site)
+    if item_id and base and "applicantpro.com" in base:
+        return f"{base.rstrip('/')}/jobs/{item_id}"
+    return None
+
+
 # -- Site configuration from YAML --------------------------------------------
 
 def load_sites() -> list[dict]:
     """Load scraping target sites from config/sites.yaml."""
-    path = CONFIG_DIR / "sites.yaml"
+    path = resolve_config_file("sites.yaml")
     if not path.exists():
         log.warning("sites.yaml not found at %s", path)
         return []
@@ -129,23 +173,40 @@ def _store_jobs_filtered(
     accept_locs: list[str],
     reject_locs: list[str],
     title_excludes: list[str] | None = None,
+    filter_rules: dict | None = None,
 ) -> tuple[int, int]:
     """Store jobs with location and title filtering. Returns (new, existing)."""
+    from divapply.discovery.jobspy import _job_row_passes_filters
+
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
     filtered = 0
     filtered_title = 0
+    filtered_rules = 0
+    filter_rules = filter_rules or {}
 
     for job in jobs:
-        url = job.get("url")
+        url = _normalize_job_url(site, job.get("url"))
         if not url:
             continue
-        if not _location_ok(job.get("location"), accept_locs, reject_locs):
+        allow_unknown = bool(filter_rules.get("allow_unknown_location", True))
+        if site.lower() in set(filter_rules.get("trusted_local_sites", [])):
+            allow_unknown = True
+        if not _location_ok(
+            job.get("location"),
+            accept_locs,
+            reject_locs,
+            allow_unknown=allow_unknown,
+        ):
             filtered += 1
             continue
         if title_excludes and not _title_ok(job.get("title"), title_excludes):
             filtered_title += 1
+            continue
+        row = {**job, "site": site, "company": job.get("company") or site}
+        if filter_rules and not _job_row_passes_filters(row, filter_rules):
+            filtered_rules += 1
             continue
         try:
             conn.execute(
@@ -162,6 +223,8 @@ def _store_jobs_filtered(
         log.info("Filtered %d jobs (wrong location)", filtered)
     if filtered_title:
         log.info("Filtered %d jobs (excluded title)", filtered_title)
+    if filtered_rules:
+        log.info("Filtered %d jobs (rules)", filtered_rules)
     conn.commit()
     return new, existing
 
@@ -816,7 +879,7 @@ def execute_json_ld(intel: dict, plan: dict) -> list[dict]:
     return jobs
 
 
-def execute_api_response(intel: dict, plan: dict) -> list[dict]:
+def execute_api_response(intel: dict, plan: dict, site: str = "") -> list[dict]:
     """Extract jobs from intercepted API response data."""
     ext = plan["extraction"]
     url_pattern = ext.get("url_pattern", "")
@@ -848,6 +911,8 @@ def execute_api_response(intel: dict, plan: dict) -> list[dict]:
                 job[field] = None
                 continue
             job[field] = resolve_json_path(item, path)
+        if not job.get("url"):
+            job["url"] = _fallback_item_url(item, site)
         jobs.append(job)
     return jobs
 
@@ -1030,7 +1095,7 @@ def _run_one_site(name: str, url: str, cached_plan: dict | None = None) -> dict:
             jobs = execute_json_ld(intel, plan)
         elif strategy == "api_response":
             log.info("Extraction plan: %s", json.dumps(plan.get("extraction", {}))[:300])
-            jobs = execute_api_response(intel, plan)
+            jobs = execute_api_response(intel, plan, site=name)
         elif strategy == "css_selectors":
             if cached_plan:
                 log.info("Applying cached CSS selectors...")
@@ -1140,6 +1205,7 @@ def _run_all(
     accept_locs: list[str],
     reject_locs: list[str],
     title_excludes: list[str] | None = None,
+    filter_rules: dict | None = None,
     workers: int = 1,
 ) -> dict:
     """Run smart extract on all targets.
@@ -1168,7 +1234,8 @@ def _run_all(
             new, existing = _store_jobs_filtered(conn, jobs, target["name"],
                                                   r.get("strategy", "?"),
                                                   accept_locs, reject_locs,
-                                                  title_excludes)
+                                                  title_excludes,
+                                                  filter_rules)
             total_new += new
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
@@ -1252,6 +1319,8 @@ def run_smart_extract(
     search_cfg = config.load_search_config()
     accept_locs, reject_locs = _load_location_filter(search_cfg)
     title_excludes = _load_title_excludes(search_cfg)
+    from divapply.discovery.jobspy import _load_filter_rules
+    filter_rules = _load_filter_rules(search_cfg)
 
     targets = build_scrape_targets(sites=sites, search_cfg=search_cfg)
 
@@ -1264,5 +1333,12 @@ def run_smart_extract(
     log.info("Sites: %d searchable, %d static | Total targets: %d (workers=%d)",
              search_sites, static_sites, len(targets), workers)
 
-    return _run_all(targets, accept_locs, reject_locs, title_excludes, workers=workers)
+    return _run_all(
+        targets,
+        accept_locs,
+        reject_locs,
+        title_excludes,
+        filter_rules,
+        workers=workers,
+    )
 

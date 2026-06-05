@@ -64,7 +64,7 @@ IMPORTANT NOTES:
 - Do not artificially boost or suppress roles based on a presumed career path.
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
 - Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
-- Use only evidence from the resume, profile-safe coursework summary, and the job description.
+- Use only evidence from the resume, verified profile facts, profile-safe coursework summary, and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
 FIT_SCORE: [1-10]
@@ -120,11 +120,100 @@ def _parse_score_response(response: str) -> dict:
     return {"score": score, **fields}
 
 
+def _build_profile_evidence_context(profile: dict) -> str:
+    """Build scoring-safe profile facts without credentials or EEO data."""
+    lines: list[str] = []
+
+    personal = profile.get("personal", {})
+    city = personal.get("city")
+    state = personal.get("province_state")
+    if city or state:
+        lines.append(f"Location: {', '.join(part for part in (city, state) if part)}")
+
+    exp = profile.get("experience", {})
+    for key in (
+        "target_role",
+        "years_of_experience_total",
+        "years_of_experience_it",
+        "years_of_experience_government",
+        "education_level",
+        "education_detail",
+    ):
+        if exp.get(key):
+            lines.append(f"{key.replace('_', ' ').title()}: {exp[key]}")
+    target_roles = exp.get("target_roles")
+    if isinstance(target_roles, dict):
+        lines.append("Target roles: " + "; ".join(str(v) for v in target_roles.values() if v))
+
+    if profile.get("professional_narrative"):
+        lines.append(f"Professional narrative: {profile['professional_narrative']}")
+
+    for item in profile.get("key_differentiators", []) or []:
+        lines.append(f"Verified differentiator: {item}")
+    for item in profile.get("soft_skills", []) or []:
+        lines.append(f"Soft skill: {item}")
+    for item in profile.get("application_context", []) or []:
+        text = str(item)
+        if "password" not in text.lower() and "credential" not in text.lower():
+            lines.append(f"Application context: {text}")
+
+    skills = profile.get("skills_boundary", {})
+    if isinstance(skills, dict):
+        for category, items in skills.items():
+            if isinstance(items, list) and items:
+                label = category.replace("_", " ").title()
+                lines.append(f"{label}: {', '.join(str(item) for item in items)}")
+
+    for school in profile.get("education_schools", []) or []:
+        if not isinstance(school, dict):
+            continue
+        profile_status = str(school.get("status", "")).strip().lower()
+        if profile_status in {"transferred", "transfer"}:
+            status = "transferred"
+        elif school.get("degree_received"):
+            status = "completed"
+        elif str(school.get("end_year", "")).lower() == "present":
+            status = "in progress"
+        else:
+            status = "not completed"
+        parts = [
+            school.get("school"),
+            school.get("degree"),
+            school.get("major"),
+            status,
+            f"GPA {school.get('gpa')}" if school.get("gpa") else "",
+            school.get("notes"),
+        ]
+        lines.append("Education: " + " | ".join(str(part) for part in parts if part))
+
+    for cert in profile.get("certifications", []) or []:
+        if not isinstance(cert, dict):
+            continue
+        parts = [cert.get("name"), cert.get("issuer"), cert.get("status"), f"expires {cert.get('expires')}" if cert.get("expires") else ""]
+        lines.append("Certification/training: " + " | ".join(str(part) for part in parts if part))
+
+    facts = profile.get("resume_facts", {})
+    if isinstance(facts, dict):
+        for label, value in (
+            ("Preserved companies", facts.get("preserved_companies")),
+            ("Preserved projects", facts.get("preserved_projects")),
+            ("Preserved school", facts.get("preserved_school")),
+            ("Verified metrics", facts.get("real_metrics")),
+        ):
+            if isinstance(value, list) and value:
+                lines.append(f"{label}: {', '.join(str(item) for item in value)}")
+            elif isinstance(value, str) and value:
+                lines.append(f"{label}: {value}")
+
+    return "\n".join(lines)
+
+
 def score_job(
     resume_text: str,
     job: dict,
     coursework_summary: str = "",
     coursework_skills_summary: str = "",
+    profile_context: str = "",
 ) -> dict:
     """Score a single job against the resume.
 
@@ -139,10 +228,16 @@ def score_job(
 
     coursework_block = coursework_summary.strip() or "N/A"
     coursework_skills_block = coursework_skills_summary.strip() or "N/A"
+    profile_block = profile_context.strip() or "N/A"
+    evidence_text = "\n\n".join(
+        part for part in (resume_text, profile_block, coursework_block, coursework_skills_block)
+        if part and part != "N/A"
+    )
     messages = [
         {"role": "system", "content": SCORE_PROMPT},
         {"role": "user", "content": (
             f"RESUME:\n{resume_text}\n\n"
+            f"VERIFIED PROFILE FACTS (safe scoring context; do not treat in-progress credentials as completed):\n{profile_block}\n\n"
             f"ACADEMIC COURSEWORK (internal only, do not cite unless already in resume):\n{coursework_block}\n\n"
             f"COURSEWORK SKILL MAP (internal only, do not cite unless already in resume):\n{coursework_skills_block}\n\n"
             f"---\n\nJOB POSTING:\n{job_text}"
@@ -155,7 +250,7 @@ def score_job(
         llm_result = _parse_score_response(response)
         hybrid = composite_score(
             job_description=job_text,
-            resume_text=resume_text,
+            resume_text=evidence_text,
             llm_result=llm_result,
         )
         return {
@@ -199,6 +294,7 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     coursework_summary = "\n".join(profile.get("coursework_summary", []))
     coursework_skills_summary = "\n".join(profile.get("coursework_skills", []))
+    profile_context = _build_profile_evidence_context(profile)
     conn = get_connection()
 
     if rescore:
@@ -227,7 +323,13 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
     results: list[dict] = []
 
     for job in jobs:
-        result = score_job(resume_text, job, coursework_summary, coursework_skills_summary)
+        result = score_job(
+            resume_text,
+            job,
+            coursework_summary,
+            coursework_skills_summary,
+            profile_context,
+        )
         result["url"] = job["url"]
         completed += 1
 

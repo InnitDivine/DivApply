@@ -37,6 +37,15 @@ APPLY_WORKER_DIR = APP_DIR / "apply-workers"
 # Package-shipped config (YAML registries)
 PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
+USER_CONFIG_DIR = APP_DIR / "config"
+
+
+def resolve_config_file(name: str) -> Path:
+    """Return user-overridden config file if present, otherwise package default."""
+    user_path = USER_CONFIG_DIR / name
+    if user_path.exists():
+        return user_path
+    return CONFIG_DIR / name
 
 
 def get_chrome_path() -> str:
@@ -269,9 +278,13 @@ def validate_search_config(cfg: dict | None = None) -> dict:
         if not isinstance(location, dict) or not location.get("location"):
             errors.append(f"locations[{idx}] needs a location string")
 
-    boards = cfg.get("sites") or cfg.get("boards") or []
+    sites_value = cfg.get("sites")
+    boards_value = cfg.get("boards")
+    boards = sites_value or boards_value or []
     if boards and not isinstance(boards, list):
         errors.append("sites/boards must be a list")
+    if sites_value and boards_value and sites_value != boards_value:
+        warnings.append("sites and boards differ; discovery will prefer sites")
 
     filters = cfg.get("filters", {}) or {}
     list_fields = (
@@ -280,11 +293,44 @@ def validate_search_config(cfg: dict | None = None) -> dict:
         "company_blacklist",
         "required_keywords",
         "excluded_keywords",
+        "include_titles",
+        "customer_service_title_terms",
+        "trusted_local_sites",
+        "location_accept",
+        "location_reject_non_remote",
     )
     for key in list_fields:
         value = cfg.get(key, filters.get(key, []))
         if value and not isinstance(value, list):
             errors.append(f"{key} must be a list")
+
+    location_cfg = cfg.get("location", {}) or {}
+    for key in ("accept_patterns", "reject_patterns"):
+        value = location_cfg.get(key, [])
+        if value and not isinstance(value, list):
+            errors.append(f"location.{key} must be a list")
+
+    max_cs_hours = cfg.get(
+        "customer_service_max_hours_per_week",
+        filters.get("customer_service_max_hours_per_week", 0),
+    )
+    if max_cs_hours not in (None, ""):
+        try:
+            int(max_cs_hours)
+        except (TypeError, ValueError):
+            errors.append("customer_service_max_hours_per_week must be an integer")
+
+    location_lists = {
+        "location_accept": cfg.get("location_accept", []) or location_cfg.get("accept_patterns", []) or [],
+        "location_reject_non_remote": cfg.get("location_reject_non_remote", []) or location_cfg.get("reject_patterns", []) or [],
+    }
+    for key, values in location_lists.items():
+        for token in values:
+            token_text = str(token).strip()
+            if 0 < len(token_text) <= 2:
+                warnings.append(
+                    f"{key} contains short token '{token_text}'; use full city/state names when possible"
+                )
 
     remote_pref = str(cfg.get("remote_preference") or filters.get("remote_preference") or "any").lower()
     if remote_pref not in {"any", "all", "none", "no_preference", "remote", "remote_only", "hybrid", "hybrid_only", "onsite", "on_site", "office"}:
@@ -297,7 +343,7 @@ def load_sites_config() -> dict:
     """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
     import yaml
 
-    path = CONFIG_DIR / "sites.yaml"
+    path = resolve_config_file("sites.yaml")
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}

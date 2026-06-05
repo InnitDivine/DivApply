@@ -486,7 +486,10 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
             degree_status = sch.get("degree", "")
             received = sch.get("degree_received", False)
             end_year = sch.get("end_year", "")
-            if not received and end_year == "present":
+            status = str(sch.get("status", "")).strip().lower()
+            if status in {"transferred", "transfer"}:
+                status_note = "transferred"
+            elif not received and end_year == "present":
                 status_note = "in progress"
             elif not received:
                 status_note = "not completed"

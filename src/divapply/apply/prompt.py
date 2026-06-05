@@ -95,7 +95,14 @@ def _build_profile_summary(profile: dict) -> str:
     if edu_schools:
         lines.append("\n== EDUCATION (list ALL schools in this order on forms) ==")
         for i, sch in enumerate(edu_schools, 1):
-            degree_status = "Yes" if sch.get("degree_received") else "No (in progress)" if sch.get("end_year") == "present" else "No"
+            status = str(sch.get("status", "")).strip().lower()
+            degree_status = (
+                "Transferred"
+                if status in {"transferred", "transfer"}
+                else "Yes" if sch.get("degree_received")
+                else "No (in progress)" if sch.get("end_year") == "present"
+                else "No"
+            )
             lines.append(
                 f"School {i}: {sch['school']} | {sch['city_state']} | "
                 f"Major: {sch['major']} | Minor: {sch.get('minor','N/A')} | "
@@ -216,7 +223,10 @@ def _build_education_rules(profile: dict) -> str:
     for idx, school in enumerate(schools, 1):
         received = school.get("degree_received", False)
         end_year = school.get("end_year", "")
-        if not received and str(end_year).lower() == "present":
+        profile_status = str(school.get("status", "")).strip().lower()
+        if profile_status in {"transferred", "transfer"}:
+            status = "transferred"
+        elif not received and str(end_year).lower() == "present":
             status = "in progress"
         elif not received:
             status = "not completed"

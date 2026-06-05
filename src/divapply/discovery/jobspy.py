@@ -8,6 +8,7 @@ search configuration YAML (searches.yaml) rather than being hardcoded.
 """
 
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -110,31 +111,39 @@ def _load_title_excludes(search_cfg: dict) -> list[str]:
 def _load_filter_rules(search_cfg: dict) -> dict:
     """Load optional AIHawk-style filters from search config."""
     filters = search_cfg.get("filters", {}) or {}
+    def _list(name: str) -> list[str]:
+        return [
+            str(v).lower() for v in (
+                search_cfg.get(name, [])
+                or filters.get(name, [])
+                or []
+            )
+            if str(v).strip()
+        ]
+
     return {
-        "company_blacklist": [
-            str(v).lower() for v in (
-                search_cfg.get("company_blacklist", [])
-                or filters.get("company_blacklist", [])
-                or []
+        "company_blacklist": _list("company_blacklist"),
+        "required_keywords": _list("required_keywords"),
+        "excluded_keywords": _list("excluded_keywords"),
+        "include_titles": _list("include_titles"),
+        "customer_service_title_terms": _list("customer_service_title_terms"),
+        "customer_service_require_part_time": bool(
+            search_cfg.get(
+                "customer_service_require_part_time",
+                filters.get("customer_service_require_part_time", False),
             )
-            if str(v).strip()
-        ],
-        "required_keywords": [
-            str(v).lower() for v in (
-                search_cfg.get("required_keywords", [])
-                or filters.get("required_keywords", [])
-                or []
+        ),
+        "customer_service_max_hours_per_week": int(
+            search_cfg.get(
+                "customer_service_max_hours_per_week",
+                filters.get("customer_service_max_hours_per_week", 0),
             )
-            if str(v).strip()
-        ],
-        "excluded_keywords": [
-            str(v).lower() for v in (
-                search_cfg.get("excluded_keywords", [])
-                or filters.get("excluded_keywords", [])
-                or []
-            )
-            if str(v).strip()
-        ],
+            or 0
+        ),
+        "allow_unknown_location": bool(
+            search_cfg.get("allow_unknown_location", filters.get("allow_unknown_location", True))
+        ),
+        "trusted_local_sites": _list("trusted_local_sites"),
         "remote_preference": str(
             search_cfg.get("remote_preference")
             or filters.get("remote_preference")
@@ -151,6 +160,16 @@ def _title_ok(title: str | None, excludes: list[str]) -> bool:
     return not any(ex in t for ex in excludes)
 
 
+def _title_include_ok(title: str | None, includes: list[str]) -> bool:
+    """Return True when title matches configured target role terms."""
+    if not includes:
+        return True
+    if not title:
+        return False
+    t = title.lower()
+    return any(term in t for term in includes)
+
+
 def _row_text(row) -> str:
     """Combine safe job fields for keyword filtering."""
     parts = []
@@ -161,6 +180,41 @@ def _row_text(row) -> str:
     return " ".join(parts).lower()
 
 
+_REMOTE_BLOCKING_PHRASES = (
+    "primarily on-site",
+    "primarily onsite",
+    "on-site full-time",
+    "onsite full-time",
+    "full-time on-site",
+    "full time on-site",
+    "full-time onsite",
+    "full time onsite",
+    "required to work on-site",
+    "required to work onsite",
+    "must be willing to work on-site",
+    "must be willing to work onsite",
+    "does not offer any virtual",
+    "no virtual or telecommute",
+    "no telecommute",
+    "not remote",
+    "not a remote",
+    "not eligible for remote",
+)
+
+
+def _row_is_effectively_remote(row) -> bool:
+    """Treat board remote tags as advisory, not authoritative."""
+    text = _row_text(row)
+    if any(phrase in text for phrase in _REMOTE_BLOCKING_PHRASES):
+        return False
+
+    location = str(row.get("location", "") or "").lower()
+    return bool(row.get("is_remote", False)) or any(
+        token in f"{location} {text}"
+        for token in ("remote", "work from home", "wfh", "anywhere", "distributed")
+    )
+
+
 def _company_ok(company: str | None, blacklist: list[str]) -> bool:
     if not company or not blacklist:
         return True
@@ -168,10 +222,53 @@ def _company_ok(company: str | None, blacklist: list[str]) -> bool:
     return not any(blocked in c for blocked in blacklist)
 
 
-def _keywords_ok(text: str, required: list[str], excluded: list[str]) -> bool:
-    if required and not all(keyword in text for keyword in required):
+def _term_in_text(text: str, term: str) -> bool:
+    """Match config terms without letting short tokens hit inside words."""
+    haystack = str(text or "").lower()
+    needle = str(term).strip().lower()
+    if not needle:
         return False
-    return not any(keyword in text for keyword in excluded)
+    if re.fullmatch(r"[a-z0-9]+", needle):
+        return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
+    return needle in haystack
+
+
+def _keywords_ok(text: str, required: list[str], excluded: list[str]) -> bool:
+    if required and not all(_term_in_text(text, keyword) for keyword in required):
+        return False
+    return not any(_term_in_text(text, keyword) for keyword in excluded)
+
+
+def _customer_service_hours_ok(title: str | None, text: str, filter_rules: dict) -> bool:
+    """Keep customer-service side work only when configured as low-hour part-time."""
+    terms = filter_rules.get("customer_service_title_terms", [])
+    if not terms or not title:
+        return True
+    title_l = title.lower()
+    if not any(term in title_l for term in terms):
+        return True
+
+    if not filter_rules.get("customer_service_require_part_time"):
+        return True
+
+    text_l = text.lower()
+    if any(term in text_l for term in ("full-time", "full time", "40 hours", "40 hrs")):
+        return False
+    if not any(term in text_l for term in ("part-time", "part time", "parttime", "temporary", "seasonal")):
+        return False
+
+    max_hours = int(filter_rules.get("customer_service_max_hours_per_week") or 0)
+    if max_hours <= 0:
+        return True
+
+    hour_values: list[int] = []
+    for match in re.finditer(r"(\d{1,2})\s*(?:-|to)\s*(\d{1,2})\s*(?:hours|hrs)", text_l):
+        hour_values.append(int(match.group(2)))
+    for match in re.finditer(r"(\d{1,2})\s*(?:hours|hrs)\s*(?:per week|/week|weekly)?", text_l):
+        hour_values.append(int(match.group(1)))
+    if not hour_values:
+        return any(term in text_l for term in ("few hours", "couple hours", "as needed", "occasional"))
+    return max(hour_values) <= max_hours
 
 
 def _remote_preference_ok(row, preference: str) -> bool:
@@ -181,10 +278,7 @@ def _remote_preference_ok(row, preference: str) -> bool:
 
     location = str(row.get("location", "") or "").lower()
     description = str(row.get("description", "") or "").lower()
-    is_remote = bool(row.get("is_remote", False)) or any(
-        token in f"{location} {description}"
-        for token in ("remote", "work from home", "wfh", "anywhere", "distributed")
-    )
+    is_remote = _row_is_effectively_remote(row)
     is_hybrid = "hybrid" in f"{location} {description}"
     is_onsite = any(token in f"{location} {description}" for token in ("onsite", "on-site", "in office"))
 
@@ -199,27 +293,40 @@ def _remote_preference_ok(row, preference: str) -> bool:
 
 def _job_row_passes_filters(row, filter_rules: dict) -> bool:
     """Apply optional company/keyword/remote filters to one JobSpy row."""
+    title = str(row.get("title", "")) if str(row.get("title", "")) != "nan" else None
     company = str(row.get("company", "")) if str(row.get("company", "")) != "nan" else None
     text = _row_text(row)
     return (
-        _company_ok(company, filter_rules.get("company_blacklist", []))
+        _title_include_ok(title, filter_rules.get("include_titles", []))
+        and _company_ok(company, filter_rules.get("company_blacklist", []))
         and _keywords_ok(
             text,
             filter_rules.get("required_keywords", []),
             filter_rules.get("excluded_keywords", []),
         )
+        and _customer_service_hours_ok(title, text, filter_rules)
         and _remote_preference_ok(row, filter_rules.get("remote_preference", "any"))
     )
 
 
-def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
+def _location_ok(
+    location: str | None,
+    accept: list[str],
+    reject: list[str],
+    *,
+    allow_unknown: bool = True,
+    is_remote: bool = False,
+) -> bool:
     """Check if a job location passes the user's location filter.
 
     Remote jobs are always accepted. Non-remote jobs must match an accept
     pattern and not match a reject pattern.
     """
+    if is_remote:
+        return True
+
     if not location:
-        return True  # unknown location -- keep it, let scorer decide
+        return allow_unknown
 
     loc = location.lower()
 
@@ -229,12 +336,12 @@ def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> 
 
     # Reject non-remote matches
     for r in reject:
-        if r.lower() in loc:
+        if _term_in_text(loc, r):
             return False
 
     # Accept matches
     for a in accept:
-        if a.lower() in loc:
+        if _term_in_text(loc, a):
             return True
 
     # No match -- reject unknown
@@ -274,7 +381,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
 
         description = str(row.get("description", "")) if str(row.get("description", "")) != "nan" else None
         site_name = str(row.get("site", source_label))
-        is_remote = row.get("is_remote", False)
+        is_remote = _row_is_effectively_remote(row)
         canonical_key = canonical_job_key(title, company, location_str)
 
         site_label = f"{site_name}"
@@ -409,7 +516,10 @@ def _run_one_search(
     before = len(df)
     df = df[df.apply(lambda row: _location_ok(
         str(row.get("location", "")) if str(row.get("location", "")) != "nan" else None,
-        accept_locs, reject_locs,
+        accept_locs,
+        reject_locs,
+        allow_unknown=(filter_rules or {}).get("allow_unknown_location", True),
+        is_remote=_row_is_effectively_remote(row),
     ), axis=1)]
     filtered_loc = before - len(df)
 
@@ -668,6 +778,9 @@ def run_discovery(cfg: dict | None = None, workers: int = 4) -> dict:
 
     proxy = cfg.get("proxy")
     sites = cfg.get("sites") or cfg.get("boards")
+    defaults = cfg.setdefault("defaults", {})
+    if "country_indeed" not in defaults and cfg.get("country"):
+        defaults["country_indeed"] = str(cfg["country"]).lower()
     results_per_site = cfg.get("defaults", {}).get("results_per_site", 100)
     hours_old = cfg.get("defaults", {}).get("hours_old", 72)
     tiers = cfg.get("tiers")
