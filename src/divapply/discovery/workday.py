@@ -20,7 +20,7 @@ from html.parser import HTMLParser
 import yaml
 
 from divapply import config
-from divapply.config import CONFIG_DIR
+from divapply.config import resolve_config_file
 from divapply.database import get_connection, init_db
 
 log = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 
 def load_employers() -> dict:
     """Load Workday employer registry from config/employers.yaml."""
-    path = CONFIG_DIR / "employers.yaml"
+    path = resolve_config_file("employers.yaml")
     if not path.exists():
         log.warning("employers.yaml not found at %s", path)
         return {}

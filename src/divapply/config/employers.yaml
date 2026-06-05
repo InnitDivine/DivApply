@@ -1,31 +1,32 @@
-# Workday employer registry for DivApply
-# Only employers with Workday portals are listed here.
-# Most California government agencies use NEOGOV (governmentjobs.com) instead — see sites.yaml.
+# Workday employer registry for DivApply.
+# Active default feeds are empty so new installs do not search stale California
+# employers. Uncomment entries below when those locations are relevant again.
 
-employers:
-  # Sacramento-area employers with Workday portals
-  # (Government agencies primarily use NEOGOV, not Workday)
+employers: {}
 
-  sutter_health:
-    name: "Sutter Health"
-    tenant: "sutterhealth"
-    site_id: "External"
-    base_url: "https://sutterhealth.wd5.myworkdayjobs.com"
-
-  uc_davis_health:
-    name: "UC Davis Health"
-    tenant: "ucdavishealth"
-    site_id: "External"
-    base_url: "https://ucdavishealth.wd5.myworkdayjobs.com"
-
-  calpers:
-    name: "CalPERS"
-    tenant: "calpers"
-    site_id: "CalPERS_Jobs"
-    base_url: "https://calpers.wd5.myworkdayjobs.com"
-
-  intel:
-    name: "Intel (Folsom CA)"
-    tenant: "intel"
-    site_id: "External"
-    base_url: "https://intel.wd1.myworkdayjobs.com"
+# California / Sacramento-area employers with Workday portals. Kept for later.
+#
+# employers:
+#   sutter_health:
+#     name: "Sutter Health"
+#     tenant: "sutterhealth"
+#     site_id: "External"
+#     base_url: "https://sutterhealth.wd5.myworkdayjobs.com"
+#
+#   uc_davis_health:
+#     name: "UC Davis Health"
+#     tenant: "ucdavishealth"
+#     site_id: "External"
+#     base_url: "https://ucdavishealth.wd5.myworkdayjobs.com"
+#
+#   calpers:
+#     name: "CalPERS"
+#     tenant: "calpers"
+#     site_id: "CalPERS_Jobs"
+#     base_url: "https://calpers.wd5.myworkdayjobs.com"
+#
+#   intel:
+#     name: "Intel (Folsom CA)"
+#     tenant: "intel"
+#     site_id: "External"
+#     base_url: "https://intel.wd1.myworkdayjobs.com"
