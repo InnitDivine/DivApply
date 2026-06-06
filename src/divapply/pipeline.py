@@ -343,7 +343,7 @@ def _run_stage_streaming(
         # Discover runs once (its sub-scrapers already do their full crawl)
         try:
             result = spec.runner(**kwargs)
-            tracker.mark_done(stage, result)
+            tracker.mark_done(stage, {"status": spec.status_from(result), "result": result})
         except Exception as e:
             log.exception("Stage '%s' crashed", stage)
             tracker.mark_done(stage, {"status": f"error: {e}"})
@@ -361,11 +361,17 @@ def _run_stage_streaming(
 
         if pending > 0:
             try:
-                spec.runner(**kwargs)
+                result = spec.runner(**kwargs)
                 passes += 1
+                status = spec.status_from(result)
+                if status not in ("ok", "partial", "skipped"):
+                    tracker.mark_done(stage, {"status": status, "passes": passes, "result": result})
+                    return
             except Exception as e:
-                log.error("Stage '%s' error (pass %d): %s", stage, passes, e)
+                log.exception("Stage '%s' error (pass %d)", stage, passes)
                 passes += 1
+                tracker.mark_done(stage, {"status": f"error: {e}", "passes": passes})
+                return
         else:
             # No work right now
             upstream_done = upstream is None or tracker.is_done(upstream)

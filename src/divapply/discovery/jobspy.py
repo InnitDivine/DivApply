@@ -15,8 +15,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
-from jobspy import scrape_jobs
-
 from divapply import config
 from divapply.database import canonical_job_key, get_connection, init_db
 from divapply.discovery.filters import (
@@ -71,6 +69,14 @@ def parse_proxy(proxy_str: str) -> dict:
 
 def _scrape_with_retry(kwargs: dict, max_retries: int = 2, backoff: float = 5.0):
     """Call scrape_jobs with retry on transient failures."""
+    try:
+        from jobspy import scrape_jobs
+    except ImportError as exc:
+        raise RuntimeError(
+            "python-jobspy is required for JobSpy discovery. "
+            "Install the JobSpy runtime dependencies or use other discovery backends."
+        ) from exc
+
     for attempt in range(max_retries + 1):
         try:
             return scrape_jobs(**kwargs)
@@ -568,7 +574,7 @@ def search_jobs(
         kwargs["linkedin_fetch_description"] = True
 
     try:
-        df = scrape_jobs(**kwargs)
+        df = _scrape_with_retry(kwargs)
     except Exception as e:
         log.error("JobSpy search failed: %s", e)
         return {"error": str(e), "total": 0, "new": 0, "existing": 0}

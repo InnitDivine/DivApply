@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import builtins
+
+import pytest
+
 from divapply.discovery.jobspy import (
     _job_row_passes_filters,
     _location_ok,
@@ -7,6 +11,7 @@ from divapply.discovery.jobspy import (
     _load_location_config,
     _load_title_excludes,
     _row_is_effectively_remote,
+    _scrape_with_retry,
 )
 
 
@@ -93,6 +98,35 @@ def test_fake_remote_onsite_job_does_not_bypass_location_reject() -> None:
         allow_unknown=False,
         is_remote=_row_is_effectively_remote(row),
     )
+
+
+def test_remote_location_text_does_not_bypass_rejected_place() -> None:
+    assert not _location_ok(
+        "Remote in Idaho",
+        ["logan", "cache valley"],
+        ["idaho"],
+        allow_unknown=False,
+    )
+    assert _location_ok(
+        "Remote",
+        ["logan", "cache valley"],
+        ["idaho"],
+        allow_unknown=False,
+    )
+
+
+def test_jobspy_runtime_import_is_lazy(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "jobspy":
+            raise ImportError("missing jobspy")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    with pytest.raises(RuntimeError, match="python-jobspy is required"):
+        _scrape_with_retry({})
 
 
 def test_customer_service_filter_allows_only_low_hour_side_work() -> None:

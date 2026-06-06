@@ -17,7 +17,7 @@ import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -159,6 +159,10 @@ def resolve_url(raw_url: str, site: str) -> str | None:
 
     if ";jsessionid=" in raw_url:
         raw_url = raw_url.split(";jsessionid=")[0]
+
+    parsed = urlparse(raw_url)
+    if parsed.scheme or parsed.netloc:
+        return None
 
     return sanitize_external_url(urljoin(base, raw_url), field="job url")
 

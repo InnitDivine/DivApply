@@ -87,3 +87,8 @@ def test_execute_api_response_uses_fallback_applicantpro_url(tmp_path, monkeypat
         }
     ]
 
+
+def test_normalize_job_url_rejects_scheme_relative_host_override(monkeypatch) -> None:
+    monkeypatch.setattr(config, "load_base_urls", lambda: {"Cache Site": "https://jobs.example.com/careers/"})
+
+    assert smartextract._normalize_job_url("Cache Site", "//evil.example/jobs/42") is None

@@ -176,6 +176,124 @@ def test_get_stats_reports_apply_lock_monitoring(tmp_path) -> None:
     close_connection(db_path)
 
 
+def test_get_stats_reports_aggregate_stage_counts(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    old_attempt = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    conn.executemany(
+        """
+        INSERT INTO jobs (
+            url, title, site, detail_scraped_at, full_description, detail_error,
+            fit_score, tailored_resume_path, tailor_attempts, cover_letter_path,
+            cover_attempts, applied_at, apply_status, apply_error, application_url,
+            last_attempted_at, discovered_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                "https://example.com/pending-detail",
+                "Pending Detail",
+                "Indeed",
+                None,
+                None,
+                None,
+                None,
+                None,
+                0,
+                None,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "2026-01-01",
+            ),
+            (
+                "https://example.com/unscored",
+                "Unscored",
+                "Indeed",
+                "2026-01-01",
+                "Description",
+                None,
+                None,
+                None,
+                5,
+                None,
+                0,
+                None,
+                None,
+                None,
+                None,
+                None,
+                "2026-01-02",
+            ),
+            (
+                "https://example.com/ready",
+                "Ready",
+                "LinkedIn",
+                "2026-01-01",
+                "Description",
+                "minor scrape issue",
+                8,
+                "resume.txt",
+                0,
+                "",
+                5,
+                None,
+                "in_progress",
+                "temporary error",
+                "https://apply.example/ready",
+                old_attempt,
+                "2026-01-03",
+            ),
+            (
+                "https://example.com/applied",
+                "Applied",
+                "LinkedIn",
+                "2026-01-01",
+                "Description",
+                None,
+                6,
+                "resume2.txt",
+                0,
+                "cover.pdf",
+                0,
+                "2026-01-04",
+                "applied",
+                None,
+                "https://apply.example/applied",
+                None,
+                "2026-01-04",
+            ),
+        ],
+    )
+    conn.commit()
+
+    stats = get_stats(conn)
+
+    assert stats["total"] == 4
+    assert stats["pending_detail"] == 1
+    assert stats["with_description"] == 3
+    assert stats["detail_errors"] == 1
+    assert stats["scored"] == 2
+    assert stats["unscored"] == 1
+    assert stats["tailored"] == 2
+    assert stats["untailored_eligible"] == 0
+    assert stats["tailor_exhausted"] == 1
+    assert stats["with_cover_letter"] == 1
+    assert stats["cover_exhausted"] == 1
+    assert stats["applied"] == 1
+    assert stats["apply_errors"] == 1
+    assert stats["apply_in_progress"] == 1
+    assert stats["stale_apply_locks"] == 1
+    assert stats["ready_to_apply"] == 1
+    assert set(stats["by_site"]) == {("LinkedIn", 2), ("Indeed", 2)}
+    assert stats["score_distribution"] == [(8, 1), (6, 1)]
+    close_connection(db_path)
+
+
 def test_get_jobs_by_stage_rejects_unknown_stage(tmp_path) -> None:
     db_path = tmp_path / "divapply.db"
     conn = init_db(db_path)

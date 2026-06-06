@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 import sqlite3
 import json
 
+import pytest
+
 from divapply.apply import launcher
 
 
@@ -185,6 +187,84 @@ def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
     assert ready["agent_id"] == "worker-4"
 
 
+def test_acquire_job_skips_unsafe_apply_url_and_claims_next_job(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            title TEXT,
+            company TEXT,
+            site TEXT,
+            application_url TEXT,
+            tailored_resume_path TEXT,
+            fit_score INTEGER,
+            location TEXT,
+            full_description TEXT,
+            cover_letter_path TEXT,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            last_attempted_at TEXT
+        )
+    """)
+    conn.executemany("""
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        (
+            "https://jobs.example/unsafe",
+            "Unsafe URL",
+            "Unsafe Co",
+            "Indeed",
+            "http://localhost:8080/apply",
+            "resume.txt",
+            10,
+            "Remote",
+            "Unsafe local URL.",
+            0,
+        ),
+        (
+            "https://jobs.example/ready-after-unsafe",
+            "Ready Role",
+            "Ready Co",
+            "Indeed",
+            "https://apply.example/ready",
+            "resume.txt",
+            9,
+            "Remote",
+            "Ready to apply.",
+            0,
+        ),
+    ])
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda url: False, raising=False)
+
+    job = launcher.acquire_job(min_score=7, worker_id=5)
+
+    assert job is not None
+    assert job["url"] == "https://jobs.example/ready-after-unsafe"
+    unsafe = conn.execute(
+        "SELECT apply_status, apply_error, apply_attempts FROM jobs WHERE url = ?",
+        ("https://jobs.example/unsafe",),
+    ).fetchone()
+    ready = conn.execute(
+        "SELECT apply_status, agent_id FROM jobs WHERE url = ?",
+        ("https://jobs.example/ready-after-unsafe",),
+    ).fetchone()
+    assert unsafe["apply_status"] == "failed"
+    assert unsafe["apply_attempts"] == 99
+    assert "unsafe apply URL" in unsafe["apply_error"]
+    assert ready["apply_status"] == "in_progress"
+    assert ready["agent_id"] == "worker-5"
+
+
 def test_recover_stale_apply_locks_marks_abandoned_jobs_failed() -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -265,6 +345,50 @@ def test_mark_result_rolls_back_when_event_insert_fails(monkeypatch) -> None:
     assert row["agent_id"] == "worker-1"
 
 
+def test_mark_result_rolls_back_when_existing_event_schema_is_invalid(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            applied_at TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            apply_duration_ms INTEGER,
+            apply_task_id TEXT
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE application_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_url TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            ts TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "INSERT INTO jobs (url, apply_status, apply_attempts, agent_id) VALUES (?, ?, ?, ?)",
+        ("https://jobs.example/schema-rollback", "in_progress", 0, "worker-1"),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+
+    with pytest.raises(sqlite3.OperationalError):
+        launcher.mark_result("https://jobs.example/schema-rollback", "applied", duration_ms=100)
+
+    row = conn.execute(
+        "SELECT apply_status, applied_at, apply_attempts, agent_id FROM jobs WHERE url = ?",
+        ("https://jobs.example/schema-rollback",),
+    ).fetchone()
+    assert row["apply_status"] == "in_progress"
+    assert row["applied_at"] is None
+    assert row["apply_attempts"] == 0
+    assert row["agent_id"] == "worker-1"
+
+
 def test_mark_dry_run_does_not_mark_job_applied(monkeypatch) -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -288,7 +412,7 @@ def test_mark_dry_run_does_not_mark_job_applied(monkeypatch) -> None:
 
     monkeypatch.setattr(launcher, "get_connection", lambda: conn)
 
-    launcher.mark_dry_run("https://jobs.example/dry-run", duration_ms=2500)
+    launcher.mark_dry_run("https://jobs.example/dry-run", duration_ms=2500, result="failed:timeout")
 
     row = conn.execute(
         "SELECT apply_status, applied_at, apply_error, apply_attempts, agent_id, apply_duration_ms FROM jobs WHERE url = ?",
@@ -301,12 +425,85 @@ def test_mark_dry_run_does_not_mark_job_applied(monkeypatch) -> None:
 
     assert row["apply_status"] is None
     assert row["applied_at"] is None
-    assert row["apply_error"] == "dry run completed"
+    assert row["apply_error"] == "Dry run result: failed:timeout"
     assert row["apply_attempts"] == 0
     assert row["agent_id"] is None
     assert row["apply_duration_ms"] == 2500
     assert event["event_type"] == "dry_run"
-    assert "no application submitted" in event["notes"]
+    assert event["notes"] == "Dry run result: failed:timeout"
+
+
+def test_worker_loop_dry_run_failure_does_not_mark_failed(monkeypatch) -> None:
+    calls: list[tuple] = []
+    jobs = [{
+        "url": "https://jobs.example/dry-run-failure",
+        "title": "Support Analyst",
+        "company": "Example",
+        "site": "Example ATS",
+        "application_url": "https://jobs.example/dry-run-failure/apply",
+        "fit_score": 9,
+    }]
+
+    def fake_acquire_job(*args, **kwargs):
+        return jobs.pop(0) if jobs else None
+
+    monkeypatch.setattr(launcher, "acquire_job", fake_acquire_job)
+    monkeypatch.setattr(launcher, "run_job", lambda *args, **kwargs: ("failed:timeout", 1200))
+    monkeypatch.setattr(launcher, "mark_dry_run", lambda *args, **kwargs: calls.append(("dry_run", args, kwargs)))
+    monkeypatch.setattr(launcher, "mark_result", lambda *args, **kwargs: calls.append(("mark_result", args, kwargs)))
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    applied, failed = launcher.worker_loop(limit=1, dry_run=True)
+
+    assert (applied, failed) == (0, 0)
+    assert [call[0] for call in calls] == ["dry_run"]
+    assert calls[0][2]["result"] == "failed:timeout"
+
+
+def test_reset_failed_only_resets_failed_jobs(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT
+        )
+    """)
+    conn.executemany(
+        "INSERT INTO jobs (url, apply_status, apply_error, apply_attempts, agent_id) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("https://jobs.example/failed", "failed", "timeout", 2, "worker-1"),
+            ("https://jobs.example/manual", "manual", "manual ATS", 0, None),
+            ("https://jobs.example/interview", "interview", None, 0, None),
+            ("https://jobs.example/rejected", "rejected", None, 0, None),
+            ("https://jobs.example/withdrawn", "withdrawn", None, 0, None),
+            ("https://jobs.example/offer", "offer", None, 0, None),
+        ],
+    )
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+
+    count = launcher.reset_failed()
+
+    rows = {
+        row["url"]: dict(row)
+        for row in conn.execute("SELECT url, apply_status, apply_error, apply_attempts, agent_id FROM jobs")
+    }
+    assert count == 1
+    assert rows["https://jobs.example/failed"]["apply_status"] is None
+    assert rows["https://jobs.example/failed"]["apply_error"] is None
+    assert rows["https://jobs.example/failed"]["apply_attempts"] == 0
+    assert rows["https://jobs.example/failed"]["agent_id"] is None
+    assert rows["https://jobs.example/manual"]["apply_status"] == "manual"
+    assert rows["https://jobs.example/interview"]["apply_status"] == "interview"
+    assert rows["https://jobs.example/rejected"]["apply_status"] == "rejected"
+    assert rows["https://jobs.example/withdrawn"]["apply_status"] == "withdrawn"
+    assert rows["https://jobs.example/offer"]["apply_status"] == "offer"
 
 
 def test_run_job_removes_transient_prompt_file(tmp_path, monkeypatch) -> None:

@@ -67,8 +67,8 @@ def location_ok(
         return allow_unknown
 
     loc = location.lower()
-    if any(term in loc for term in REMOTE_TERMS):
-        return True
     if any(term_in_text(loc, term) for term in reject):
         return False
+    if any(term in loc for term in REMOTE_TERMS):
+        return True
     return any(term_in_text(loc, term) for term in accept)

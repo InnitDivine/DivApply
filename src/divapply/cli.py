@@ -375,6 +375,7 @@ def run(
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm destructive pruning when --prune-score is used."),
     validation: str = typer.Option(
         "normal",
         "--validation",
@@ -417,6 +418,14 @@ def run(
             f"Choose from: {', '.join(valid_modes)}"
         )
         raise typer.Exit(code=1)
+
+    if prune_score > 0 and not dry_run and not yes and ("all" in stage_list or "score" in stage_list):
+        confirmed = typer.confirm(
+            f"`run --prune-score {prune_score}` will delete jobs with fit_score <= {prune_score}. Continue?"
+        )
+        if not confirmed:
+            console.print("[dim]Cancelled. Use --dry-run to preview or --yes to confirm pruning.[/dim]")
+            return
 
     result = run_pipeline(
         stages=stage_list,

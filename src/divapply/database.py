@@ -322,6 +322,7 @@ def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> N
     if conn is None:
         conn = get_connection()
 
+    should_commit = not conn.in_transaction
     conn.execute("""
         CREATE TABLE IF NOT EXISTS application_events (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -336,7 +337,8 @@ def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> N
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_job_url ON application_events(job_url)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_follow_up ON application_events(follow_up_at)")
-    conn.commit()
+    if should_commit:
+        conn.commit()
 
 
 def backfill_application_events(conn: sqlite3.Connection | None = None) -> int:
@@ -864,7 +866,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
                  AND tailored_resume_path IS NULL
                 THEN 1 ELSE 0
             END) AS tailor_exhausted,
-            SUM(CASE WHEN cover_letter_path IS NOT NULL THEN 1 ELSE 0 END) AS with_cover_letter,
+            SUM(CASE WHEN cover_letter_path IS NOT NULL AND cover_letter_path != '' THEN 1 ELSE 0 END) AS with_cover_letter,
             SUM(CASE
                 WHEN COALESCE(cover_attempts, 0) >= 5
                  AND (cover_letter_path IS NULL OR cover_letter_path = '')

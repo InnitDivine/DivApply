@@ -17,6 +17,12 @@ def test_resolve_url_keeps_absolute_and_rejects_known_bad_relative_sites() -> No
     assert detail.resolve_url("/", "4DayWeek") is None
 
 
+def test_resolve_url_rejects_scheme_relative_host_override(monkeypatch) -> None:
+    monkeypatch.setattr(detail, "_load_base_urls", lambda: {"Cache Site": "https://jobs.example.com/careers/"})
+
+    assert detail.resolve_url("//evil.example/jobs/42", "Cache Site") is None
+
+
 def test_extract_from_json_ld_finds_nested_graph_jobposting() -> None:
     description = "<p>Help local users with hardware, software, tickets, and documentation.</p>" * 3
     intel = {

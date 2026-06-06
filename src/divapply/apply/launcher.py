@@ -286,24 +286,30 @@ def mark_result(url: str, status: str, error: str | None = None,
         raise
 
 
-def mark_dry_run(url: str, duration_ms: int | None = None, task_id: str | None = None) -> None:
+def mark_dry_run(
+    url: str,
+    duration_ms: int | None = None,
+    task_id: str | None = None,
+    result: str | None = None,
+) -> None:
     """Record a completed dry run without marking the application submitted."""
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
+    result_note = f"Dry run result: {result}" if result else "Dry run completed; no application submitted"
     try:
         conn.execute("BEGIN IMMEDIATE")
         conn.execute(
             """
             UPDATE jobs SET apply_status = NULL,
-                           apply_error = 'dry run completed',
+                           apply_error = ?,
                            agent_id = NULL,
                            apply_duration_ms = ?,
                            apply_task_id = ?
             WHERE url = ?
             """,
-            (duration_ms, task_id, url),
+            (result_note, duration_ms, task_id, url),
         )
-        add_application_event(url, "dry_run", notes="Dry run completed; no application submitted", ts=now, conn=conn)
+        add_application_event(url, "dry_run", notes=result_note, ts=now, conn=conn)
         conn.commit()
     except Exception:
         conn.rollback()
@@ -368,8 +374,6 @@ def reset_failed() -> int:
         UPDATE jobs SET apply_status = NULL, apply_error = NULL,
                        apply_attempts = 0, agent_id = NULL
         WHERE apply_status = 'failed'
-          OR (apply_status IS NOT NULL AND apply_status != 'applied'
-              AND apply_status != 'in_progress')
     """)
     conn.commit()
     return cursor.rowcount
@@ -858,15 +862,15 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 release_lock(job["url"])
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
                 continue
+            if dry_run:
+                mark_dry_run(job["url"], duration_ms=duration_ms, result=result)
+                add_event(f"[W{worker_id}] Dry run result: {result} - {job['title'][:30]}")
             if result == "applied":
-                if dry_run:
-                    mark_dry_run(job["url"], duration_ms=duration_ms)
-                    add_event(f"[W{worker_id}] Dry run complete: {job['title'][:30]}")
-                else:
+                if not dry_run:
                     mark_result(job["url"], "applied", duration_ms=duration_ms)
                     applied += 1
                     update_state(worker_id, jobs_applied=applied, jobs_done=applied + failed)
-            else:
+            elif not dry_run:
                 reason = result.split(":", 1)[-1] if ":" in result else result
                 mark_result(job["url"], "failed", reason,
                             permanent=_is_permanent_failure(result),

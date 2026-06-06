@@ -20,7 +20,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urljoin, urlparse
 
 import yaml
 from bs4 import BeautifulSoup
@@ -113,6 +113,9 @@ def _normalize_job_url(site: str, url: str | None) -> str | None:
     raw = str(url).strip()
     if raw.startswith(("http://", "https://")):
         return sanitize_external_url(raw, field="job url")
+    parsed = urlparse(raw)
+    if parsed.scheme or parsed.netloc:
+        return None
     base = config.load_base_urls().get(site)
     if not base:
         return None
