@@ -322,7 +322,7 @@ def build_html(resume: dict) -> str:
         blocks = _re.split(r'\n{2,}', edu_text)
         edu_items = ""
         for block in blocks:
-            lines = [l.strip() for l in block.strip().split("\n") if l.strip()]
+            lines = [line.strip() for line in block.strip().split("\n") if line.strip()]
             if not lines:
                 continue
             degree = lines[0]

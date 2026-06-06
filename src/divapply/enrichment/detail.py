@@ -22,9 +22,7 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from divapply import config
-from divapply.config import DB_PATH
-from divapply.database import get_connection, init_db, ensure_columns
+from divapply.database import init_db
 from divapply.llm import get_client
 
 log = logging.getLogger(__name__)

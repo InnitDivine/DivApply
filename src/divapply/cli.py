@@ -447,7 +447,7 @@ def apply(
             raise typer.Exit(code=1)
         mcp_path = _profile_path.parent / ".mcp-apply-0.json"
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
-        console.print(f"\n[bold]Run manually:[/bold]")
+        console.print("\n[bold]Run manually:[/bold]")
         console.print(f"  {get_manual_command(resolved_backend, resolved_model, prompt_file, mcp_path)}")
         return
 
@@ -1196,7 +1196,7 @@ def ultimate(
         raise typer.Exit(code=1)
 
     job = result["job"]
-    console.print(f"\n[bold green]Targeted resume generated.[/bold green]")
+    console.print("\n[bold green]Targeted resume generated.[/bold green]")
     console.print(f"  Job:        {job.get('title') or job.get('url')}")
     console.print(f"  Status:     {result['status']}")
     console.print(f"  Attempts:   {result['attempts']}")

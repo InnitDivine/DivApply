@@ -14,7 +14,6 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 
 from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile
 from divapply.database import get_connection, get_jobs_by_stage
@@ -22,7 +21,6 @@ from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
     BANNED_WORDS,
-    FABRICATION_WATCHLIST,
     sanitize_text,
     validate_json_fields,
     validate_tailored_resume,
@@ -60,22 +58,17 @@ def _build_tailor_prompt(profile: dict) -> str:
 
     # Preserved entities
     companies = resume_facts.get("preserved_companies", [])
-    projects = resume_facts.get("preserved_projects", [])
-    school = resume_facts.get("preserved_school", "")
     real_metrics = resume_facts.get("real_metrics", [])
     coursework = profile.get("coursework_summary", [])
     coursework_skills = profile.get("coursework_skills", [])
 
     companies_str = ", ".join(companies) if companies else "N/A"
-    projects_str = ", ".join(projects) if projects else "N/A"
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
 
     # Include ALL banned words from the validator so the LLM knows exactly
     # what will be rejected â€” the validator checks for these automatically.
     banned_str = ", ".join(BANNED_WORDS)
 
-    education = profile.get("experience", {})
-    education_level = education.get("education_level", "")
     coursework_block = "\n".join(f"- {item}" for item in coursework) if coursework else "N/A"
     coursework_skills_block = "\n".join(f"- {item}" for item in coursework_skills) if coursework_skills else "N/A"
     truth_items: list[str] = []

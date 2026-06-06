@@ -5,7 +5,6 @@ embedding similarity, and the LLM evaluator. All personal data is loaded at
 runtime from the user's profile and resume file.
 """
 
-import json
 import logging
 import re
 import time

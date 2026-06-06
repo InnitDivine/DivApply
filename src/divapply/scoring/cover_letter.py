@@ -5,14 +5,13 @@ postings. All personal data (name, skills, achievements) comes from the user's
 profile at runtime. No hardcoded personal information.
 """
 
-import json
 import logging
 import re
 import time
 from datetime import datetime, timezone
 
 from divapply.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
-from divapply.database import get_connection, get_jobs_by_stage
+from divapply.database import get_connection
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (

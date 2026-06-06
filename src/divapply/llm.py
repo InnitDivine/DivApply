@@ -256,7 +256,7 @@ class LLMClient:
                     raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
                 return raw
 
-            except _GeminiCompatForbidden as exc:
+            except _GeminiCompatForbidden:
                 # Model not available on OpenAI-compat layer — switch to native.
                 log.warning(
                     "Gemini compat endpoint returned 403 for model '%s'. "

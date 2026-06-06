@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from jobspy import scrape_jobs
 
 from divapply import config
-from divapply.database import canonical_job_key, get_connection, init_db, store_jobs
+from divapply.database import canonical_job_key, get_connection, init_db
 
 log = logging.getLogger(__name__)
 
