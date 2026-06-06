@@ -20,6 +20,7 @@ RESUME_PDF_PATH = APP_DIR / "resume.pdf"
 SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
 ENV_PATH = APP_DIR / ".env"
 ANSWERS_PATH = APP_DIR / "answers.yaml"
+CREDENTIALS_PATH = APP_DIR / "credentials.yaml"
 LEGACY_DB_PATH = LEGACY_APP_DIR / "applypilot.db"
 LEGACY_PROFILE_PATH = LEGACY_APP_DIR / "profile.json"
 LEGACY_SEARCH_CONFIG_PATH = LEGACY_APP_DIR / "searches.yaml"
@@ -249,9 +250,9 @@ def load_search_config() -> dict:
     if raw is None:
         example = CONFIG_DIR / "searches.example.yaml"
         if example.exists():
-            return yaml.safe_load(example.read_text(encoding="utf-8"))
+            return yaml.safe_load(example.read_text(encoding="utf-8")) or {}
         return {}
-    return yaml.safe_load(raw)
+    return yaml.safe_load(raw) or {}
 
 
 def validate_search_config(cfg: dict | None = None) -> dict:
@@ -347,6 +348,21 @@ def load_sites_config() -> dict:
     if not path.exists():
         return {}
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+
+
+def load_credentials(path: Path | None = None) -> dict:
+    """Load optional login credentials from ~/.divapply/credentials.yaml.
+
+    Profile data should stay focused on candidate facts. Login material belongs
+    in this separate file or environment variables.
+    """
+    import yaml
+
+    credentials_path = path or CREDENTIALS_PATH
+    if not credentials_path.exists():
+        return {}
+    data = yaml.safe_load(credentials_path.read_text(encoding="utf-8")) or {}
+    return data if isinstance(data, dict) else {}
 
 
 def is_manual_ats(url: str | None) -> bool:

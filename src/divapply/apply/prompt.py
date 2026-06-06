@@ -754,17 +754,42 @@ def build_prompt(job: dict, tailored_resume: str,
     from divapply.config import load_blocked_sso
     blocked_sso = load_blocked_sso()
 
-    # Site-specific credentials (overrides personal.password for specific domains)
-    site_creds = profile.get("site_credentials", {})
+    # Login credentials are intentionally separate from profile facts.
+    config.load_env()
+    credentials = config.load_credentials()
+    default_creds = credentials.get("default", {}) if isinstance(credentials.get("default", {}), dict) else {}
+    default_username = (
+        default_creds.get("username")
+        or os.environ.get("DIVAPPLY_LOGIN_USERNAME")
+        or os.environ.get("APPLYPILOT_LOGIN_USERNAME")
+        or personal["email"]
+    )
+    default_password = (
+        default_creds.get("password")
+        or os.environ.get("DIVAPPLY_LOGIN_PASSWORD")
+        or os.environ.get("APPLYPILOT_LOGIN_PASSWORD")
+        or ""
+    )
+    site_creds = credentials.get("sites", {}) if isinstance(credentials.get("sites", {}), dict) else {}
     site_creds_lines = []
     for domain, creds in site_creds.items():
+        if not isinstance(creds, dict):
+            continue
         site_creds_lines.append(
-            f"  - {domain}: username={creds.get('username', personal['email'])}  password={creds.get('password', '')}"
+            f"  - {domain}: username={creds.get('username', default_username)}  password={creds.get('password', '')}"
         )
     site_creds_block = (
-        "SITE-SPECIFIC LOGINS (use these instead of the default password for these domains):\n"
+        "SITE-SPECIFIC LOGINS (loaded from credentials.yaml, use these for matching domains):\n"
         + "\n".join(site_creds_lines)
         if site_creds_lines else ""
+    )
+    default_login_line = (
+        f"Default saved login: username={default_username}  password={default_password}"
+        if default_password
+        else (
+            "No saved default password is available. Use the existing signed-in browser session when possible. "
+            "If a password is required and no site-specific login is listed, output RESULT:FAILED:login_issue."
+        )
     )
 
     # Preferred display name
@@ -885,9 +910,9 @@ Before filling any form, spend 2 actions verifying this is a legitimate employer
    5c. Regular login form (employer's own site)?
        {site_creds_block}
        Check the current URL domain. If it matches a domain in SITE-SPECIFIC LOGINS above, use those credentials.
-       Otherwise use default: {personal['email']} / {personal.get('password', '')}
+       Otherwise: {default_login_line}
    5d. After clicking Login/Sign-in: run CAPTCHA DETECT. Login pages frequently have invisible CAPTCHAs that silently block form submissions. If found, solve it then retry login.
-   5e. Sign in failed? Try sign up with same email and password.
+   5e. Sign in failed and a saved password is available? Try sign up with the same email/password. If no saved password is available, output RESULT:FAILED:login_issue.
    5f. Need email verification? Use search_emails + read_email to get the code.
    5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.

@@ -1,14 +1,12 @@
-# Direct career site registry for DivApply — Sacramento government focus
-# Dalton De Arrieta: IT support, admin, procurement, fiscal roles
-# All remote developer boards removed — not relevant to this candidate's profile.
+# Direct career site registry for DivApply - Logan / Cache Valley focus.
+# California targets are commented at the bottom for a later move back.
 
-# ── Manual-Only ATS Domains ──────────────────────────────────────────────
-# These ATS platforms have unsolvable CAPTCHAs. Jobs routing through them
-# are flagged as "manual" during apply — bot skips, user applies by hand.
 manual_ats:
-  - "ibegin.tcsapps.com"       # TCS iBegin — unsolvable CAPTCHA every time
+  - "ibegin.tcsapps.com"
+  - "applicantpro.com"
+  - "icims.com"
+  - "hcahealthcare.com"
 
-# ── Blocked sites — too problematic for automation ───────────────────────
 blocked:
   sites:
     - "glassdoor"
@@ -18,90 +16,63 @@ blocked:
     - "%google.com/about/careers%"
     - "%google.jobs%"
 
-# ── Blocked SSO domains — cannot authenticate through these ──────────────
 blocked_sso:
+  - "accounts.google.com"
   - "login.microsoftonline.com"
   - "okta.com"
   - "auth0.com"
 
-# ── Base URLs for URL resolution ─────────────────────────────────────────
 base_urls:
   "GovernmentJobs.com": "https://www.governmentjobs.com"
-#  "City of Roseville": "https://www.governmentjobs.com"
-#  "Placer County": "https://www.jobapscloud.com"
-#  "Sacramento County": "https://www.governmentjobs.com"
-#  "Nevada County": "https://www.governmentjobs.com"
-#  "City of Sacramento": "https://www.governmentjobs.com"
-#  "City of Folsom": "https://www.governmentjobs.com"
-#  "City of Elk Grove": "https://www.governmentjobs.com"
-#  "City of Rocklin": "https://www.governmentjobs.com"
-#  "City of Citrus Heights": "https://www.governmentjobs.com"
-#  "City of Rancho Cordova": "https://www.governmentjobs.com"
-#  "City of Auburn": "https://www.governmentjobs.com"
-#  "CalCareers": "https://calcareers.ca.gov"
   "SimplyHired": "https://www.simplyhired.com"
+  "City of Logan": "https://loganutah.applicantpro.com"
+  "Cache County": "https://cachecounty.applicantpro.com"
+  "Utah State University": "https://careers-usu.icims.com"
+  "Bridgerland Technical College": "https://btech.edu"
 
 sites:
-  # ── GovernmentJobs.com (NEOGOV) — used by nearly all CA government agencies ──
-  # Search type: expands per query × location combo from searches.yaml
-#  - name: "GovernmentJobs.com"
-#    url: "https://www.governmentjobs.com/jobs?keyword={query_encoded}&location={location_encoded}&radius=30"
-#    type: search
+  - name: "GovernmentJobs.com"
+    url: "https://www.governmentjobs.com/jobs?keyword={query_encoded}&location={location_encoded}&radius=15"
+    type: search
 
-  # ── General job search with location ─────────────────────────────────────
   - name: "SimplyHired"
     url: "https://www.simplyhired.com/search?q={query_encoded}&l={location_encoded}"
     type: search
 
-  # ── Static agency pages — Sacramento region government portals ────────────
-  # These are scraped once (no query/location params) and filtered by keyword.
+  - name: "City of Logan"
+    url: "https://loganutah.applicantpro.com/"
+    type: static
 
-#  - name: "City of Roseville"
-#    url: "https://www.governmentjobs.com/careers/rosevilleca"
-#    type: static
-#
-#  - name: "Placer County"
-#    url: "https://www.jobapscloud.com/Placer/JobBoard.asp"
-#    type: static
-#
-#  - name: "Sacramento County"
-#    url: "https://www.governmentjobs.com/careers/sacramento"
-#    type: static
-#
-#  - name: "City of Sacramento"
-#    url: "https://www.governmentjobs.com/careers/saccity"
-#    type: static
-#
-#  - name: "City of Folsom"
-#    url: "https://www.governmentjobs.com/careers/folsom"
-#    type: static
-#
-#  - name: "City of Elk Grove"
-#    url: "https://www.governmentjobs.com/careers/elkgrove"
-#    type: static
-#
-#  - name: "City of Rocklin"
-#    url: "https://www.governmentjobs.com/careers/rocklinca"
-#    type: static
-#
-#  - name: "City of Citrus Heights"
-#    url: "https://www.governmentjobs.com/careers/citrusheights"
-#    type: static
-#
-#  - name: "City of Rancho Cordova"
-#    url: "https://www.governmentjobs.com/careers/ranchocordova"
-#    type: static
-#
-#  - name: "Nevada County"
-#    url: "https://www.governmentjobs.com/careers/mynevadacounty"
-#    type: static
-#
-#  - name: "City of Auburn"
-#    url: "https://www.governmentjobs.com/careers/auburn"
-#    type: static
-#
-#  # City of Lincoln uses CalOpps (not NEOGOV) — not compatible with this scraper
-#
-#  - name: "CalCareers"
-#    url: "https://calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx"
-#    type: static
+  - name: "Cache County"
+    url: "https://cachecounty.applicantpro.com/"
+    type: static
+
+  - name: "Utah State University"
+    url: "https://careers-usu.icims.com/jobs/search"
+    type: static
+
+  - name: "Bridgerland Technical College"
+    url: "https://btech.edu/job-board/"
+    type: static
+
+  # California / Sacramento-area targets. Kept for later move back.
+  #
+  # - name: "City of Roseville"
+  #   url: "https://www.governmentjobs.com/careers/rosevilleca"
+  #   type: static
+  #
+  # - name: "Placer County"
+  #   url: "https://www.jobapscloud.com/Placer/JobBoard.asp"
+  #   type: static
+  #
+  # - name: "Sacramento County"
+  #   url: "https://www.governmentjobs.com/careers/sacramento"
+  #   type: static
+  #
+  # - name: "City of Sacramento"
+  #   url: "https://www.governmentjobs.com/careers/saccity"
+  #   type: static
+  #
+  # - name: "CalCareers"
+  #   url: "https://calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx"
+  #   type: static

@@ -34,7 +34,7 @@ def load_employers() -> dict:
     if not path.exists():
         log.warning("employers.yaml not found at %s", path)
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     return data.get("employers", {})
 
 
@@ -516,8 +516,8 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
         employers = load_employers()
 
     if not employers:
-        log.warning("No employers configured. Create config/employers.yaml.")
-        return {"found": 0, "new": 0, "existing": 0, "queries": 0}
+        log.info("No Workday employers configured; skipping Workday discovery.")
+        return {"status": "skipped", "found": 0, "new": 0, "existing": 0, "queries": 0}
 
     search_cfg = config.load_search_config()
     queries_cfg = search_cfg.get("queries", [])
@@ -534,7 +534,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
 
     if not queries:
         log.warning("No search queries configured in searches.yaml.")
-        return {"found": 0, "new": 0, "existing": 0, "queries": 0}
+        return {"status": "skipped", "found": 0, "new": 0, "existing": 0, "queries": 0}
 
     proxy = search_cfg.get("proxy")
     if proxy:
@@ -571,5 +571,6 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
         "new": grand_new,
         "existing": grand_existing,
         "queries": len(queries),
+        "status": "ok",
     }
 

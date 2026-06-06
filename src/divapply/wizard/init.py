@@ -100,7 +100,6 @@ def _setup_profile() -> dict:
         "github_url": Prompt.ask("GitHub URL (optional)", default=""),
         "portfolio_url": Prompt.ask("Portfolio URL (optional)", default=""),
         "website_url": Prompt.ask("Personal website URL (optional)", default=""),
-        "password": Prompt.ask("Job site password (used for login walls during auto-apply)", password=True, default=""),
     }
 
     # -- Work Authorization --

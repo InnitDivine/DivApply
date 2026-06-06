@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 
 from divapply.config import (
-    APP_DIR, RESUME_PATH, load_env, load_profile, ensure_dirs,
+    APP_DIR, RESUME_PATH, load_credentials, load_env, load_profile, ensure_dirs,
 )
 from divapply.llm import get_client
 
@@ -399,18 +399,36 @@ def _safe_click(page, locator, timeout: int = 5000) -> bool:
 # ---------------------------------------------------------------------------
 
 def _get_credentials(profile: dict, domain: str) -> tuple[str, str]:
-    """Get login credentials for a domain from profile.json.
+    """Get login credentials for a domain from credentials.yaml or env.
 
-    Checks site_credentials first, then falls back to personal email + password.
+    Profile data is only used as an email fallback. Passwords are never read
+    from profile.json.
     Returns (username, password) or ("", "").
     """
-    creds = profile.get("site_credentials", {})
-    for key, val in creds.items():
+    load_env()
+    credentials = load_credentials()
+    sites = credentials.get("sites", {}) if isinstance(credentials.get("sites", {}), dict) else {}
+    for key, val in sites.items():
+        if not isinstance(val, dict):
+            continue
         if domain in key:
             return val.get("username", ""), val.get("password", "")
-    # Fallback: personal email + password
+
+    default = credentials.get("default", {}) if isinstance(credentials.get("default", {}), dict) else {}
     p = profile.get("personal", {})
-    return p.get("email", ""), p.get("password", "")
+    username = (
+        default.get("username")
+        or os.environ.get("DIVAPPLY_LOGIN_USERNAME")
+        or os.environ.get("APPLYPILOT_LOGIN_USERNAME")
+        or p.get("email", "")
+    )
+    password = (
+        default.get("password")
+        or os.environ.get("DIVAPPLY_LOGIN_PASSWORD")
+        or os.environ.get("APPLYPILOT_LOGIN_PASSWORD")
+        or ""
+    )
+    return username, password
 
 
 def _dismiss_popups(page) -> None:

@@ -78,8 +78,8 @@ def _run_discover(workers: int = 4) -> dict:
     console.print("  [cyan]Workday corporate scraper...[/cyan]")
     try:
         from divapply.discovery.workday import run_workday_discovery
-        run_workday_discovery(workers=workers)
-        stats["workday"] = "ok"
+        result = run_workday_discovery(workers=workers)
+        stats["workday"] = result.get("status", "ok")
     except Exception as e:
         log.error("Workday scraper failed: %s", e)
         console.print(f"  [red]Workday error:[/red] {e}")

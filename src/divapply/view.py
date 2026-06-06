@@ -39,7 +39,7 @@ def generate_dashboard(output_path: str | None = None) -> str:
     total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
     ready = conn.execute(
         "SELECT COUNT(*) FROM jobs "
-        "WHERE full_description IS NOT NULL AND application_url IS NOT NULL"
+        "WHERE full_description IS NOT NULL AND COALESCE(application_url, '') != ''"
     ).fetchone()[0]
     scored = conn.execute(
         "SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL"

@@ -865,7 +865,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         "SELECT COUNT(*) FROM jobs "
         "WHERE tailored_resume_path IS NOT NULL "
         "AND applied_at IS NULL "
-        "AND application_url IS NOT NULL"
+        "AND COALESCE(application_url, '') != ''"
     ).fetchone()[0]
 
     try:
@@ -974,12 +974,13 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
         "tailored": "tailored_resume_path IS NOT NULL",
         "pending_cover": (
             "fit_score >= ? AND full_description IS NOT NULL "
-            "AND tailored_resume_path IS NOT NULL AND cover_letter_path IS NULL "
+            "AND tailored_resume_path IS NOT NULL "
+            "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < 5"
         ),
         "pending_apply": (
             "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
-            "AND application_url IS NOT NULL"
+            "AND COALESCE(application_url, '') != ''"
         ),
         "applied": "applied_at IS NOT NULL",
     }
@@ -992,7 +993,7 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     elif "?" in where:
         params.append(7)  # default min_score
 
-    if min_score is not None and "fit_score" not in where and stage in ("scored", "tailored", "applied"):
+    if min_score is not None and stage in ("scored", "tailored", "applied"):
         where += " AND fit_score >= ?"
         params.append(min_score)
 
