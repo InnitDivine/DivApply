@@ -1,0 +1,108 @@
+from __future__ import annotations
+
+import zipfile
+from pathlib import Path
+
+from divapply import cli
+
+
+def _patch_backup_paths(monkeypatch, tmp_path: Path) -> None:
+    import divapply.config as config
+
+    app_dir = tmp_path / "app"
+    paths = {
+        "APP_DIR": app_dir,
+        "DB_PATH": app_dir / "divapply.db",
+        "PROFILE_PATH": app_dir / "profile.json",
+        "RESUME_PATH": app_dir / "resume.txt",
+        "RESUME_PDF_PATH": app_dir / "resume.pdf",
+        "SEARCH_CONFIG_PATH": app_dir / "searches.yaml",
+        "ANSWERS_PATH": app_dir / "answers.yaml",
+        "CREDENTIALS_PATH": app_dir / "credentials.yaml",
+        "ENV_PATH": app_dir / ".env",
+        "USER_CONFIG_DIR": app_dir / "config",
+        "TAILORED_DIR": app_dir / "tailored_resumes",
+        "COVER_LETTER_DIR": app_dir / "cover_letters",
+        "LOG_DIR": app_dir / "logs",
+    }
+    for name, value in paths.items():
+        monkeypatch.setattr(config, name, value)
+
+    def ensure_dirs() -> None:
+        for value in (
+            paths["APP_DIR"],
+            paths["USER_CONFIG_DIR"],
+            paths["TAILORED_DIR"],
+            paths["COVER_LETTER_DIR"],
+            paths["LOG_DIR"],
+        ):
+            value.mkdir(parents=True, exist_ok=True)
+
+    monkeypatch.setattr(config, "ensure_dirs", ensure_dirs)
+
+
+def test_backup_excludes_secrets_by_default(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    (app_dir / "config").mkdir(parents=True)
+    (app_dir / "profile.json").write_text("{}", encoding="utf-8")
+    (app_dir / "resume.txt").write_text("resume", encoding="utf-8")
+    (app_dir / "searches.yaml").write_text("queries: []", encoding="utf-8")
+    (app_dir / ".env").write_text("OPENAI_API_KEY=secret", encoding="utf-8")
+    (app_dir / "credentials.yaml").write_text("site: secret", encoding="utf-8")
+    (app_dir / "config" / "sites.yaml").write_text("sites: []", encoding="utf-8")
+
+    out = tmp_path / "backup.zip"
+    cli.backup(out=out, include_secrets=False, include_outputs=False)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+
+    assert "profile.json" in names
+    assert "resume.txt" in names
+    assert "searches.yaml" in names
+    assert "config/sites.yaml" in names
+    assert ".env" not in names
+    assert "credentials.yaml" not in names
+
+
+def test_backup_excludes_secret_bearing_prompt_outputs_by_default(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    logs_dir = app_dir / "logs"
+    logs_dir.mkdir(parents=True)
+    (app_dir / "profile.json").write_text("{}", encoding="utf-8")
+    (logs_dir / "prompt_example.txt").write_text("password=prompt-secret", encoding="utf-8")
+    (logs_dir / "worker-0.log").write_text("redacted worker log", encoding="utf-8")
+
+    out = tmp_path / "backup.zip"
+    cli.backup(out=out, include_secrets=False, include_outputs=True)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+
+    assert "logs/worker-0.log" in names
+    assert "logs/prompt_example.txt" not in names
+
+
+def test_backup_can_include_secrets_explicitly(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    logs_dir = app_dir / "logs"
+    logs_dir.mkdir(parents=True)
+    (app_dir / ".env").write_text("OPENAI_API_KEY=secret", encoding="utf-8")
+    (app_dir / "credentials.yaml").write_text("site: secret", encoding="utf-8")
+    (logs_dir / "prompt_example.txt").write_text("password=prompt-secret", encoding="utf-8")
+
+    out = tmp_path / "backup.zip"
+    cli.backup(out=out, include_secrets=True, include_outputs=True)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+
+    assert ".env" in names
+    assert "credentials.yaml" in names
+    assert "logs/prompt_example.txt" in names

@@ -19,6 +19,14 @@ from jobspy import scrape_jobs
 
 from divapply import config
 from divapply.database import canonical_job_key, get_connection, init_db
+from divapply.discovery.filters import (
+    REMOTE_TERMS,
+    load_location_filter,
+    load_title_excludes,
+    location_ok,
+    term_in_text,
+    title_ok,
+)
 
 log = logging.getLogger(__name__)
 
@@ -84,28 +92,12 @@ def _load_location_config(search_cfg: dict) -> tuple[list[str], list[str]]:
 
     Falls back to sensible defaults if not defined in the YAML.
     """
-    location_cfg = search_cfg.get("location", {}) or {}
-    accept = (
-        search_cfg.get("location_accept")
-        or location_cfg.get("accept_patterns")
-        or []
-    )
-    reject = (
-        search_cfg.get("location_reject_non_remote")
-        or location_cfg.get("reject_patterns")
-        or []
-    )
-    return accept, reject
+    return load_location_filter(search_cfg)
 
 
 def _load_title_excludes(search_cfg: dict) -> list[str]:
     """Load title exclusion patterns from search config (case-insensitive)."""
-    raw = []
-    raw.extend(search_cfg.get("exclude_titles", []) or [])
-    raw.extend(search_cfg.get("title_blacklist", []) or [])
-    filters = search_cfg.get("filters", {}) or {}
-    raw.extend(filters.get("title_blacklist", []) or [])
-    return [str(t).lower() for t in raw if str(t).strip()]
+    return load_title_excludes(search_cfg, include_filter_blacklist=True)
 
 
 def _load_filter_rules(search_cfg: dict) -> dict:
@@ -154,10 +146,7 @@ def _load_filter_rules(search_cfg: dict) -> dict:
 
 def _title_ok(title: str | None, excludes: list[str]) -> bool:
     """Return False if title matches any exclude pattern."""
-    if not title or not excludes:
-        return True
-    t = title.lower()
-    return not any(ex in t for ex in excludes)
+    return title_ok(title, excludes)
 
 
 def _title_include_ok(title: str | None, includes: list[str]) -> bool:
@@ -211,7 +200,7 @@ def _row_is_effectively_remote(row) -> bool:
     location = str(row.get("location", "") or "").lower()
     return bool(row.get("is_remote", False)) or any(
         token in f"{location} {text}"
-        for token in ("remote", "work from home", "wfh", "anywhere", "distributed")
+        for token in REMOTE_TERMS
     )
 
 
@@ -224,13 +213,7 @@ def _company_ok(company: str | None, blacklist: list[str]) -> bool:
 
 def _term_in_text(text: str, term: str) -> bool:
     """Match config terms without letting short tokens hit inside words."""
-    haystack = str(text or "").lower()
-    needle = str(term).strip().lower()
-    if not needle:
-        return False
-    if re.fullmatch(r"[a-z0-9]+", needle):
-        return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
-    return needle in haystack
+    return term_in_text(text, term)
 
 
 def _keywords_ok(text: str, required: list[str], excluded: list[str]) -> bool:
@@ -328,24 +311,7 @@ def _location_ok(
     if not location:
         return allow_unknown
 
-    loc = location.lower()
-
-    # Remote jobs always OK
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    # Reject non-remote matches
-    for r in reject:
-        if _term_in_text(loc, r):
-            return False
-
-    # Accept matches
-    for a in accept:
-        if _term_in_text(loc, a):
-            return True
-
-    # No match -- reject unknown
-    return False
+    return location_ok(location, accept, reject, allow_unknown=allow_unknown)
 
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------

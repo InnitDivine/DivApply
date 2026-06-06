@@ -26,6 +26,7 @@ from divapply.config import (
     SEARCH_CONFIG_PATH,
     ensure_dirs,
 )
+from divapply.security import protect_file
 
 console = Console()
 
@@ -53,9 +54,11 @@ def _setup_resume() -> None:
 
         if suffix == ".txt":
             shutil.copy2(src, RESUME_PATH)
+            protect_file(RESUME_PATH)
             console.print(f"[green]Copied to {RESUME_PATH}[/green]")
         elif suffix == ".pdf":
             shutil.copy2(src, RESUME_PDF_PATH)
+            protect_file(RESUME_PDF_PATH)
             console.print(f"[green]Copied to {RESUME_PDF_PATH}[/green]")
 
             # Also ask for a plain-text version for LLM consumption
@@ -67,6 +70,7 @@ def _setup_resume() -> None:
                 txt_src = Path(txt_path_str.strip().strip('"').strip("'")).expanduser().resolve()
                 if txt_src.exists():
                     shutil.copy2(txt_src, RESUME_PATH)
+                    protect_file(RESUME_PATH)
                     console.print(f"[green]Copied to {RESUME_PATH}[/green]")
                 else:
                     console.print("[yellow]File not found, skipping plain-text copy.[/yellow]")
@@ -174,6 +178,7 @@ def _setup_profile() -> dict:
 
     # Save
     PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False), encoding="utf-8")
+    protect_file(PROFILE_PATH)
     console.print(f"\n[green]Profile saved to {PROFILE_PATH}[/green]")
     return profile
 
@@ -224,6 +229,7 @@ def _setup_searches() -> None:
         lines.append(f"    tier: {min(i + 1, 3)}")
 
     SEARCH_CONFIG_PATH.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    protect_file(SEARCH_CONFIG_PATH)
     console.print(f"[green]Search config saved to {SEARCH_CONFIG_PATH}[/green]")
 
 
@@ -270,6 +276,7 @@ def _setup_ai_features() -> None:
 
     env_lines.append("")
     ENV_PATH.write_text("\n".join(env_lines), encoding="utf-8")
+    protect_file(ENV_PATH)
     console.print(f"[green]AI configuration saved to {ENV_PATH}[/green]")
 
 
@@ -313,8 +320,10 @@ def _setup_auto_apply() -> None:
                     existing.rstrip() + f"\nCAPSOLVER_API_KEY={capsolver_key}\n",
                     encoding="utf-8",
                 )
+                protect_file(ENV_PATH)
         else:
             ENV_PATH.write_text(f"# DivApply configuration\nCAPSOLVER_API_KEY={capsolver_key}\n", encoding="utf-8")
+            protect_file(ENV_PATH)
         console.print("[green]CapSolver key saved.[/green]")
     else:
         console.print("[dim]Skipped. Add CAPSOLVER_API_KEY to .env later if needed.[/dim]")

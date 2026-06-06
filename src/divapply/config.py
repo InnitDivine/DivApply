@@ -3,6 +3,7 @@
 import os
 import shutil
 from pathlib import Path
+from typing import Any
 
 # User data directory - all user-specific files live here.
 #
@@ -38,6 +39,8 @@ APPLY_WORKER_DIR = APP_DIR / "apply-workers"
 PACKAGE_DIR = Path(__file__).parent
 CONFIG_DIR = PACKAGE_DIR / "config"
 USER_CONFIG_DIR = APP_DIR / "config"
+
+_YAML_CACHE: dict[Path, tuple[int, int, dict[str, Any]]] = {}
 
 
 def resolve_config_file(name: str) -> Path:
@@ -293,7 +296,15 @@ def load_sites_config() -> dict:
     path = resolve_config_file("sites.yaml")
     if not path.exists():
         return {}
-    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    stat = path.stat()
+    cache_key = path.resolve()
+    cached = _YAML_CACHE.get(cache_key)
+    if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+        return cached[2]
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = data if isinstance(data, dict) else {}
+    _YAML_CACHE[cache_key] = (stat.st_mtime_ns, stat.st_size, data)
+    return data
 
 
 def load_credentials(path: Path | None = None) -> dict:
@@ -307,6 +318,12 @@ def load_credentials(path: Path | None = None) -> dict:
     credentials_path = path or CREDENTIALS_PATH
     if not credentials_path.exists():
         return {}
+    try:
+        from divapply.security import protect_file
+
+        protect_file(credentials_path)
+    except Exception:
+        pass
     data = yaml.safe_load(credentials_path.read_text(encoding="utf-8")) or {}
     return data if isinstance(data, dict) else {}
 
@@ -348,6 +365,7 @@ DEFAULTS = {
     "max_tailor_attempts": 5,
     "poll_interval": 60,
     "apply_timeout": 300,
+    "apply_lock_timeout": 3600,
     "viewport": "1280x900",
 }
 

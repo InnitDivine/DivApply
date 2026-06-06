@@ -9,6 +9,7 @@ from html import escape as _html_escape
 from pathlib import Path
 
 from divapply.config import TAILORED_DIR
+from divapply.security import protect_file
 
 log = logging.getLogger(__name__)
 
@@ -689,7 +690,13 @@ def render_pdf(html: str, output_path: str) -> None:
     with sync_playwright() as p:
         browser = p.chromium.launch()
         page = browser.new_page()
-        page.set_content(html, wait_until="networkidle")
+        page.route(
+            "**/*",
+            lambda route: route.abort()
+            if route.request.url.startswith(("http://", "https://"))
+            else route.continue_(),
+        )
+        page.set_content(html, wait_until="domcontentloaded")
         page.pdf(
             path=output_path,
             format="Letter",
@@ -740,12 +747,14 @@ def convert_to_pdf(
         out = output_path or text_path.with_suffix(".html")
         out = Path(out)
         out.write_text(html, encoding="utf-8")
+        protect_file(out)
         log.info("HTML generated: %s", out)
         return out
 
     out = output_path or text_path.with_suffix(".pdf")
     out = Path(out)
     render_pdf(html, str(out))
+    protect_file(out)
     log.info("PDF generated: %s", out)
     return out
 

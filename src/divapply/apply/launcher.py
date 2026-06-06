@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from rich.console import Console
@@ -36,6 +36,13 @@ from divapply.apply.chrome import (
 from divapply.apply.dashboard import (
     init_worker, update_state, add_event, get_state,
     render_full, get_totals,
+)
+from divapply.security import (
+    UnsafeUrlError,
+    collect_known_secret_values,
+    protect_file,
+    redact_known_secrets,
+    validate_external_url,
 )
 
 logger = logging.getLogger(__name__)
@@ -121,77 +128,122 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
         Job dict or None if the queue is empty.
     """
     conn = get_connection()
+    recover_stale_apply_locks(conn=conn)
     # Load blocked sites BEFORE acquiring the DB lock to avoid file I/O inside transaction
     blocked_sites, blocked_patterns = _load_blocked()
-    try:
-        conn.execute("BEGIN IMMEDIATE")
+    while True:
+        try:
+            conn.execute("BEGIN IMMEDIATE")
 
-        if target_url:
-            like = f"%{target_url.split('?')[0].rstrip('/')}%"
-            row = conn.execute("""
-                SELECT url, title, company, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path
-                FROM jobs
-                WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
-                  AND tailored_resume_path IS NOT NULL
-                  AND (apply_status IS NULL OR apply_status != 'in_progress')
-                LIMIT 1
-            """, (target_url, target_url, like, like)).fetchone()
-        else:
-            # Build parameterized filters to avoid SQL injection
-            params: list = [min_score]
-            site_clause = ""
-            if blocked_sites:
-                placeholders = ",".join("?" * len(blocked_sites))
-                site_clause = f"AND site NOT IN ({placeholders})"
-                params.extend(blocked_sites)
-            url_clauses = ""
-            if blocked_patterns:
-                url_clauses = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
-                params.extend(blocked_patterns)
-            row = conn.execute(f"""
-                SELECT url, title, company, site, application_url, tailored_resume_path,
-                       fit_score, location, full_description, cover_letter_path
-                FROM jobs
-                WHERE tailored_resume_path IS NOT NULL
-                  AND (apply_status IS NULL OR apply_status = 'failed')
-                  AND (apply_attempts IS NULL OR apply_attempts < ?)
-                  AND fit_score >= ?
-                  {site_clause}
-                  {url_clauses}
-                ORDER BY fit_score DESC, url
-                LIMIT 1
-            """, [config.DEFAULTS["max_apply_attempts"]] + params).fetchone()
+            if target_url:
+                like = f"%{target_url.split('?')[0].rstrip('/')}%"
+                row = conn.execute("""
+                    SELECT url, title, company, site, application_url, tailored_resume_path,
+                           fit_score, location, full_description, cover_letter_path
+                    FROM jobs
+                    WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
+                      AND tailored_resume_path IS NOT NULL
+                      AND (apply_status IS NULL OR apply_status IN ('failed', 'manual'))
+                    LIMIT 1
+                """, (target_url, target_url, like, like)).fetchone()
+            else:
+                # Build parameterized filters to avoid SQL injection
+                params: list = [min_score]
+                site_clause = ""
+                if blocked_sites:
+                    placeholders = ",".join("?" * len(blocked_sites))
+                    site_clause = f"AND site NOT IN ({placeholders})"
+                    params.extend(blocked_sites)
+                url_clauses = ""
+                if blocked_patterns:
+                    url_clauses = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
+                    params.extend(blocked_patterns)
+                row = conn.execute(f"""
+                    SELECT url, title, company, site, application_url, tailored_resume_path,
+                           fit_score, location, full_description, cover_letter_path
+                    FROM jobs
+                    WHERE tailored_resume_path IS NOT NULL
+                      AND (apply_status IS NULL OR apply_status = 'failed')
+                      AND (apply_attempts IS NULL OR apply_attempts < ?)
+                      AND fit_score >= ?
+                      {site_clause}
+                      {url_clauses}
+                    ORDER BY fit_score DESC, url
+                    LIMIT 1
+                """, [config.DEFAULTS["max_apply_attempts"]] + params).fetchone()
 
-        if not row:
-            conn.rollback()
-            return None
+            if not row:
+                conn.rollback()
+                return None
 
-        # Skip manual ATS sites (unsolvable CAPTCHAs)
-        from divapply.config import is_manual_ats
-        apply_url = row["application_url"] or row["url"]
-        if is_manual_ats(apply_url):
-            conn.execute(
-                "UPDATE jobs SET apply_status = 'manual', apply_error = 'manual ATS' WHERE url = ?",
-                (row["url"],),
-            )
+            from divapply.config import is_manual_ats
+            apply_url = row["application_url"] or row["url"]
+            try:
+                validate_external_url(apply_url, field="apply url")
+            except UnsafeUrlError as exc:
+                conn.execute(
+                    "UPDATE jobs SET apply_status = 'failed', apply_error = ?, apply_attempts = 99 WHERE url = ?",
+                    (f"unsafe apply URL: {exc}", row["url"]),
+                )
+                conn.commit()
+                logger.warning("Skipping unsafe apply URL for %s: %s", row["url"][:80], exc)
+                if target_url:
+                    return None
+                continue
+            if is_manual_ats(apply_url):
+                conn.execute(
+                    "UPDATE jobs SET apply_status = 'manual', apply_error = 'manual ATS' WHERE url = ?",
+                    (row["url"],),
+                )
+                conn.commit()
+                logger.info("Skipping manual ATS: %s", row["url"][:80])
+                if target_url:
+                    return None
+                continue
+
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute("""
+                UPDATE jobs SET apply_status = 'in_progress',
+                               agent_id = ?,
+                               last_attempted_at = ?
+                WHERE url = ?
+            """, (f"worker-{worker_id}", now, row["url"]))
             conn.commit()
-            logger.info("Skipping manual ATS: %s", row["url"][:80])
-            return None
 
-        now = datetime.now(timezone.utc).isoformat()
-        conn.execute("""
-            UPDATE jobs SET apply_status = 'in_progress',
-                           agent_id = ?,
-                           last_attempted_at = ?
-            WHERE url = ?
-        """, (f"worker-{worker_id}", now, row["url"]))
-        conn.commit()
+            return dict(row)
+        except Exception:
+            conn.rollback()
+            raise
 
-        return dict(row)
-    except Exception:
-        conn.rollback()
-        raise
+
+def recover_stale_apply_locks(
+    *,
+    conn=None,
+    timeout_seconds: int | None = None,
+) -> int:
+    """Recover jobs abandoned in in_progress after worker/process crashes."""
+    if conn is None:
+        conn = get_connection()
+    timeout = timeout_seconds or int(config.DEFAULTS.get("apply_lock_timeout", 3600))
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=timeout)).isoformat()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET apply_status = 'failed',
+            apply_error = 'stale in_progress lock recovered',
+            apply_attempts = COALESCE(apply_attempts, 0) + 1,
+            agent_id = NULL
+        WHERE apply_status = 'in_progress'
+          AND last_attempted_at IS NOT NULL
+          AND last_attempted_at < ?
+        """,
+        (cutoff,),
+    )
+    conn.commit()
+    recovered = cursor.rowcount
+    if recovered:
+        logger.warning("Recovered %d stale apply lock(s)", recovered)
+    return recovered
 
 
 def mark_result(url: str, status: str, error: str | None = None,
@@ -200,32 +252,62 @@ def mark_result(url: str, status: str, error: str | None = None,
     """Update a job's apply status in the database."""
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
-    if status == "applied":
-        conn.execute("""
-            UPDATE jobs SET apply_status = 'applied', applied_at = ?,
-                           apply_error = NULL, agent_id = NULL,
-                           apply_duration_ms = ?, apply_task_id = ?
-            WHERE url = ?
-        """, (now, duration_ms, task_id, url))
-        add_application_event(url, "applied", notes="Auto-apply submitted", ts=now, conn=conn)
-    else:
-        if permanent:
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if status == "applied":
             conn.execute("""
-                UPDATE jobs SET apply_status = ?, apply_error = ?,
-                               apply_attempts = 99, agent_id = NULL,
+                UPDATE jobs SET apply_status = 'applied', applied_at = ?,
+                               apply_error = NULL, agent_id = NULL,
                                apply_duration_ms = ?, apply_task_id = ?
                 WHERE url = ?
-            """, (status, error or "unknown", duration_ms, task_id, url))
+            """, (now, duration_ms, task_id, url))
+            add_application_event(url, "applied", notes="Auto-apply submitted", ts=now, conn=conn)
         else:
-            conn.execute("""
-                UPDATE jobs SET apply_status = ?, apply_error = ?,
-                               apply_attempts = COALESCE(apply_attempts, 0) + 1,
-                               agent_id = NULL,
-                               apply_duration_ms = ?, apply_task_id = ?
-                WHERE url = ?
-            """, (status, error or "unknown", duration_ms, task_id, url))
-        add_application_event(url, status, notes=error or "unknown", ts=now, conn=conn)
-    conn.commit()
+            if permanent:
+                conn.execute("""
+                    UPDATE jobs SET apply_status = ?, apply_error = ?,
+                                   apply_attempts = 99, agent_id = NULL,
+                                   apply_duration_ms = ?, apply_task_id = ?
+                    WHERE url = ?
+                """, (status, error or "unknown", duration_ms, task_id, url))
+            else:
+                conn.execute("""
+                    UPDATE jobs SET apply_status = ?, apply_error = ?,
+                                   apply_attempts = COALESCE(apply_attempts, 0) + 1,
+                                   agent_id = NULL,
+                                   apply_duration_ms = ?, apply_task_id = ?
+                    WHERE url = ?
+                """, (status, error or "unknown", duration_ms, task_id, url))
+            add_application_event(url, status, notes=error or "unknown", ts=now, conn=conn)
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to atomically record apply result for %s", url[:80])
+        conn.rollback()
+        raise
+
+
+def mark_dry_run(url: str, duration_ms: int | None = None, task_id: str | None = None) -> None:
+    """Record a completed dry run without marking the application submitted."""
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            UPDATE jobs SET apply_status = NULL,
+                           apply_error = 'dry run completed',
+                           agent_id = NULL,
+                           apply_duration_ms = ?,
+                           apply_task_id = ?
+            WHERE url = ?
+            """,
+            (duration_ms, task_id, url),
+        )
+        add_application_event(url, "dry_run", notes="Dry run completed; no application submitted", ts=now, conn=conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
 
 
 def release_lock(url: str) -> None:
@@ -252,21 +334,27 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
     """
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
-    if status == "applied":
-        conn.execute("""
-            UPDATE jobs SET apply_status = 'applied', applied_at = ?,
-                           apply_error = NULL, agent_id = NULL
-            WHERE url = ?
-        """, (now, url))
-        add_application_event(url, "applied", notes="Manually marked applied", ts=now, conn=conn)
-    else:
-        conn.execute("""
-            UPDATE jobs SET apply_status = 'failed', apply_error = ?,
-                           apply_attempts = 99, agent_id = NULL
-            WHERE url = ?
-        """, (reason or "manual", url))
-        add_application_event(url, "failed", notes=reason or "manual", ts=now, conn=conn)
-    conn.commit()
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        if status == "applied":
+            conn.execute("""
+                UPDATE jobs SET apply_status = 'applied', applied_at = ?,
+                               apply_error = NULL, agent_id = NULL
+                WHERE url = ?
+            """, (now, url))
+            add_application_event(url, "applied", notes="Manually marked applied", ts=now, conn=conn)
+        else:
+            conn.execute("""
+                UPDATE jobs SET apply_status = 'failed', apply_error = ?,
+                               apply_attempts = 99, agent_id = NULL
+                WHERE url = ?
+            """, (reason or "manual", url))
+            add_application_event(url, "failed", notes=reason or "manual", ts=now, conn=conn)
+        conn.commit()
+    except Exception:
+        logger.exception("Failed to atomically mark job %s as %s", url[:80], status)
+        conn.rollback()
+        raise
 
 
 def reset_failed() -> int:
@@ -500,6 +588,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
     site_slug = (job.get("site") or "unknown")[:20].replace(" ", "_")
     prompt_file = config.LOG_DIR / f"prompt_{site_slug}_{job['title'][:30].replace(' ', '_')}.txt"
     prompt_file.write_text(prompt, encoding="utf-8")
+    protect_file(prompt_file)
 
     port = BASE_CDP_PORT + worker_id
     worker_profile_dir = setup_worker_profile(worker_id, browser)
@@ -515,6 +604,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
         ),
         encoding="utf-8",
     )
+    protect_file(mcp_path)
     return prompt_file
 
 
@@ -549,10 +639,12 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         ),
         encoding="utf-8",
     )
+    protect_file(mcp_config_path)
 
     worker_dir = reset_worker_dir(worker_id)
     prompt_file = worker_dir / "apply_prompt.txt"
     prompt_file.write_text(agent_prompt, encoding="utf-8")
+    protect_file(prompt_file)
     cmd = _build_agent_command(backend, model, mcp_config_path, prompt_file)
 
     env = os.environ.copy()
@@ -570,6 +662,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     )
 
     worker_log = config.LOG_DIR / f"worker-{worker_id}.log"
+    protect_file(worker_log)
     ts_header = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     log_header = (
         f"\n{'=' * 60}\n"
@@ -586,6 +679,10 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     proc = None
     text_parts: list[str] = []
     stats: dict = {}
+    try:
+        known_secrets = collect_known_secret_values(config.load_credentials())
+    except Exception:
+        known_secrets = collect_known_secret_values()
 
     try:
         # Use argv list + stdin, never shell=True; job data can contain user or
@@ -628,7 +725,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                                 if block.get("type") == "text":
                                     text = block["text"]
                                     text_parts.append(text)
-                                    lf.write(text + "\n")
+                                    lf.write(redact_known_secrets(text, known_secrets) + "\n")
                                 elif block.get("type") == "tool_use":
                                     name = (
                                         block.get("name", "")
@@ -647,11 +744,12 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                             }
                             result_text = msg.get("result", "")
                             text_parts.append(result_text)
-                            lf.write(result_text + "\n")
+                            lf.write(redact_known_secrets(result_text, known_secrets) + "\n")
                             continue
                 text_parts.append(line)
-                lf.write(line + "\n")
-                update_state(worker_id, last_action=line[:35])
+                redacted_line = redact_known_secrets(line, known_secrets)
+                lf.write(redacted_line + "\n")
+                update_state(worker_id, last_action=redacted_line[:35])
 
         proc.wait(timeout=config.DEFAULTS["apply_timeout"])
         returncode = proc.returncode
@@ -664,7 +762,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         output = "\n".join(text_parts)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         job_log = config.LOG_DIR / f"apply_agent_{backend}_{ts}_w{worker_id}_{job.get('site', 'unknown')[:20]}.txt"
-        job_log.write_text(output, encoding="utf-8")
+        job_log.write_text(redact_known_secrets(output, known_secrets), encoding="utf-8")
+        protect_file(job_log)
 
         if stats:
             cost = stats.get("cost_usd", 0)
@@ -690,6 +789,10 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             _claude_procs.pop(worker_id, None)
         if proc is not None and proc.poll() is None:
             _kill_process_tree(proc.pid)
+        try:
+            prompt_file.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("Could not remove transient apply prompt %s", prompt_file, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -756,9 +859,13 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
                 continue
             if result == "applied":
-                mark_result(job["url"], "applied", duration_ms=duration_ms)
-                applied += 1
-                update_state(worker_id, jobs_applied=applied, jobs_done=applied + failed)
+                if dry_run:
+                    mark_dry_run(job["url"], duration_ms=duration_ms)
+                    add_event(f"[W{worker_id}] Dry run complete: {job['title'][:30]}")
+                else:
+                    mark_result(job["url"], "applied", duration_ms=duration_ms)
+                    applied += 1
+                    update_state(worker_id, jobs_applied=applied, jobs_done=applied + failed)
             else:
                 reason = result.split(":", 1)[-1] if ":" in result else result
                 mark_result(job["url"], "failed", reason,
@@ -807,6 +914,9 @@ def main(limit: int = 1, target_url: str | None = None,
 
     config.ensure_dirs()
     console = Console()
+    recovered = recover_stale_apply_locks()
+    if recovered:
+        add_event(f"Recovered {recovered} stale in-progress job(s)")
 
     effective_limit = 0 if continuous else limit
     mode_label = "continuous" if continuous else f"{limit} jobs"

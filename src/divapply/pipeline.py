@@ -45,7 +45,7 @@ def _run_discover(workers: int = 4) -> dict:
         run_discovery(workers=workers)
         stats["jobspy"] = "ok"
     except Exception as e:
-        log.error("JobSpy crawl failed: %s", e)
+        log.exception("JobSpy crawl failed")
         console.print(f"  [red]JobSpy error:[/red] {e}")
         stats["jobspy"] = f"error: {e}"
 
@@ -56,7 +56,7 @@ def _run_discover(workers: int = 4) -> dict:
         result = run_workday_discovery(workers=workers)
         stats["workday"] = result.get("status", "ok")
     except Exception as e:
-        log.error("Workday scraper failed: %s", e)
+        log.exception("Workday scraper failed")
         console.print(f"  [red]Workday error:[/red] {e}")
         stats["workday"] = f"error: {e}"
 
@@ -67,7 +67,7 @@ def _run_discover(workers: int = 4) -> dict:
         run_smart_extract(workers=workers)
         stats["smartextract"] = "ok"
     except Exception as e:
-        log.error("Smart extract failed: %s", e)
+        log.exception("Smart extract failed")
         console.print(f"  [red]Smart extract error:[/red] {e}")
         stats["smartextract"] = f"error: {e}"
 
@@ -81,7 +81,7 @@ def _run_enrich(workers: int = 1) -> dict:
         run_enrichment(workers=workers)
         return {"status": "ok"}
     except Exception as e:
-        log.error("Enrichment failed: %s", e)
+        log.exception("Enrichment failed")
         return {"status": f"error: {e}"}
 
 
@@ -94,7 +94,7 @@ def _run_score(prune_below: int = 0) -> dict:
             log.info("Pruned %d low-score jobs after scoring", result["pruned"])
         return {"status": "ok"}
     except Exception as e:
-        log.error("Scoring failed: %s", e)
+        log.exception("Scoring failed")
         return {"status": f"error: {e}"}
 
 
@@ -105,7 +105,7 @@ def _run_tailor(min_score: int = 7, validation_mode: str = "normal") -> dict:
         run_tailoring(min_score=min_score, validation_mode=validation_mode, limit=0)
         return {"status": "ok"}
     except Exception as e:
-        log.error("Tailoring failed: %s", e)
+        log.exception("Tailoring failed")
         return {"status": f"error: {e}"}
 
 
@@ -116,7 +116,7 @@ def _run_cover(min_score: int = 7, validation_mode: str = "normal") -> dict:
         run_cover_letters(min_score=min_score, validation_mode=validation_mode)
         return {"status": "ok"}
     except Exception as e:
-        log.error("Cover letter generation failed: %s", e)
+        log.exception("Cover letter generation failed")
         return {"status": f"error: {e}"}
 
 
@@ -127,7 +127,7 @@ def _run_pdf() -> dict:
         batch_convert()
         return {"status": "ok"}
     except Exception as e:
-        log.error("PDF conversion failed: %s", e)
+        log.exception("PDF conversion failed")
         return {"status": f"error: {e}"}
 
 

@@ -213,6 +213,7 @@ divapply status
 divapply dashboard
 divapply explain JOB_URL
 divapply export jobs --out jobs.csv
+divapply backup
 divapply ultimate JOB_URL_OR_TITLE_FRAGMENT
 divapply apply --dry-run
 divapply apply --yes
@@ -231,5 +232,7 @@ python -m pytest -q
 Release notes: [CHANGELOG.md](CHANGELOG.md)
 
 Publishing notes: [PUBLISHING.md](PUBLISHING.md)
+
+Operations notes: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 
 AI assistance disclosure: [AI_ASSISTANCE.md](AI_ASSISTANCE.md)

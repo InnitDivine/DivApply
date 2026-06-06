@@ -25,6 +25,7 @@ from divapply.scoring.validator import (
     validate_json_fields,
     validate_tailored_resume,
 )
+from divapply.security import protect_file
 
 log = logging.getLogger(__name__)
 
@@ -736,14 +737,17 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
             # Save tailored resume text
             txt_path = TAILORED_DIR / f"{prefix}.txt"
             txt_path.write_text(tailored, encoding="utf-8")
+            protect_file(txt_path)
 
             # Save job description for traceability
             job_path = TAILORED_DIR / f"{prefix}_JOB.txt"
             job_path.write_text(_format_job_trace(job), encoding="utf-8")
+            protect_file(job_path)
 
             # Save validation report
             report_path = TAILORED_DIR / f"{prefix}_REPORT.json"
             report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+            protect_file(report_path)
 
             # Generate PDF for approved resumes (best-effort)
             # "approved_with_judge_warning" is also a success â€” resume was generated.

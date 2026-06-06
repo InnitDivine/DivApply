@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 import sqlite3
 import json
 
@@ -112,3 +113,255 @@ def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
     assert job is not None
     assert job["company"] == "Real Employer"
     assert job["site"] == "Indeed"
+
+
+def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            title TEXT,
+            company TEXT,
+            site TEXT,
+            application_url TEXT,
+            tailored_resume_path TEXT,
+            fit_score INTEGER,
+            location TEXT,
+            full_description TEXT,
+            cover_letter_path TEXT,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            last_attempted_at TEXT
+        )
+    """)
+    conn.executemany("""
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        (
+            "https://jobs.example/manual",
+            "Manual ATS",
+            "Manual Co",
+            "Indeed",
+            "https://manual.example/apply",
+            "resume.txt",
+            10,
+            "Remote",
+            "Requires manual ATS.",
+            0,
+        ),
+        (
+            "https://jobs.example/ready",
+            "Ready Role",
+            "Ready Co",
+            "Indeed",
+            "https://apply.example/ready",
+            "resume.txt",
+            9,
+            "Remote",
+            "Ready to apply.",
+            0,
+        ),
+    ])
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda url: "manual.example" in url, raising=False)
+
+    job = launcher.acquire_job(min_score=7, worker_id=4)
+
+    assert job is not None
+    assert job["url"] == "https://jobs.example/ready"
+    manual = conn.execute("SELECT apply_status FROM jobs WHERE url = ?", ("https://jobs.example/manual",)).fetchone()
+    ready = conn.execute("SELECT apply_status, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/ready",)).fetchone()
+    assert manual["apply_status"] == "manual"
+    assert ready["apply_status"] == "in_progress"
+    assert ready["agent_id"] == "worker-4"
+
+
+def test_recover_stale_apply_locks_marks_abandoned_jobs_failed() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            last_attempted_at TEXT
+        )
+    """)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+    conn.executemany(
+        "INSERT INTO jobs (url, apply_status, apply_attempts, agent_id, last_attempted_at) VALUES (?, ?, ?, ?, ?)",
+        [
+            ("https://jobs.example/stale", "in_progress", 1, "worker-1", stale),
+            ("https://jobs.example/fresh", "in_progress", 0, "worker-2", fresh),
+        ],
+    )
+    conn.commit()
+
+    recovered = launcher.recover_stale_apply_locks(conn=conn, timeout_seconds=3600)
+
+    stale_row = conn.execute("SELECT apply_status, apply_error, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/stale",)).fetchone()
+    fresh_row = conn.execute("SELECT apply_status, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/fresh",)).fetchone()
+    assert recovered == 1
+    assert stale_row["apply_status"] == "failed"
+    assert stale_row["apply_error"] == "stale in_progress lock recovered"
+    assert stale_row["apply_attempts"] == 2
+    assert stale_row["agent_id"] is None
+    assert fresh_row["apply_status"] == "in_progress"
+    assert fresh_row["apply_attempts"] == 0
+    assert fresh_row["agent_id"] == "worker-2"
+
+
+def test_mark_result_rolls_back_when_event_insert_fails(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            applied_at TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            apply_duration_ms INTEGER,
+            apply_task_id TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO jobs (url, apply_status, apply_attempts, agent_id) VALUES (?, ?, ?, ?)",
+        ("https://jobs.example/rollback", "in_progress", 0, "worker-1"),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+
+    def fail_event(*args, **kwargs):
+        raise RuntimeError("event store unavailable")
+
+    monkeypatch.setattr(launcher, "add_application_event", fail_event)
+
+    try:
+        launcher.mark_result("https://jobs.example/rollback", "applied", duration_ms=100)
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("mark_result should raise when lifecycle event insert fails")
+
+    row = conn.execute("SELECT apply_status, applied_at, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/rollback",)).fetchone()
+    assert row["apply_status"] == "in_progress"
+    assert row["applied_at"] is None
+    assert row["apply_attempts"] == 0
+    assert row["agent_id"] == "worker-1"
+
+
+def test_mark_dry_run_does_not_mark_job_applied(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            applied_at TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            apply_duration_ms INTEGER,
+            apply_task_id TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO jobs (url, apply_status, apply_attempts, agent_id) VALUES (?, ?, ?, ?)",
+        ("https://jobs.example/dry-run", "in_progress", 0, "worker-1"),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+
+    launcher.mark_dry_run("https://jobs.example/dry-run", duration_ms=2500)
+
+    row = conn.execute(
+        "SELECT apply_status, applied_at, apply_error, apply_attempts, agent_id, apply_duration_ms FROM jobs WHERE url = ?",
+        ("https://jobs.example/dry-run",),
+    ).fetchone()
+    event = conn.execute(
+        "SELECT event_type, notes FROM application_events WHERE job_url = ?",
+        ("https://jobs.example/dry-run",),
+    ).fetchone()
+
+    assert row["apply_status"] is None
+    assert row["applied_at"] is None
+    assert row["apply_error"] == "dry run completed"
+    assert row["apply_attempts"] == 0
+    assert row["agent_id"] is None
+    assert row["apply_duration_ms"] == 2500
+    assert event["event_type"] == "dry_run"
+    assert "no application submitted" in event["notes"]
+
+
+def test_run_job_removes_transient_prompt_file(tmp_path, monkeypatch) -> None:
+    worker_dir = tmp_path / "worker"
+    app_dir = tmp_path / "app"
+    log_dir = tmp_path / "logs"
+    profile_dir = tmp_path / "profile"
+    app_dir.mkdir()
+    log_dir.mkdir()
+    profile_dir.mkdir()
+
+    class FakeStdIn:
+        def write(self, text: str) -> None:
+            self.text = text
+
+        def close(self) -> None:
+            pass
+
+    class FakeProc:
+        def __init__(self, *args, **kwargs) -> None:
+            self.stdin = FakeStdIn()
+            self.stdout = iter(["RESULT:APPLIED\n"])
+            self.returncode = 0
+            self.pid = 12345
+
+        def wait(self, timeout: int | None = None) -> None:
+            return None
+
+        def poll(self) -> int:
+            return 0
+
+    monkeypatch.setattr(launcher.config, "APP_DIR", app_dir)
+    monkeypatch.setattr(launcher.config, "LOG_DIR", log_dir)
+    monkeypatch.setattr(launcher.config, "load_credentials", lambda: {})
+    monkeypatch.setattr(launcher.prompt_mod, "build_prompt", lambda **kwargs: "prompt with secret")
+    monkeypatch.setattr(launcher, "setup_worker_profile", lambda worker_id, browser: profile_dir)
+    monkeypatch.setattr(launcher, "reset_worker_dir", lambda worker_id: worker_dir)
+    monkeypatch.setattr(launcher, "_build_agent_command", lambda *args, **kwargs: ["fake-agent"])
+    monkeypatch.setattr(launcher.subprocess, "Popen", FakeProc)
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+    monkeypatch.setattr(launcher, "get_state", lambda worker_id: None)
+
+    worker_dir.mkdir()
+    job = {
+        "url": "https://jobs.example/1",
+        "title": "Support Analyst",
+        "company": "Example",
+        "site": "Example ATS",
+        "application_url": "https://jobs.example/1/apply",
+        "fit_score": 9,
+        "tailored_resume_path": str(tmp_path / "resume.pdf"),
+    }
+
+    status, _ = launcher.run_job(job, port=9222, worker_id=0)
+
+    assert status == "applied"
+    assert not (worker_dir / "apply_prompt.txt").exists()

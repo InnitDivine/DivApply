@@ -16,12 +16,15 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from html.parser import HTMLParser
+from urllib.parse import urlparse
 
 import yaml
 
 from divapply import config
 from divapply.config import resolve_config_file
 from divapply.database import get_connection, init_db
+from divapply.discovery.filters import load_location_filter, load_title_excludes, location_ok, title_ok
+from divapply.security import UnsafeUrlError, safe_join_external_url, sanitize_external_url, validate_external_url
 
 log = logging.getLogger(__name__)
 
@@ -42,48 +45,22 @@ def load_employers() -> dict:
 
 def _load_location_filter(search_cfg: dict | None = None):
     """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-
-    accept = search_cfg.get("location_accept", [])
-    reject = search_cfg.get("location_reject_non_remote", [])
-    return accept, reject
+    return load_location_filter(search_cfg)
 
 
 def _load_title_excludes(search_cfg: dict | None = None) -> list[str]:
     """Load title exclusion patterns from search config (case-insensitive)."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-    return [t.lower() for t in search_cfg.get("exclude_titles", [])]
+    return load_title_excludes(search_cfg)
 
 
 def _title_ok(title: str | None, excludes: list[str]) -> bool:
     """Return False if title matches any exclude pattern."""
-    if not title or not excludes:
-        return True
-    t = title.lower()
-    return not any(ex in t for ex in excludes)
+    return title_ok(title, excludes)
 
 
 def _location_ok(location: str | None, accept: list[str], reject: list[str]) -> bool:
     """Check if a job location passes the user's location filter."""
-    if not location:
-        return True
-
-    loc = location.lower()
-
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-
-    for r in reject:
-        if r.lower() in loc:
-            return False
-
-    for a in accept:
-        if a.lower() in loc:
-            return True
-
-    return False
+    return location_ok(location, accept, reject)
 
 
 # -- HTML stripper -----------------------------------------------------------
@@ -170,7 +147,8 @@ def _urlopen(req, timeout=30):
 
 def workday_search(employer: dict, search_text: str, limit: int = 20, offset: int = 0) -> dict:
     """Search jobs via Workday CXS API. Returns JSON with total + jobPostings."""
-    url = f"{employer['base_url']}/wday/cxs/{employer['tenant']}/{employer['site_id']}/jobs"
+    base_url = validate_external_url(employer["base_url"], field=f"{employer.get('name', 'employer')} base_url")
+    url = f"{base_url.rstrip('/')}/wday/cxs/{employer['tenant']}/{employer['site_id']}/jobs"
     payload = json.dumps({
         "appliedFacets": {},
         "limit": limit,
@@ -189,7 +167,9 @@ def workday_search(employer: dict, search_text: str, limit: int = 20, offset: in
 
 def workday_detail(employer: dict, external_path: str) -> dict:
     """Fetch full job detail via Workday CXS API."""
-    url = f"{employer['base_url']}/wday/cxs/{employer['tenant']}/{employer['site_id']}{external_path}"
+    base_path = f"wday/cxs/{employer['tenant']}/{employer['site_id']}/"
+    clean_external_path = str(external_path or "").lstrip("/")
+    url = safe_join_external_url(employer["base_url"], base_path + clean_external_path, field="workday detail url")
 
     req = urllib.request.Request(url)
     req.add_header("Accept", "application/json")
@@ -322,11 +302,24 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -
     existing = 0
 
     for job in jobs:
-        url = job.get("apply_url", "")
+        url = sanitize_external_url(job.get("apply_url", ""), field="workday apply url")
         if not url:
             emp = employers.get(job.get("employer_key", ""), {})
             if emp and job.get("external_path"):
-                url = f"{emp['base_url']}/{emp['site_id']}{job['external_path']}"
+                external_path = str(job["external_path"])
+                parsed_external_path = urlparse(external_path)
+                if parsed_external_path.scheme or parsed_external_path.netloc:
+                    log.warning("Skipping absolute Workday external_path for %s", job.get("title", "unknown"))
+                    continue
+                try:
+                    url = safe_join_external_url(
+                        emp["base_url"],
+                        f"{emp['site_id']}/{external_path.lstrip('/')}",
+                        field="workday apply url",
+                    )
+                except UnsafeUrlError as exc:
+                    log.warning("Skipping unsafe Workday URL for %s: %s", job.get("title", "unknown"), exc)
+                    url = None
         if not url:
             continue
 

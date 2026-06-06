@@ -24,6 +24,15 @@ If PyPI asks for the full workflow path, use:
 
 ## Release
 
+Before tagging, run the local checks:
+
+```bash
+python -m pytest -q
+ruff check .
+python -m build
+python -m twine check dist/*
+```
+
 Update the version in both files:
 
 ```text
@@ -52,3 +61,5 @@ python -m pip install --upgrade divapply
 divapply --version
 divapply doctor
 ```
+
+The workflow also verifies that the `v*` tag matches both version files before publishing.

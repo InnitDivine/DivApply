@@ -6,6 +6,10 @@ on:
       - "v*"
   workflow_dispatch:
 
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -24,15 +28,42 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Install build tools
-        run: python -m pip install --upgrade build twine
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Validate release version
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: python
+        run: |
+          import pathlib
+          import re
+          import tomllib
+
+          tag_version = "${{ github.ref_name }}".removeprefix("v")
+          pyproject_version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          init_text = pathlib.Path("src/divapply/__init__.py").read_text()
+          init_version = re.search(r'__version__\s*=\s*"([^"]+)"', init_text).group(1)
+
+          if tag_version != pyproject_version or tag_version != init_version:
+              raise SystemExit(
+                  f"Version mismatch: tag={tag_version}, pyproject={pyproject_version}, __init__={init_version}"
+              )
 
       - name: Build package
         run: python -m build
 
       - name: Check package metadata
         run: python -m twine check dist/*
+
+      - name: Smoke test built wheel
+        run: |
+          python -m venv .venv-smoke
+          . .venv-smoke/bin/activate
+          python -m pip install dist/*.whl
+          divapply --version
+          divapply selfcheck
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1

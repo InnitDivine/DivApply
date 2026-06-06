@@ -29,7 +29,15 @@ from playwright.sync_api import sync_playwright
 from divapply import config
 from divapply.config import resolve_config_file
 from divapply.database import init_db, get_stats
+from divapply.discovery.filters import (
+    load_location_filter,
+    load_title_excludes,
+    location_ok,
+    term_in_text,
+    title_ok,
+)
 from divapply.llm import get_client
+from divapply.security import UnsafeUrlError, sanitize_external_url, validate_external_url
 
 log = logging.getLogger(__name__)
 
@@ -69,12 +77,7 @@ def _save_plan_cache(cache: dict) -> None:
 
 def _load_location_filter(search_cfg: dict | None = None):
     """Load location accept/reject lists from search config."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-    location_cfg = search_cfg.get("location", {}) or {}
-    accept = search_cfg.get("location_accept") or location_cfg.get("accept_patterns") or []
-    reject = search_cfg.get("location_reject_non_remote") or location_cfg.get("reject_patterns") or []
-    return accept, reject
+    return load_location_filter(search_cfg)
 
 
 def _location_ok(
@@ -85,44 +88,22 @@ def _location_ok(
     allow_unknown: bool = True,
 ) -> bool:
     """Check if a job location passes the user's location filter."""
-    if not location:
-        return allow_unknown
-    loc = location.lower()
-    if any(r in loc for r in ("remote", "anywhere", "work from home", "wfh", "distributed")):
-        return True
-    for r in reject:
-        if _term_in_text(loc, r):
-            return False
-    for a in accept:
-        if _term_in_text(loc, a):
-            return True
-    return False
+    return location_ok(location, accept, reject, allow_unknown=allow_unknown)
 
 
 def _term_in_text(text: str, term: str) -> bool:
     """Match config terms without letting short tokens hit inside words."""
-    haystack = str(text or "").lower()
-    needle = str(term).strip().lower()
-    if not needle:
-        return False
-    if re.fullmatch(r"[a-z0-9]+", needle):
-        return re.search(rf"\b{re.escape(needle)}\b", haystack) is not None
-    return needle in haystack
+    return term_in_text(text, term)
 
 
 def _load_title_excludes(search_cfg: dict | None = None) -> list[str]:
     """Load title exclusion patterns from search config (case-insensitive)."""
-    if search_cfg is None:
-        search_cfg = config.load_search_config()
-    return [t.lower() for t in search_cfg.get("exclude_titles", [])]
+    return load_title_excludes(search_cfg)
 
 
 def _title_ok(title: str | None, excludes: list[str]) -> bool:
     """Return False if title matches any exclude pattern."""
-    if not title or not excludes:
-        return True
-    t = title.lower()
-    return not any(ex in t for ex in excludes)
+    return title_ok(title, excludes)
 
 
 def _normalize_job_url(site: str, url: str | None) -> str | None:
@@ -131,11 +112,11 @@ def _normalize_job_url(site: str, url: str | None) -> str | None:
         return None
     raw = str(url).strip()
     if raw.startswith(("http://", "https://")):
-        return raw
+        return sanitize_external_url(raw, field="job url")
     base = config.load_base_urls().get(site)
     if not base:
-        return raw
-    return urljoin(base.rstrip("/") + "/", raw)
+        return None
+    return sanitize_external_url(urljoin(base.rstrip("/") + "/", raw), field="job url")
 
 
 def _fallback_item_url(item: dict, site: str) -> str | None:
@@ -232,6 +213,7 @@ def _store_jobs_filtered(
 def collect_page_intelligence(url: str, headless: bool = True) -> dict:
     """Load a page with Playwright and collect every signal a scraping engineer
     would look at in DevTools. Returns a structured intelligence report."""
+    url = validate_external_url(url, field="site url")
     intel: dict = {
         "url": url,
         "json_ld": [],
@@ -826,7 +808,7 @@ def resolve_json_path_raw(data, path: str):
             else:
                 current = current[part]
         return current
-    except (KeyError, IndexError, TypeError):
+    except (KeyError, IndexError, TypeError, ValueError):
         return None
 
 
@@ -853,7 +835,7 @@ def resolve_json_path(data, path: str):
                 return ", ".join(str(item.get("name", item.get("text", ""))) for item in current[:3])
             return ", ".join(str(x) for x in current[:3])
         return str(current) if current else None
-    except (KeyError, IndexError, TypeError):
+    except (KeyError, IndexError, TypeError, ValueError):
         return None
 
 
@@ -1179,17 +1161,27 @@ def build_scrape_targets(
                 expanded_url = expanded_url.replace("{query_encoded}", quote_plus(query))
                 expanded_url = expanded_url.replace("{query}", quote_plus(query))
                 expanded_url = expanded_url.replace("{location_encoded}", quote_plus(default_location))
+                try:
+                    safe_url = validate_external_url(expanded_url, field=f"{site_name} url")
+                except UnsafeUrlError as exc:
+                    log.warning("Skipping unsafe site target %s: %s", site_name, exc)
+                    continue
                 targets.append({
                     "name": site_name,
-                    "url": expanded_url,
+                    "url": safe_url,
                     "query": query,
                 })
         else:
             expanded_url = site_url
             expanded_url = expanded_url.replace("{location_encoded}", quote_plus(default_location))
+            try:
+                safe_url = validate_external_url(expanded_url, field=f"{site_name} url")
+            except UnsafeUrlError as exc:
+                log.warning("Skipping unsafe site target %s: %s", site_name, exc)
+                continue
             targets.append({
                 "name": site_name,
-                "url": expanded_url,
+                "url": safe_url,
                 "query": None,
             })
 

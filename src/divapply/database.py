@@ -5,20 +5,39 @@ pipeline stage are created up front so any stage can run independently
 without migration ordering issues.
 """
 
-import json
 import hashlib
+import json
+import logging
 import re
 import sqlite3
 import threading
-from datetime import datetime, timezone
+from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Iterator
 
 from divapply.config import DB_PATH, LEGACY_DB_PATH
 from divapply.migrations import run_migrations
 
+log = logging.getLogger(__name__)
+
 # Thread-local connection storage â€” each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
+
+
+@contextmanager
+def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """Commit a DB mutation atomically, rolling back only transactions we start."""
+    already_in_transaction = conn.in_transaction
+    try:
+        yield
+        if not already_in_transaction:
+            conn.commit()
+    except Exception:
+        if not already_in_transaction:
+            conn.rollback()
+        raise
 
 
 def _resolve_db_path(db_path: Path | str | None = None) -> Path:
@@ -281,6 +300,20 @@ def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
 
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_canonical_key ON jobs(canonical_key)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_apply_status ON jobs(apply_status)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_site ON jobs(site)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_detail_pending ON jobs(detail_scraped_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_score_pending ON jobs(full_description, fit_score)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_fit_discovered ON jobs(fit_score, discovered_at)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_tailor_pending ON jobs(fit_score, tailored_resume_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_cover_pending ON jobs(tailored_resume_path, cover_letter_path)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_apply_ready ON jobs(tailored_resume_path, applied_at, application_url)")
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_canonical_key_unique "
+            "ON jobs(canonical_key) WHERE canonical_key IS NOT NULL"
+        )
+    except sqlite3.IntegrityError:
+        log.warning("Existing duplicate canonical job keys prevent unique dedup index creation")
     conn.commit()
 
 
@@ -324,16 +357,16 @@ def backfill_application_events(conn: sqlite3.Connection | None = None) -> int:
     """).fetchall()
 
     inserted = 0
-    for row in rows:
-        conn.execute(
-            """
-            INSERT INTO application_events (job_url, event_type, ts, notes)
-            VALUES (?, 'applied', ?, ?)
-            """,
-            (row["url"], row["applied_at"], "Backfilled from jobs.applied_at"),
-        )
-        inserted += 1
-    conn.commit()
+    with _transaction(conn):
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO application_events (job_url, event_type, ts, notes)
+                VALUES (?, 'applied', ?, ?)
+                """,
+                (row["url"], row["applied_at"], "Backfilled from jobs.applied_at"),
+            )
+            inserted += 1
     return inserted
 
 
@@ -352,37 +385,41 @@ def add_application_event(
 
     ensure_application_events_table(conn)
     event = event_type.strip().lower().replace("-", "_")
-    now = ts or datetime.now(timezone.utc).isoformat()
-    cursor = conn.execute(
-        """
-        INSERT INTO application_events (job_url, event_type, ts, notes, follow_up_at)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        (job_url, event, now, notes, follow_up_at),
-    )
+    if not event:
+        raise ValueError("event_type must not be empty")
 
-    status_map = {
-        "applied": "applied",
-        "screening": "screening",
-        "interview": "interview",
-        "offer": "offer",
-        "rejection": "rejected",
-        "rejected": "rejected",
-        "withdrawn": "withdrawn",
-        "failed": "failed",
-    }
-    if event in status_map:
-        applied_at_sql = ", applied_at = COALESCE(applied_at, ?)" if event == "applied" else ""
-        params: tuple
-        if event == "applied":
-            params = (status_map[event], now, job_url)
-        else:
-            params = (status_map[event], job_url)
-        conn.execute(
-            f"UPDATE jobs SET apply_status = ?{applied_at_sql} WHERE url = ?",
-            params,
+    now = ts or datetime.now(timezone.utc).isoformat()
+
+    with _transaction(conn):
+        cursor = conn.execute(
+            """
+            INSERT INTO application_events (job_url, event_type, ts, notes, follow_up_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (job_url, event, now, notes, follow_up_at),
         )
-    conn.commit()
+
+        status_map = {
+            "applied": "applied",
+            "screening": "screening",
+            "interview": "interview",
+            "offer": "offer",
+            "rejection": "rejected",
+            "rejected": "rejected",
+            "withdrawn": "withdrawn",
+            "failed": "failed",
+        }
+        if event in status_map:
+            applied_at_sql = ", applied_at = COALESCE(applied_at, ?)" if event == "applied" else ""
+            params: tuple
+            if event == "applied":
+                params = (status_map[event], now, job_url)
+            else:
+                params = (status_map[event], job_url)
+            conn.execute(
+                f"UPDATE jobs SET apply_status = ?{applied_at_sql} WHERE url = ?",
+                params,
+            )
     return int(cursor.lastrowid)
 
 
@@ -435,12 +472,35 @@ def get_application_analytics(conn: sqlite3.Connection | None = None) -> dict:
         ORDER BY count DESC
         """
     ).fetchall()
-    due = get_due_followups(conn=conn)
     return {
         "states": [(row["state"], row["count"]) for row in state_rows],
         "events": [(row["event_type"], row["count"]) for row in event_rows],
-        "due_followups": len(due),
+        "due_followups": count_due_followups(conn=conn),
     }
+
+
+def count_due_followups(
+    *,
+    today: str | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> int:
+    """Return the number of active lifecycle follow-ups due today or earlier."""
+    if conn is None:
+        conn = get_connection()
+
+    ensure_application_events_table(conn)
+    cutoff = today or datetime.now(timezone.utc).date().isoformat()
+    return int(conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM application_events e
+        LEFT JOIN jobs j ON j.url = e.job_url
+        WHERE e.follow_up_at IS NOT NULL
+          AND e.follow_up_at <= ?
+          AND COALESCE(j.apply_status, '') NOT IN ('rejected', 'withdrawn', 'failed')
+        """,
+        (cutoff,),
+    ).fetchone()[0])
 
 
 def get_application_timeline(job_url: str, conn: sqlite3.Connection | None = None) -> list[dict]:
@@ -782,39 +842,60 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     if conn is None:
         conn = get_connection()
 
-    stats: dict = {}
-
-    # Total jobs
-    stats["total"] = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+    stale_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=3600)).isoformat()
+    count_row = conn.execute(
+        """
+        SELECT
+            COUNT(*) AS total,
+            SUM(CASE WHEN detail_scraped_at IS NULL THEN 1 ELSE 0 END) AS pending_detail,
+            SUM(CASE WHEN full_description IS NOT NULL THEN 1 ELSE 0 END) AS with_description,
+            SUM(CASE WHEN detail_error IS NOT NULL THEN 1 ELSE 0 END) AS detail_errors,
+            SUM(CASE WHEN fit_score IS NOT NULL THEN 1 ELSE 0 END) AS scored,
+            SUM(CASE WHEN full_description IS NOT NULL AND fit_score IS NULL THEN 1 ELSE 0 END) AS unscored,
+            SUM(CASE WHEN tailored_resume_path IS NOT NULL THEN 1 ELSE 0 END) AS tailored,
+            SUM(CASE
+                WHEN fit_score >= 7
+                 AND full_description IS NOT NULL
+                 AND tailored_resume_path IS NULL
+                THEN 1 ELSE 0
+            END) AS untailored_eligible,
+            SUM(CASE
+                WHEN COALESCE(tailor_attempts, 0) >= 5
+                 AND tailored_resume_path IS NULL
+                THEN 1 ELSE 0
+            END) AS tailor_exhausted,
+            SUM(CASE WHEN cover_letter_path IS NOT NULL THEN 1 ELSE 0 END) AS with_cover_letter,
+            SUM(CASE
+                WHEN COALESCE(cover_attempts, 0) >= 5
+                 AND (cover_letter_path IS NULL OR cover_letter_path = '')
+                THEN 1 ELSE 0
+            END) AS cover_exhausted,
+            SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied,
+            SUM(CASE WHEN apply_error IS NOT NULL THEN 1 ELSE 0 END) AS apply_errors,
+            SUM(CASE WHEN apply_status = 'in_progress' THEN 1 ELSE 0 END) AS apply_in_progress,
+            SUM(CASE
+                WHEN apply_status = 'in_progress'
+                 AND last_attempted_at IS NOT NULL
+                 AND last_attempted_at < ?
+                THEN 1 ELSE 0
+            END) AS stale_apply_locks,
+            SUM(CASE
+                WHEN tailored_resume_path IS NOT NULL
+                 AND applied_at IS NULL
+                 AND COALESCE(application_url, '') != ''
+                THEN 1 ELSE 0
+            END) AS ready_to_apply
+        FROM jobs
+        """,
+        (stale_cutoff,),
+    ).fetchone()
+    stats: dict = {key: int(count_row[key] or 0) for key in count_row.keys()}
 
     # By site breakdown
     rows = conn.execute(
         "SELECT site, COUNT(*) as cnt FROM jobs GROUP BY site ORDER BY cnt DESC"
     ).fetchall()
     stats["by_site"] = [(row[0], row[1]) for row in rows]
-
-    # Enrichment stage
-    stats["pending_detail"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL"
-    ).fetchone()[0]
-
-    stats["with_description"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL"
-    ).fetchone()[0]
-
-    stats["detail_errors"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE detail_error IS NOT NULL"
-    ).fetchone()[0]
-
-    # Scoring stage
-    stats["scored"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL"
-    ).fetchone()[0]
-
-    stats["unscored"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE full_description IS NOT NULL AND fit_score IS NULL"
-    ).fetchone()[0]
 
     # Score distribution
     dist_rows = conn.execute(
@@ -824,52 +905,8 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     ).fetchall()
     stats["score_distribution"] = [(row[0], row[1]) for row in dist_rows]
 
-    # Tailoring stage
-    stats["tailored"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL"
-    ).fetchone()[0]
-
-    stats["untailored_eligible"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE fit_score >= 7 AND full_description IS NOT NULL "
-        "AND tailored_resume_path IS NULL"
-    ).fetchone()[0]
-
-    stats["tailor_exhausted"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE COALESCE(tailor_attempts, 0) >= 5 "
-        "AND tailored_resume_path IS NULL"
-    ).fetchone()[0]
-
-    # Cover letter stage
-    stats["with_cover_letter"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE cover_letter_path IS NOT NULL"
-    ).fetchone()[0]
-
-    stats["cover_exhausted"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE COALESCE(cover_attempts, 0) >= 5 "
-        "AND (cover_letter_path IS NULL OR cover_letter_path = '')"
-    ).fetchone()[0]
-
-    # Application stage
-    stats["applied"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE applied_at IS NOT NULL"
-    ).fetchone()[0]
-
-    stats["apply_errors"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE apply_error IS NOT NULL"
-    ).fetchone()[0]
-
-    stats["ready_to_apply"] = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE tailored_resume_path IS NOT NULL "
-        "AND applied_at IS NULL "
-        "AND COALESCE(application_url, '') != ''"
-    ).fetchone()[0]
-
     try:
-        stats["due_followups"] = get_application_analytics(conn)["due_followups"]
+        stats["due_followups"] = count_due_followups(conn=conn)
     except Exception:
         stats["due_followups"] = 0
 
@@ -912,35 +949,74 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
     new = 0
     existing = 0
 
-    for job in jobs:
-        url = job.get("url")
-        if not url:
-            continue
-        title = job.get("title")
-        company = job.get("company")
-        location = job.get("location")
-        canonical_key = canonical_job_key(title, company, location)
-        if canonical_key:
-            found = conn.execute(
-                "SELECT 1 FROM jobs WHERE canonical_key = ? LIMIT 1",
-                (canonical_key,),
-            ).fetchone()
-            if found:
-                existing += 1
+    with _transaction(conn):
+        for job in jobs:
+            url = job.get("url")
+            if not url:
                 continue
-        try:
-            conn.execute(
-                "INSERT INTO jobs (url, canonical_key, title, company, salary, description, location, site, strategy, discovered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, canonical_key, title, company, job.get("salary"), job.get("description"),
-                 location, site, strategy, now),
-            )
-            new += 1
-        except sqlite3.IntegrityError:
-            existing += 1
-
-    conn.commit()
+            title = job.get("title")
+            company = job.get("company")
+            location = job.get("location")
+            canonical_key = canonical_job_key(title, company, location)
+            if canonical_key:
+                found = conn.execute(
+                    "SELECT 1 FROM jobs WHERE canonical_key = ? LIMIT 1",
+                    (canonical_key,),
+                ).fetchone()
+                if found:
+                    existing += 1
+                    continue
+            try:
+                conn.execute(
+                    """
+                    INSERT INTO jobs (
+                        url, canonical_key, title, company, salary, description,
+                        location, site, strategy, discovered_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        url,
+                        canonical_key,
+                        title,
+                        company,
+                        job.get("salary"),
+                        job.get("description"),
+                        location,
+                        site,
+                        strategy,
+                        now,
+                    ),
+                )
+                new += 1
+            except sqlite3.IntegrityError:
+                existing += 1
     return new, existing
+
+
+_STAGE_CONDITIONS = {
+    "discovered": "1=1",
+    "pending_detail": "detail_scraped_at IS NULL",
+    "enriched": "full_description IS NOT NULL",
+    "pending_score": "full_description IS NOT NULL AND fit_score IS NULL",
+    "scored": "fit_score IS NOT NULL",
+    "pending_tailor": (
+        "fit_score >= ? AND full_description IS NOT NULL "
+        "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
+    ),
+    "tailored": "tailored_resume_path IS NOT NULL",
+    "pending_cover": (
+        "fit_score >= ? AND full_description IS NOT NULL "
+        "AND tailored_resume_path IS NOT NULL "
+        "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
+        "AND COALESCE(cover_attempts, 0) < 5"
+    ),
+    "pending_apply": (
+        "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
+        "AND COALESCE(application_url, '') != ''"
+    ),
+    "applied": "applied_at IS NOT NULL",
+}
 
 
 def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
@@ -961,31 +1037,15 @@ def get_jobs_by_stage(conn: sqlite3.Connection | None = None,
     if conn is None:
         conn = get_connection()
 
-    conditions = {
-        "discovered": "1=1",
-        "pending_detail": "detail_scraped_at IS NULL",
-        "enriched": "full_description IS NOT NULL",
-        "pending_score": "full_description IS NOT NULL AND fit_score IS NULL",
-        "scored": "fit_score IS NOT NULL",
-        "pending_tailor": (
-            "fit_score >= ? AND full_description IS NOT NULL "
-            "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
-        ),
-        "tailored": "tailored_resume_path IS NOT NULL",
-        "pending_cover": (
-            "fit_score >= ? AND full_description IS NOT NULL "
-            "AND tailored_resume_path IS NOT NULL "
-            "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
-            "AND COALESCE(cover_attempts, 0) < 5"
-        ),
-        "pending_apply": (
-            "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
-            "AND COALESCE(application_url, '') != ''"
-        ),
-        "applied": "applied_at IS NOT NULL",
-    }
+    try:
+        where = _STAGE_CONDITIONS[stage]
+    except KeyError as exc:
+        valid = ", ".join(sorted(_STAGE_CONDITIONS))
+        raise ValueError(f"Unknown job stage '{stage}'. Valid stages: {valid}") from exc
 
-    where = conditions.get(stage, "1=1")
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+
     params: list = []
 
     if "?" in where and min_score is not None:

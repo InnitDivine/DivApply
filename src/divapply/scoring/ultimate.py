@@ -12,6 +12,7 @@ from pathlib import Path
 from divapply.config import RESUME_PATH, TAILORED_DIR, ensure_dirs, load_env, load_profile
 from divapply.database import get_connection, init_db
 from divapply.scoring.tailor import _format_job_trace, tailor_resume
+from divapply.security import protect_file
 
 log = logging.getLogger(__name__)
 
@@ -105,6 +106,9 @@ def generate_targeted_resume(
     txt_path.write_text(tailored, encoding="utf-8")
     job_path.write_text(_format_job_trace(job), encoding="utf-8")
     report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    protect_file(txt_path)
+    protect_file(job_path)
+    protect_file(report_path)
 
     pdf_path = None
     if report.get("status") in {"approved", "approved_with_judge_warning"}:

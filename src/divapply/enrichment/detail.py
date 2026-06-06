@@ -24,6 +24,7 @@ from playwright.sync_api import sync_playwright
 
 from divapply.database import init_db
 from divapply.llm import get_client
+from divapply.security import sanitize_external_url, validate_external_url
 
 log = logging.getLogger(__name__)
 
@@ -141,13 +142,13 @@ def resolve_url(raw_url: str, site: str) -> str | None:
         return None
 
     if raw_url.startswith("http://") or raw_url.startswith("https://"):
-        return raw_url
+        return sanitize_external_url(raw_url, field="job url")
 
     if site == "WelcomeToTheJungle":
         return None
 
     if site == "Randstad Canada" and "/" not in raw_url:
-        return f"https://www.randstad.ca/jobs/search/{raw_url}"
+        return sanitize_external_url(f"https://www.randstad.ca/jobs/search/{raw_url}", field="job url")
 
     if site == "4DayWeek" and raw_url in ("/", "/jobs"):
         return None
@@ -159,7 +160,7 @@ def resolve_url(raw_url: str, site: str) -> str | None:
     if ";jsessionid=" in raw_url:
         raw_url = raw_url.split(";jsessionid=")[0]
 
-    return urljoin(base, raw_url)
+    return sanitize_external_url(urljoin(base, raw_url), field="job url")
 
 
 def resolve_all_urls(conn: sqlite3.Connection) -> dict:
@@ -350,7 +351,7 @@ def extract_from_json_ld(intel: dict) -> dict | None:
 
         return {
             "full_description": desc_clean,
-            "application_url": apply_url,
+            "application_url": sanitize_external_url(apply_url, field="apply url"),
         }
 
     return None
@@ -403,19 +404,26 @@ DESCRIPTION_SELECTORS = [
 
 def extract_apply_url_deterministic(page) -> str | None:
     """Try known CSS patterns for apply buttons/links."""
+    def clean_href(href: str | None) -> str | None:
+        if not href or href == "#" or href.lower().startswith("javascript:"):
+            return None
+        return sanitize_external_url(urljoin(page.url, href), field="apply url")
+
     for sel in APPLY_SELECTORS:
         try:
             el = page.query_selector(sel)
             if el:
                 href = el.get_attribute("href")
-                if href and href != "#":
-                    return href
+                cleaned = clean_href(href)
+                if cleaned:
+                    return cleaned
                 tag = el.evaluate("el => el.tagName.toLowerCase()")
                 if tag == "button":
                     parent_href = el.evaluate("el => el.parentElement?.querySelector('a')?.href || null")
-                    if parent_href:
-                        return parent_href
-                    return page.url
+                    cleaned = clean_href(parent_href)
+                    if cleaned:
+                        return cleaned
+                    return sanitize_external_url(page.url, field="apply url")
         except Exception:
             continue
 
@@ -425,8 +433,9 @@ def extract_apply_url_deterministic(page) -> str | None:
             text = link.inner_text().strip().lower()
             if "apply" in text and len(text) < 50:
                 href = link.get_attribute("href")
-                if href and href != "#" and "javascript:" not in href:
-                    return href
+                cleaned = clean_href(href)
+                if cleaned:
+                    return cleaned
     except Exception:
         pass
 
@@ -558,7 +567,8 @@ def extract_with_llm(page, url: str) -> dict:
         if desc:
             desc = clean_description(desc)
 
-        return {"full_description": desc, "application_url": apply_url}
+        safe_apply_url = sanitize_external_url(urljoin(url, apply_url), field="apply url") if apply_url else None
+        return {"full_description": desc, "application_url": safe_apply_url}
     except Exception as e:
         log.error("LLM ERROR: %s", e)
         return {"full_description": None, "application_url": None}
@@ -621,6 +631,7 @@ def scrape_detail_page(page, url: str) -> dict:
     t0 = time.time()
 
     try:
+        url = validate_external_url(url, field="job url")
         resp = page.goto(url, timeout=45000)
         if resp and resp.status in PERMANENT_FAILURES:
             result["error"] = f"HTTP {resp.status}"
@@ -756,11 +767,13 @@ def scrape_site_batch(
                         (result.get("error", "unknown"), now, url),
                     )
 
-                conn.commit()
+                if stats["processed"] % 10 == 0:
+                    conn.commit()
 
                 if i < len(jobs) - 1:
                     time.sleep(delay)
 
+            conn.commit()
             browser.close()
     finally:
         if own_conn:

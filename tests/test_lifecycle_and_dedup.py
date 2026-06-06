@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from divapply.database import (
     add_application_event,
     canonical_job_key,
@@ -145,4 +149,58 @@ def test_get_jobs_by_stage_pending_cover_treats_empty_path_as_missing(tmp_path) 
     rows = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
 
     assert [row["url"] for row in rows] == ["https://example.com/cover"]
+    close_connection(db_path)
+
+
+def test_get_stats_reports_apply_lock_monitoring(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    stale = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
+    fresh = datetime.now(timezone.utc).isoformat()
+    conn.executemany(
+        """
+        INSERT INTO jobs (url, title, apply_status, last_attempted_at, discovered_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        [
+            ("https://example.com/stale", "Stale", "in_progress", stale, "2026-01-01"),
+            ("https://example.com/fresh", "Fresh", "in_progress", fresh, "2026-01-01"),
+        ],
+    )
+    conn.commit()
+
+    stats = get_stats(conn)
+
+    assert stats["apply_in_progress"] == 2
+    assert stats["stale_apply_locks"] == 1
+    close_connection(db_path)
+
+
+def test_get_jobs_by_stage_rejects_unknown_stage(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    with pytest.raises(ValueError, match="Unknown job stage"):
+        get_jobs_by_stage(conn=conn, stage="everything")
+
+    close_connection(db_path)
+
+
+def test_add_application_event_rolls_back_invalid_event_type(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO jobs (url, title, discovered_at) VALUES (?, ?, ?)",
+        ("https://example.com/job", "Analyst", "2026-01-01"),
+    )
+    conn.commit()
+
+    with pytest.raises(ValueError, match="event_type"):
+        add_application_event("https://example.com/job", "", conn=conn)
+
+    count = conn.execute("SELECT COUNT(*) FROM application_events").fetchone()[0]
+    status = conn.execute("SELECT apply_status FROM jobs WHERE url = ?", ("https://example.com/job",)).fetchone()[0]
+
+    assert count == 0
+    assert status is None
     close_connection(db_path)
