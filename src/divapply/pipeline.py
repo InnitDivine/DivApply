@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 
 from rich.console import Console
@@ -26,33 +28,6 @@ from divapply.database import init_db, get_connection, get_stats
 
 log = logging.getLogger(__name__)
 console = Console()
-
-
-# ---------------------------------------------------------------------------
-# Stage definitions
-# ---------------------------------------------------------------------------
-
-STAGE_ORDER = ("discover", "enrich", "score", "tailor", "cover", "pdf")
-
-STAGE_META: dict[str, dict] = {
-    "discover": {"desc": "Job discovery (JobSpy + Workday + smart extract)"},
-    "enrich":   {"desc": "Detail enrichment (full descriptions + apply URLs)"},
-    "score":    {"desc": "Hybrid scoring (keyword + embedding + LLM)"},
-    "tailor":   {"desc": "Resume tailoring (LLM + validation)"},
-    "cover":    {"desc": "Cover letter generation"},
-    "pdf":      {"desc": "PDF conversion (tailored resumes + cover letters)"},
-}
-
-# Upstream dependency: a stage only finishes when its upstream is done AND
-# it has no remaining pending work.
-_UPSTREAM: dict[str, str | None] = {
-    "discover": None,
-    "enrich":   "discover",
-    "score":    "enrich",
-    "tailor":   "score",
-    "cover":    "tailor",
-    "pdf":      "cover",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -156,15 +131,98 @@ def _run_pdf() -> dict:
         return {"status": f"error: {e}"}
 
 
-# Map stage names to their runner functions
-_STAGE_RUNNERS: dict[str, callable] = {
-    "discover": _run_discover,
-    "enrich":   _run_enrich,
-    "score":    _run_score,
-    "tailor":   _run_tailor,
-    "cover":    _run_cover,
-    "pdf":      _run_pdf,
+# ---------------------------------------------------------------------------
+# Stage registry
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class StageSpec:
+    """Declarative execution metadata for one pipeline stage."""
+
+    name: str
+    desc: str
+    runner: Callable[..., dict]
+    upstream: str | None = None
+    accepts_workers: bool = False
+    accepts_min_score: bool = False
+    accepts_validation: bool = False
+    accepts_prune_below: bool = False
+
+    def kwargs(self, *, min_score: int, workers: int, validation_mode: str, prune_below: int) -> dict:
+        """Build runner kwargs from shared pipeline options."""
+        kwargs: dict = {}
+        if self.accepts_workers:
+            kwargs["workers"] = workers
+        if self.accepts_min_score:
+            kwargs["min_score"] = min_score
+        if self.accepts_validation:
+            kwargs["validation_mode"] = validation_mode
+        if self.accepts_prune_below and prune_below > 0:
+            kwargs["prune_below"] = prune_below
+        return kwargs
+
+    def status_from(self, result: dict | None) -> str:
+        """Normalize a runner result into an orchestrator status."""
+        if not isinstance(result, dict):
+            return "ok"
+        status = result.get("status", "ok")
+        if self.name == "discover":
+            sub_errors = [
+                f"{key}: {value}" for key, value in result.items()
+                if isinstance(value, str) and value.startswith("error")
+            ]
+            if sub_errors:
+                return "partial"
+        return status
+
+
+STAGE_SPECS: dict[str, StageSpec] = {
+    "discover": StageSpec(
+        name="discover",
+        desc="Job discovery (JobSpy + Workday + smart extract)",
+        runner=_run_discover,
+        accepts_workers=True,
+    ),
+    "enrich": StageSpec(
+        name="enrich",
+        desc="Detail enrichment (full descriptions + apply URLs)",
+        runner=_run_enrich,
+        upstream="discover",
+        accepts_workers=True,
+    ),
+    "score": StageSpec(
+        name="score",
+        desc="Hybrid scoring (keyword + embedding + LLM)",
+        runner=_run_score,
+        upstream="enrich",
+        accepts_prune_below=True,
+    ),
+    "tailor": StageSpec(
+        name="tailor",
+        desc="Resume tailoring (LLM + validation)",
+        runner=_run_tailor,
+        upstream="score",
+        accepts_min_score=True,
+        accepts_validation=True,
+    ),
+    "cover": StageSpec(
+        name="cover",
+        desc="Cover letter generation",
+        runner=_run_cover,
+        upstream="tailor",
+        accepts_min_score=True,
+        accepts_validation=True,
+    ),
+    "pdf": StageSpec(
+        name="pdf",
+        desc="PDF conversion (tailored resumes + cover letters)",
+        runner=_run_pdf,
+        upstream="cover",
+    ),
 }
+
+STAGE_ORDER = tuple(STAGE_SPECS)
+STAGE_META: dict[str, dict] = {name: {"desc": spec.desc} for name, spec in STAGE_SPECS.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -272,22 +330,19 @@ def _run_stage_streaming(
     For all others: polls DB for pending work, runs the batch processor,
     and repeats until upstream is done and no pending work remains.
     """
-    runner = _STAGE_RUNNERS[stage]
-    kwargs: dict = {}
-    if stage in ("tailor", "cover"):
-        kwargs["min_score"] = min_score
-        kwargs["validation_mode"] = validation_mode
-    if stage in ("discover", "enrich"):
-        kwargs["workers"] = workers
-    if stage == "score" and prune_below > 0:
-        kwargs["prune_below"] = prune_below
-
-    upstream = _UPSTREAM[stage]
+    spec = STAGE_SPECS[stage]
+    kwargs = spec.kwargs(
+        min_score=min_score,
+        workers=workers,
+        validation_mode=validation_mode,
+        prune_below=prune_below,
+    )
+    upstream = spec.upstream
 
     if stage == "discover":
         # Discover runs once (its sub-scrapers already do their full crawl)
         try:
-            result = runner(**kwargs)
+            result = spec.runner(**kwargs)
             tracker.mark_done(stage, result)
         except Exception as e:
             log.exception("Stage '%s' crashed", stage)
@@ -306,7 +361,7 @@ def _run_stage_streaming(
 
         if pending > 0:
             try:
-                runner(**kwargs)
+                spec.runner(**kwargs)
                 passes += 1
             except Exception as e:
                 log.error("Stage '%s' error (pass %d): %s", stage, passes, e)
@@ -343,30 +398,17 @@ def _run_sequential(ordered: list[str], min_score: int, workers: int = 1,
         console.print(f"{'=' * 70}")
 
         t0 = time.time()
-        runner = _STAGE_RUNNERS[name]
+        spec = STAGE_SPECS[name]
 
         try:
-            kwargs: dict = {}
-            if name in ("tailor", "cover"):
-                kwargs["min_score"] = min_score
-                kwargs["validation_mode"] = validation_mode
-            if name in ("discover", "enrich"):
-                kwargs["workers"] = workers
-            if name == "score" and prune_below > 0:
-                kwargs["prune_below"] = prune_below
-            result = runner(**kwargs)
+            result = spec.runner(**spec.kwargs(
+                min_score=min_score,
+                workers=workers,
+                validation_mode=validation_mode,
+                prune_below=prune_below,
+            ))
             elapsed = time.time() - t0
-
-            status = "ok"
-            if isinstance(result, dict):
-                status = result.get("status", "ok")
-                if name == "discover":
-                    sub_errors = [
-                        f"{k}: {v}" for k, v in result.items()
-                        if isinstance(v, str) and v.startswith("error")
-                    ]
-                    if sub_errors:
-                        status = "partial"
+            status = spec.status_from(result)
 
         except Exception as e:
             elapsed = time.time() - t0
