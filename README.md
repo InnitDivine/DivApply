@@ -22,19 +22,36 @@ discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 
 Use Python 3.12 for the smoothest setup.
 
+Recommended CLI install with `pipx`:
+
 ```powershell
-python -m pip install --upgrade divapply
+python -m pip install --user pipx
+python -m pipx ensurepath
+pipx install "divapply[full]"
+pipx run --spec playwright playwright install chromium firefox
+divapply init
+divapply doctor
+```
+
+Virtualenv install:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install "divapply[full]"
 python -m playwright install chromium firefox
 divapply init
 divapply doctor
 ```
 
-Optional JobSpy-backed discovery:
+Install directly from GitHub before a PyPI release is available:
 
 ```powershell
-python -m pip install --no-deps python-jobspy
-python -m pip install "numpy==1.26.3" "pandas>=2.1,<3.0" markdownify regex pydantic tls-client requests
+python -m pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
 ```
+
+Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy-backed board discovery, or `divapply[full]` for both.
 
 Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code.
 
@@ -52,7 +69,7 @@ Update an existing clone:
 
 ```powershell
 git pull
-python -m pip install --upgrade divapply
+python -m pip install --upgrade -e ".[full]"
 ```
 
 ## First Run

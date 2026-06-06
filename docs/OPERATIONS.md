@@ -37,6 +37,17 @@ For PyPI releases:
 5. Push `main`, then push the tag.
 6. Verify the GitHub `Publish to PyPI` workflow and install the published wheel in a clean environment.
 
+Clean install smoke test:
+
+```bash
+python -m venv .venv-install-smoke
+. .venv-install-smoke/bin/activate
+python -m pip install --upgrade pip
+python -m pip install "divapply[full]"
+divapply --version
+divapply selfcheck
+```
+
 ## Monitoring And Logging
 
 Local health checks:

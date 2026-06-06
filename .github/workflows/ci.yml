@@ -58,6 +58,16 @@ jobs:
           python -m build
           python -m twine check dist/*
 
+      - name: Smoke test wheel install
+        run: |
+          python -m venv .venv-smoke
+          . .venv-smoke/bin/activate
+          python -m pip install --upgrade pip
+          WHEEL="$(ls dist/*.whl)"
+          python -m pip install "$WHEEL[full]"
+          divapply --version
+          divapply selfcheck
+
       - name: Upload distribution artifacts
         uses: actions/upload-artifact@v4
         with:

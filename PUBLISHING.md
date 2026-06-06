@@ -51,13 +51,19 @@ git push origin v0.4.2
 The `Publish to PyPI` workflow will build the package and publish it. After the workflow succeeds, users can install with:
 
 ```bash
-pip install divapply
+pip install "divapply[full]"
+```
+
+Before the next PyPI release, users can install the latest `main` directly from GitHub:
+
+```bash
+pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
 ```
 
 ## Verify
 
 ```bash
-python -m pip install --upgrade divapply
+python -m pip install --upgrade "divapply[full]"
 divapply --version
 divapply doctor
 ```
