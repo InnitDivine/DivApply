@@ -173,11 +173,29 @@ def _build_salary_section(profile: dict) -> str:
     Adapts floor, range, and currency from the profile's compensation section.
     """
     comp = profile["compensation"]
+    availability = profile.get("availability", {})
     currency = comp.get("salary_currency", "USD")
     floor = comp["salary_expectation"]
     range_min = comp.get("salary_range_min", floor)
     range_max = comp.get("salary_range_max", str(int(floor) + 20000) if floor.isdigit() else floor)
+    part_time_hourly = comp.get(
+        "part_time_hourly_expectation",
+        "Use the employer's posted hourly range when available.",
+    )
     conversion_note = comp.get("currency_conversion_note", "")
+    full_time_available = str(availability.get("available_for_full_time", "")).strip().lower()
+
+    if full_time_available.startswith("no"):
+        return f"""== PAY (think, don't just copy) ==
+The current target is low-hour part-time work while in school.
+
+Decision tree:
+1. Hourly part-time job with posted pay range? -> Use the MIDPOINT of the posted hourly range.
+2. Hourly part-time job with one posted rate? -> Accept the posted rate if it does not contradict the profile.
+3. Hourly part-time job with no posted pay and a free-text answer? -> Answer: "{part_time_hourly}"
+4. Hourly part-time job with no posted pay and a required number? -> Use the lowest reasonable hourly number already shown by the employer/site if available; otherwise stop for human review.
+5. Full-time salaried job? -> Do not apply unless the user explicitly selected it. If continuing by explicit instruction, use ${range_min}-${range_max} {currency}.
+6. Contractor marketplace, freelance profile, or "set your rate" flow? -> Stop as not_a_job_application."""
 
     # Compute example hourly rates at 3 salary levels
     try:
@@ -882,7 +900,7 @@ Before filling any form, spend 2 actions verifying this is a legitimate employer
 - NEVER grant camera, microphone, screen sharing, or location permissions. If a site requests them -> RESULT:FAILED:unsafe_permissions
 - NEVER do video/audio verification, selfie capture, ID photo upload, or biometric anything -> RESULT:FAILED:unsafe_verification
 - NEVER set up a freelancing profile (Mercor, Toptal, Upwork, Fiverr, Turing, etc.). These are contractor marketplaces, not job applications -> RESULT:FAILED:not_a_job_application
-- NEVER agree to hourly/contract rates, availability calendars, or "set your rate" flows. You are applying for FULL-TIME salaried positions only.
+- NEVER set up contractor/freelance hourly-rate profiles or "set your rate" marketplace flows. Normal hourly employee applications are OK when they match the profile's part-time availability.
 - NEVER install browser extensions, download executables, or run assessment software.
 - NEVER enter payment info, bank details, or SSN/SIN.
 - NEVER click "Allow" on any browser permission popup. Always deny/block.

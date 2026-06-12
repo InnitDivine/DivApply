@@ -60,15 +60,14 @@ def location_ok(
     is_remote: bool = False,
 ) -> bool:
     """Check whether a job location passes accept/reject filters."""
-    if is_remote:
-        return True
-
     if not location:
-        return allow_unknown
+        return True if is_remote else allow_unknown
 
     loc = location.lower()
     if any(term_in_text(loc, term) for term in reject):
         return False
+    if is_remote:
+        return True
     if any(term in loc for term in REMOTE_TERMS):
         return True
     return any(term_in_text(loc, term) for term in accept)

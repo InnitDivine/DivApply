@@ -92,3 +92,12 @@ def test_normalize_job_url_rejects_scheme_relative_host_override(monkeypatch) ->
     monkeypatch.setattr(config, "load_base_urls", lambda: {"Cache Site": "https://jobs.example.com/careers/"})
 
     assert smartextract._normalize_job_url("Cache Site", "//evil.example/jobs/42") is None
+
+
+def test_normalize_applicantpro_numeric_url_uses_jobs_path(monkeypatch) -> None:
+    monkeypatch.setattr(config, "load_base_urls", lambda: {"Cache County": "https://cachecounty.applicantpro.com"})
+
+    assert (
+        smartextract._normalize_job_url("Cache County", "4110020")
+        == "https://cachecounty.applicantpro.com/jobs/4110020"
+    )

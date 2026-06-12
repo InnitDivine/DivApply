@@ -116,3 +116,41 @@ def test_store_results_skips_external_path_that_overrides_base_host(tmp_path) ->
     assert (new, existing) == (0, 0)
     assert count == 0
     close_connection(db_path)
+
+
+def test_workday_title_include_filter_keeps_target_roles(monkeypatch) -> None:
+    employers = {
+        "imh": {
+            "name": "Intermountain Health",
+            "tenant": "imh",
+            "site_id": "IntermountainCareers",
+            "base_url": "https://imh.wd108.myworkdayjobs.com",
+        }
+    }
+    jobs = [
+        {"title": "Patient Service Representative", "location": "Logan", "external_path": "/patient"},
+        {"title": "Police Officer", "location": "Logan", "external_path": "/police"},
+    ]
+    captured = {}
+
+    monkeypatch.setattr(workday, "search_employer", lambda *_args, **_kwargs: list(jobs))
+    monkeypatch.setattr(workday, "fetch_details", lambda _emp, selected: selected)
+
+    def fake_store(_conn, selected, _employers):
+        captured["titles"] = [job["title"] for job in selected]
+        return len(selected), 0
+
+    monkeypatch.setattr(workday, "store_results", fake_store)
+
+    result = workday._process_one(
+        "imh",
+        employers,
+        "patient service representative",
+        True,
+        ["logan"],
+        [],
+        include_titles=["patient service"],
+    )
+
+    assert result["new"] == 1
+    assert captured["titles"] == ["Patient Service Representative"]

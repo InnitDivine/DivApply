@@ -1,249 +1,87 @@
 # DivApply search configuration
-# Copy to ~/.divapply/searches.yaml and customize for your search.
+# Copy to ~/.divapply/searches.yaml or use `divapply edit`.
 
-defaults:
-  results_per_site: 15
-  hours_old: 72
-  country_indeed: usa
-  workers: 3
-  prune_score: 3
+queries:
+  # Tier 1: best, most specific searches.
+  - query: "student assistant"
+    tier: 1
+  - query: "campus recreation"
+    tier: 1
+  - query: "front desk part time"
+    tier: 1
+
+  # Tier 2: strong adjacent matches.
+  - query: "office assistant part time"
+    tier: 2
+  - query: "receptionist part time"
+    tier: 2
+  - query: "patient access part time"
+    tier: 2
+
+  # Tier 3: broad fallback searches.
+  - query: "customer service"
+    tier: 3
+  - query: "cashier"
+    tier: 3
+  - query: "retail associate"
+    tier: 3
+
+locations:
+  - location: "Logan, UT"
+    remote: false
+  - location: "Remote"
+    remote: true
+
+location:
+  accept_patterns:
+    - "logan"
+    - "cache valley"
+    - "cache county"
+    - "remote"
+    - "anywhere"
+    - "united states"
+    - "usa"
+  reject_patterns:
+    - "ogden"
+    - "salt lake city"
+    - "idaho"
 
 country: "USA"
-
-sites:
-  - indeed
-  - linkedin
 
 boards:
   - indeed
   - linkedin
 
-locations:
-  - label: Logan UT
-    location: "Logan, UT"
-    remote: false
-  - label: Remote
-    location: "Logan, UT"
-    remote: true
-
-location_accept:
-  - logan
-  - cache valley
-  - cache county
-  - north logan
-  - hyde park
-  - providence
-  - hyrum
-  - smithfield
-  - nibley
-  - mendon
-  - millville
-  - paradise
-  - river heights
-  - wellsville
-  - cache junction
-  - newton
-  - clarkston
-  - trenton
-  - lewiston
-  - richmond
-
-location:
-  accept_patterns:
-    - logan
-    - cache valley
-    - cache county
-    - north logan
-    - hyde park
-    - providence
-    - hyrum
-    - smithfield
-    - nibley
-    - mendon
-    - millville
-    - paradise
-    - river heights
-    - wellsville
-    - cache junction
-    - newton
-    - clarkston
-    - trenton
-    - lewiston
-    - richmond
-    - remote
-    - anywhere
-    - united states
-    - usa
-  reject_patterns:
-    - brigham city
-    - ogden
-    - layton
-    - salt lake city
-    - cornish
-    - franklin
-    - preston
-    - dayton
-    - weston
-    - idaho
-    - sacramento
-    - roseville
-    - auburn
-    - california
-
-location_reject_non_remote:
-  - brigham city
-  - ogden
-  - layton
-  - salt lake city
-  - cornish
-  - franklin
-  - preston
-  - dayton
-  - weston
-  - idaho
-  - sacramento
-  - roseville
-  - auburn
-  - california
-
-glassdoor_location_map:
-  "Logan, UT": "Logan"
-
-queries:
-  - query: "IT Support"
-    tier: 1
-  - query: "IT Support Technician"
-    tier: 1
-  - query: "Help Desk"
-    tier: 1
-  - query: "Help Desk Technician"
-    tier: 1
-  - query: "Service Desk"
-    tier: 1
-  - query: "Desktop Support"
-    tier: 1
-  - query: "Technical Support"
-    tier: 1
-  - query: "Computer Support"
-    tier: 1
-  - query: "IT Technician"
-    tier: 1
-  - query: "Information Technology Specialist"
-    tier: 1
-  - query: "Technology Support Specialist"
-    tier: 1
-  - query: "Systems Support Specialist"
-    tier: 2
-  - query: "Network Support Technician"
-    tier: 2
-  - query: "Junior Systems Administrator"
-    tier: 2
-  - query: "part time customer service"
-    tier: 3
-  - query: "part time front desk"
-    tier: 3
-  - query: "part time receptionist"
-    tier: 3
-  - query: "part time office assistant"
-    tier: 3
-
-include_titles:
-  - "it support"
-  - "help desk"
-  - "helpdesk"
-  - "service desk"
-  - "desktop support"
-  - "technical support"
-  - "computer support"
-  - "technology support"
-  - "information technology"
-  - "systems support"
-  - "network support"
-  - "it technician"
-  - "it specialist"
-  - "it assistant"
-  - "computer technician"
-  - "pc technician"
-  - "technical analyst"
-  - "support technician"
-  - "support specialist"
-  - "support analyst"
-  - "technical specialist"
-  - "user support"
-  - "end user support"
-  - "systems technician"
-  - "systems administrator"
-  - "elections technical"
-  - "customer service"
-  - "front desk"
-  - "receptionist"
-  - "office assistant"
-  - "desk assistant"
+defaults:
+  results_per_site: 50
+  hours_old: 168
+  workers: 3
+  prune_score: 3
+  country_indeed: usa
 
 exclude_titles:
   - "senior"
-  - "lead "
+  - "lead"
   - "director"
   - "manager"
   - "supervisor"
-  - "chief"
-  - "vp "
-  - "vice president"
-  - "executive"
-  - "principal"
-  - "engineer"
-  - "developer"
-  - "software"
-  - "full stack"
-  - "programmer"
   - "intern"
   - "internship"
-  - "co-op"
-  - "driver"
-  - "cdl"
-  - "registered nurse"
-  - "secret clearance"
-  - "10+ years"
-  - "8+ years"
-  - "food service"
-  - "cook"
-  - "server"
-
-company_blacklist:
-  - "space dynamics laboratory"
+  - "clearance required"
 
 excluded_keywords:
   - "active top secret"
   - "top secret clearance"
   - "ts/sci"
   - "clearance required"
-  - "security clearance required"
-  - "dod clearance"
-  - "classified"
-  - "hill afb"
-  - "clearfield"
-  - "primarily on-site"
-  - "primarily onsite"
-  - "no virtual or telecommute"
-  - "no telecommute"
-  - "ogden facility"
-  - "registered nurse"
-  - "10+ years"
-  - "8+ years"
 
 customer_service_title_terms:
   - "customer service"
   - "front desk"
   - "receptionist"
   - "office assistant"
-  - "desk assistant"
+  - "cashier"
 
 customer_service_require_part_time: true
-customer_service_max_hours_per_week: 12
-
+customer_service_max_hours_per_week: 20
 allow_unknown_location: false
-trusted_local_sites:
-  - "City of Logan"
-  - "Cache County"
-  - "Utah State University"
-  - "Bridgerland Technical College"

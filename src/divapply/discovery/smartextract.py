@@ -119,6 +119,8 @@ def _normalize_job_url(site: str, url: str | None) -> str | None:
     base = config.load_base_urls().get(site)
     if not base:
         return None
+    if raw.isdigit() and "applicantpro.com" in base:
+        return sanitize_external_url(f"{base.rstrip('/')}/jobs/{raw}", field="job url")
     return sanitize_external_url(urljoin(base.rstrip("/") + "/", raw), field="job url")
 
 

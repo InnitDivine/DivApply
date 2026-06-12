@@ -15,6 +15,8 @@ none    -- validation skipped entirely; use only for debugging
 import re
 import logging
 
+from divapply.config import profile_skills
+
 log = logging.getLogger(__name__)
 
 
@@ -76,13 +78,9 @@ REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "PRO
 
 def _build_skills_set(profile: dict) -> set[str]:
     """Build the set of allowed skills from the profile's skills_boundary."""
-    boundary = profile.get("skills_boundary", {})
     allowed: set[str] = set()
-    for category in boundary.values():
-        if isinstance(category, list):
-            allowed.update(s.lower().strip() for s in category)
-        elif isinstance(category, set):
-            allowed.update(s.lower().strip() for s in category)
+    for category in profile_skills(profile).values():
+        allowed.update(s.lower().strip() for s in category)
     return allowed
 
 

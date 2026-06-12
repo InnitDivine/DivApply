@@ -10,7 +10,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from divapply.config import RESUME_PATH, load_profile
+from divapply.config import RESUME_PATH, load_profile, profile_skills
 from divapply.database import get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
 from divapply.scoring.composite import composite_score
@@ -25,16 +25,18 @@ SCORE_PROMPT = """You are a neutral job fit evaluator. Read the candidate's resu
 
 CORE POLICY:
 - Rank only job fit: verified candidate evidence against the posting's stated and clearly implied criteria.
-- Do not reward or penalize any job family, industry, employer type, schedule type, or presumed career direction.
+- When verified profile facts state the current search target, availability, schedule limits, or preferred role type, treat those as job-fit evidence.
+- Do not reward or penalize any job family, industry, employer type, or schedule type unless the profile's current search target or availability makes it relevant.
 - Use general role sense only to interpret common requirements, not to invent unstated requirements.
 - Transferable experience counts when duties, tools, domain knowledge, education, or coursework reasonably map to the job's work.
+- For entry-level, low-hour, student, customer service, cashier, front desk, office assistant, data entry, library, recreation, retail, or food service roles, do not require the same prior job title or exact industry/tool when the candidate has verified transferable public-facing service, records, payments, scheduling, data entry, or administrative experience.
 - Non-substitutable requirements such as licenses, clearances, legal credentials, completed degrees, or certifications must be treated as hard gaps when the posting requires them.
 - Preferred/nice-to-have certifications, tools, degrees, or licenses are not hard gaps. Treat them as small tie-breakers after required qualifications.
 
 SCORING CRITERIA:
 - 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
-- 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge.
-- 5-6: Moderate match. Relevant background exists but meaningful gaps in required experience or credentials.
+- 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge. For low-hour/student searches, this includes easy part-time roles that match availability, location, and transferable customer service/admin skills.
+- 5-6: Moderate match. Relevant background exists but meaningful gaps in required experience, credentials, schedule, or stated search preferences.
 - 3-4: Weak match. Some transferable skills but significant gaps. Candidate could apply but is unlikely to be competitive.
 - 1-2: Incompatible. Role requires specific licensure, certification, or field experience the candidate does not have and cannot substitute.
 
@@ -59,10 +61,11 @@ QUALIFICATION MISMATCH:
 
 IMPORTANT NOTES:
 - Judge based on the actual job description minimum qualifications, not job title alone.
-- Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family.
-- Do not artificially boost or suppress roles based on a presumed career path.
+- Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family unless the verified profile facts identify it as a current target.
+- Do not artificially boost or suppress roles based on a presumed career path; use the profile's stated current target instead.
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
 - Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
+- For entry-level part-time roles with no hard credential/license gap, no schedule conflict, and an APPLY recommendation, avoid scoring below 6 solely because the candidate lacks exact same-title experience.
 - Use only evidence from the resume, verified profile facts, profile-safe coursework summary, and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
@@ -144,8 +147,18 @@ def _build_profile_evidence_context(profile: dict) -> str:
     if isinstance(target_roles, dict):
         lines.append("Target roles: " + "; ".join(str(v) for v in target_roles.values() if v))
 
+    availability = profile.get("availability", {})
+    if isinstance(availability, dict):
+        for key, value in availability.items():
+            if value:
+                lines.append(f"{key.replace('_', ' ').title()}: {value}")
+
     if profile.get("professional_narrative"):
         lines.append(f"Professional narrative: {profile['professional_narrative']}")
+
+    summary = profile.get("summary") or profile.get("candidate_summary")
+    if summary:
+        lines.append(f"Candidate summary: {summary}")
 
     for item in profile.get("key_differentiators", []) or []:
         lines.append(f"Verified differentiator: {item}")
@@ -156,12 +169,25 @@ def _build_profile_evidence_context(profile: dict) -> str:
         if "password" not in text.lower() and "credential" not in text.lower():
             lines.append(f"Application context: {text}")
 
-    skills = profile.get("skills_boundary", {})
-    if isinstance(skills, dict):
-        for category, items in skills.items():
-            if isinstance(items, list) and items:
-                label = category.replace("_", " ").title()
-                lines.append(f"{label}: {', '.join(str(item) for item in items)}")
+    for job in profile.get("work_history", []) or []:
+        if not isinstance(job, dict):
+            continue
+        parts = [
+            job.get("title"),
+            job.get("company"),
+            job.get("dates"),
+            job.get("tasks") or job.get("description"),
+        ]
+        lines.append("Work history: " + " | ".join(str(part) for part in parts if part))
+
+    inference_guidance = profile.get("experience_inference")
+    if inference_guidance:
+        lines.append(f"Experience inference guidance: {inference_guidance}")
+
+    for category, items in profile_skills(profile).items():
+        if items:
+            label = category.replace("_", " ").title()
+            lines.append(f"{label}: {', '.join(str(item) for item in items)}")
 
     for school in profile.get("education_schools", []) or []:
         if not isinstance(school, dict):

@@ -52,6 +52,8 @@ _PREFERRED_ONLY_TERMS = {
     "plus",
     "preferred",
 }
+_APPLY_RECOMMENDATION_TERMS = ("apply", "strong match", "good match")
+_NEGATIVE_APPLY_TERMS = ("do not apply", "skip", "only if", "unless", "not eligible")
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -74,6 +76,20 @@ def _has_hard_mismatch(llm_result: dict) -> bool:
         return False
 
     return True
+
+
+def _has_positive_apply_signal(llm_result: dict) -> bool:
+    """Return True when the LLM found a strong fit without meaningful risks."""
+    risk_flags = str(llm_result.get("risk_flags", "") or "").strip().casefold()
+    if risk_flags not in {"", "none", "n/a"}:
+        return False
+
+    apply_reason = str(llm_result.get("apply_or_skip_reason", "") or "").casefold()
+    reasoning = str(llm_result.get("reasoning", "") or "").casefold()
+    evidence = f"{apply_reason} {reasoning}"
+    if any(term in evidence for term in _NEGATIVE_APPLY_TERMS):
+        return False
+    return any(term in evidence for term in _APPLY_RECOMMENDATION_TERMS)
 
 
 def composite_score(
@@ -107,6 +123,10 @@ def composite_score(
     if hard_mismatch_cap:
         composite_float = min(composite_float, float(max(1, llm_score)))
 
+    positive_apply_floor = llm_score >= 7 and _has_positive_apply_signal(llm_result)
+    if positive_apply_floor:
+        composite_float = max(composite_float, float(min(llm_score, 7)))
+
     fit_score = int(round(composite_float))
 
     keyword_hits = keyword["hits"]
@@ -129,6 +149,7 @@ def composite_score(
         "weights": active_weights,
         "composite": composite_float,
         "hard_mismatch_cap": hard_mismatch_cap,
+        "positive_apply_floor": positive_apply_floor,
         "skill_gaps": keyword_misses[:12],
     }
 

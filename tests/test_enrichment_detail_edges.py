@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from divapply.database import init_db
 from divapply.enrichment import detail
 
 
@@ -62,3 +63,70 @@ def test_title_prefilter_allows_it_senior_specialist_but_rejects_public_safety()
     assert detail._title_is_irrelevant("Senior IT Support Specialist") is False
     assert detail._title_is_irrelevant("Police Records Clerk") is False
     assert detail._title_is_irrelevant("Police Officer") is True
+
+
+def test_scrape_site_batch_commits_before_inter_job_delay(tmp_path, monkeypatch) -> None:
+    conn = init_db(tmp_path / "jobs.db")
+    conn.executemany(
+        "INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)",
+        [
+            ("https://example.com/1", "Front Desk", "Example"),
+            ("https://example.com/2", "Office Assistant", "Example"),
+        ],
+    )
+    conn.commit()
+
+    class FakePage:
+        pass
+
+    class FakeContext:
+        def new_page(self):
+            return FakePage()
+
+    class FakeBrowser:
+        def new_context(self, **_kwargs):
+            return FakeContext()
+
+        def close(self):
+            pass
+
+    class FakeChromium:
+        def launch(self, **_kwargs):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakeSyncPlaywright:
+        def __enter__(self):
+            return FakePlaywright()
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(detail, "sync_playwright", lambda: FakeSyncPlaywright())
+    monkeypatch.setattr(
+        detail,
+        "scrape_detail_page",
+        lambda _page, _url: {
+            "status": "ok",
+            "tier_used": 1,
+            "full_description": "Part-time front desk support.",
+            "application_url": "https://example.com/apply",
+            "elapsed": 0.1,
+        },
+    )
+
+    def assert_committed_before_sleep(_delay):
+        assert not conn.in_transaction
+
+    monkeypatch.setattr(detail.time, "sleep", assert_committed_before_sleep)
+
+    stats = detail.scrape_site_batch(
+        conn,
+        "Example",
+        [("https://example.com/1", "Front Desk"), ("https://example.com/2", "Office Assistant")],
+        delay=1,
+    )
+
+    assert stats["ok"] == 2

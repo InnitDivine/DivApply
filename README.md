@@ -30,6 +30,7 @@ python -m pipx ensurepath
 pipx install "divapply[full]"
 pipx run --spec playwright playwright install chromium firefox
 divapply init
+divapply edit
 divapply doctor
 ```
 
@@ -42,6 +43,7 @@ python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
 python -m playwright install chromium firefox
 divapply init
+divapply edit
 divapply doctor
 ```
 
@@ -76,6 +78,7 @@ python -m pip install --upgrade -e ".[full]"
 
 ```powershell
 divapply init
+divapply edit
 ```
 
 This creates your local app folder and setup files:
@@ -87,6 +90,16 @@ This creates your local app folder and setup files:
 - `divapply.db` - local jobs database
 
 These files are private and ignored by git.
+
+Use `divapply edit` as the normal setup screen after initialization. It opens a local-only browser editor for:
+
+- Personal/contact details
+- Target work type and hourly pay
+- Preferred roles and skills
+- Work history, education, certifications, references, projects, and real metrics
+- Search locations, query tiers, job boards, and filters
+
+The editor saves `profile.json` and `searches.yaml` for you, so most users do not need to hand-edit JSON or YAML.
 
 ## Daily Workflow
 
@@ -121,27 +134,39 @@ divapply apply --yes
 Example:
 
 ```yaml
+queries:
+  - query: "student assistant"
+    tier: 1
+  - query: "front desk part time"
+    tier: 2
+  - query: "customer service"
+    tier: 3
+locations:
+  - location: "Logan, UT"
+    remote: false
+  - location: "Remote"
+    remote: true
 location:
-  primary: "Roseville, CA"
   accept_patterns:
-    - "Roseville"
-    - "Rocklin"
-    - "Lincoln"
-    - "Sacramento"
-    - "Auburn"
-
-filters:
-  remote_preference: "any"
-  title_blacklist:
-    - "intern"
-  company_blacklist:
-    - "Example Staffing"
-  required_keywords:
-    - "support"
-    - "analyst"
-  excluded_keywords:
-    - "clearance"
+    - "Logan"
+    - "Cache Valley"
+    - "Remote"
+  reject_patterns:
+    - "Salt Lake City"
+country: "USA"
+boards:
+  - indeed
+  - linkedin
+defaults:
+  results_per_site: 50
+  hours_old: 168
+exclude_titles:
+  - "senior"
+  - "director"
+  - "clearance required"
 ```
+
+Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches.
 
 ## Resume Rules
 
@@ -222,6 +247,7 @@ Privacy details: [docs/PRIVACY.md](docs/PRIVACY.md)
 
 ```powershell
 divapply init
+divapply edit
 divapply doctor
 divapply selfcheck
 divapply run

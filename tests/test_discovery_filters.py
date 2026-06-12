@@ -113,6 +113,13 @@ def test_remote_location_text_does_not_bypass_rejected_place() -> None:
         ["idaho"],
         allow_unknown=False,
     )
+    assert not _location_ok(
+        "Layton, UT, US (Remote)",
+        ["logan", "cache valley"],
+        ["layton"],
+        allow_unknown=False,
+        is_remote=True,
+    )
 
 
 def test_jobspy_runtime_import_is_lazy(monkeypatch) -> None:

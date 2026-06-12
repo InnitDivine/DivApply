@@ -116,7 +116,7 @@ def load_profile() -> dict:
         raise FileNotFoundError(
             f"Profile not found at {PROFILE_PATH}. Run `divapply init` first."
         )
-    profile = json.loads(raw)
+    profile = _normalize_profile(json.loads(raw))
 
     # Hidden coursework knowledge is stored in SQLite so it can inform
     # scoring/tailoring without being exposed in the generated resume text.
@@ -133,6 +133,64 @@ def load_profile() -> dict:
     profile["coursework_summary"] = _summarize_coursework(coursework)
     profile["coursework_skills"] = _summarize_coursework_skills(coursework)
     return profile
+
+
+def _normalize_profile(profile: dict) -> dict:
+    """Expand simple user-facing profile keys into legacy internal aliases."""
+    profile = dict(profile or {})
+
+    skills = profile.get("skills")
+    if skills and not profile.get("skills_boundary"):
+        if isinstance(skills, list):
+            profile["skills_boundary"] = {"skills": skills}
+        elif isinstance(skills, dict):
+            profile["skills_boundary"] = skills
+
+    job_search = profile.get("job_search")
+    if isinstance(job_search, dict):
+        exp = dict(profile.get("experience", {}) or {})
+        if job_search.get("target") and not exp.get("target_role"):
+            exp["target_role"] = job_search["target"]
+        if job_search.get("preferred_roles") and not exp.get("target_roles"):
+            roles = job_search["preferred_roles"]
+            if isinstance(roles, list):
+                exp["target_roles"] = {f"tier{i}": role for i, role in enumerate(roles, 1)}
+        profile["experience"] = exp
+
+        availability = dict(profile.get("availability", {}) or {})
+        if job_search.get("schedule") and not availability.get("available_for_part_time"):
+            availability["available_for_part_time"] = job_search["schedule"]
+        profile["availability"] = availability
+
+    comp = profile.get("compensation")
+    if isinstance(comp, dict) and comp.get("hourly_expectation") and not comp.get("part_time_hourly_expectation"):
+        comp = dict(comp)
+        comp["part_time_hourly_expectation"] = comp["hourly_expectation"]
+        profile["compensation"] = comp
+
+    return profile
+
+
+def profile_skills(profile: dict) -> dict[str, list[str]]:
+    """Return profile skills from either simple `skills` or legacy `skills_boundary`."""
+    boundary = profile.get("skills_boundary")
+    if isinstance(boundary, dict) and boundary:
+        return {
+            str(category): [str(item) for item in items if str(item).strip()]
+            for category, items in boundary.items()
+            if isinstance(items, list)
+        }
+
+    skills = profile.get("skills")
+    if isinstance(skills, list):
+        return {"skills": [str(item) for item in skills if str(item).strip()]}
+    if isinstance(skills, dict):
+        return {
+            str(category): [str(item) for item in items if str(item).strip()]
+            for category, items in skills.items()
+            if isinstance(items, list)
+        }
+    return {}
 
 
 def _summarize_coursework(coursework: list[dict]) -> list[str]:
@@ -199,16 +257,72 @@ def load_search_config() -> dict:
     if raw is None:
         example = CONFIG_DIR / "searches.example.yaml"
         if example.exists():
-            return yaml.safe_load(example.read_text(encoding="utf-8")) or {}
+            return normalize_search_config(yaml.safe_load(example.read_text(encoding="utf-8")) or {})
         return {}
-    return yaml.safe_load(raw) or {}
+    return normalize_search_config(yaml.safe_load(raw) or {})
+
+
+def normalize_search_config(cfg: dict | None) -> dict:
+    """Expand simple search config aliases into the internal filter schema."""
+    cfg = dict(cfg or {})
+
+    search_city = cfg.get("search_city") or cfg.get("city")
+    if search_city and not cfg.get("locations"):
+        cfg["locations"] = [{"label": str(search_city), "location": str(search_city)}]
+
+    if cfg.get("job_boards") and not cfg.get("boards"):
+        cfg["boards"] = cfg["job_boards"]
+    if cfg.get("boards") and not cfg.get("sites"):
+        cfg["sites"] = cfg["boards"]
+    if cfg.get("sites") and not cfg.get("boards"):
+        cfg["boards"] = cfg["sites"]
+
+    if cfg.get("search_terms") and not cfg.get("queries"):
+        queries = []
+        for item in cfg["search_terms"]:
+            if isinstance(item, dict):
+                queries.append({"query": item.get("query") or item.get("term"), "tier": item.get("tier", 1)})
+            else:
+                queries.append({"query": str(item), "tier": 1})
+        cfg["queries"] = [q for q in queries if q.get("query")]
+
+    if cfg.get("nearby_locations") and not cfg.get("location_accept"):
+        cfg["location_accept"] = cfg["nearby_locations"]
+    if cfg.get("reject_locations") and not cfg.get("location_reject_non_remote"):
+        cfg["location_reject_non_remote"] = cfg["reject_locations"]
+
+    location_cfg = dict(cfg.get("location", {}) or {})
+    if cfg.get("location_accept") and not location_cfg.get("accept_patterns"):
+        location_cfg["accept_patterns"] = cfg["location_accept"]
+    if cfg.get("location_reject_non_remote") and not location_cfg.get("reject_patterns"):
+        location_cfg["reject_patterns"] = cfg["location_reject_non_remote"]
+    if location_cfg:
+        cfg["location"] = location_cfg
+
+    if cfg.get("target_titles") and not cfg.get("include_titles"):
+        cfg["include_titles"] = cfg["target_titles"]
+    if cfg.get("avoid_titles") and not cfg.get("exclude_titles"):
+        cfg["exclude_titles"] = cfg["avoid_titles"]
+    if cfg.get("avoid_keywords") and not cfg.get("excluded_keywords"):
+        cfg["excluded_keywords"] = cfg["avoid_keywords"]
+    if cfg.get("trusted_sites") and not cfg.get("trusted_local_sites"):
+        cfg["trusted_local_sites"] = cfg["trusted_sites"]
+
+    if cfg.get("part_time_titles") and not cfg.get("customer_service_title_terms"):
+        cfg["customer_service_title_terms"] = cfg["part_time_titles"]
+    if "require_part_time" in cfg and "customer_service_require_part_time" not in cfg:
+        cfg["customer_service_require_part_time"] = bool(cfg["require_part_time"])
+    if "max_hours_per_week" in cfg and "customer_service_max_hours_per_week" not in cfg:
+        cfg["customer_service_max_hours_per_week"] = cfg["max_hours_per_week"]
+
+    return cfg
 
 
 def validate_search_config(cfg: dict | None = None) -> dict:
     """Validate search config shape without contacting job boards."""
     if cfg is None:
         cfg = load_search_config()
-    cfg = cfg or {}
+    cfg = normalize_search_config(cfg or {})
 
     errors: list[str] = []
     warnings: list[str] = []

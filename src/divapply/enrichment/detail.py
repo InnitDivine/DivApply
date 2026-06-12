@@ -771,8 +771,7 @@ def scrape_site_batch(
                         (result.get("error", "unknown"), now, url),
                     )
 
-                if stats["processed"] % 10 == 0:
-                    conn.commit()
+                conn.commit()
 
                 if i < len(jobs) - 1:
                     time.sleep(delay)

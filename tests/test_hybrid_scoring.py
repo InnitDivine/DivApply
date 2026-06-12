@@ -135,6 +135,24 @@ def test_composite_score_does_not_cap_preferred_only_certificate_gap() -> None:
 
     breakdown = json.loads(result["score_breakdown"])
     assert breakdown["hard_mismatch_cap"] is False
+
+
+def test_composite_score_preserves_positive_llm_apply_signal() -> None:
+    result = composite_score(
+        job_description="Part-time cashier. Customer service and accurate payments required.",
+        resume_text="Municipal public counter service, payment processing, records, scheduling.",
+        llm_result={
+            "score": 8,
+            "risk_flags": "none",
+            "apply_or_skip_reason": "Apply - strong match for customer service and payments.",
+            "reasoning": "Strong match for entry-level part-time cashier work.",
+        },
+        weights={"keyword": 0.45, "embedding": 0.45, "llm": 0.1},
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["positive_apply_floor"] is True
     assert result["score"] > 2
 
 
@@ -176,7 +194,10 @@ def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     prompt = scorer.SCORE_PROMPT
 
     assert "Rank only job fit" in prompt
-    assert "Do not reward or penalize any job family" in prompt
+    assert "current search target, availability, schedule limits" in prompt
+    assert "unless the profile's current search target or availability makes it relevant" in prompt
+    assert "do not require the same prior job title or exact industry/tool" in prompt
+    assert "avoid scoring below 6 solely because the candidate lacks exact same-title experience" in prompt
     assert "Do not penalize legitimate remote" in prompt
     assert "Preferred/nice-to-have certifications" in prompt
     assert "required/minimum/must have" in prompt
@@ -193,6 +214,10 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
             "target_role": "IT Support Analyst",
             "years_of_experience_it": "3",
             "education_level": "Bachelor's Degree (in progress)",
+        },
+        "availability": {
+            "available_for_full_time": "No while in school",
+            "available_for_part_time": "Yes, 5-15 hours per week",
         },
         "skills_boundary": {
             "infrastructure": ["Oracle Cloud Infrastructure", "Nginx"],
@@ -212,6 +237,8 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
 
     assert "Location: Logan, UT" in context
     assert "IT Support Analyst" in context
+    assert "Available For Full Time: No while in school" in context
+    assert "Available For Part Time: Yes, 5-15 hours per week" in context
     assert "Oracle Cloud Infrastructure" in context
     assert "Bridgerland Technical College" in context
     assert "do-not-include" not in context

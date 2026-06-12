@@ -10,7 +10,7 @@ import re
 import time
 from datetime import datetime, timezone
 
-from divapply.config import COVER_LETTER_DIR, RESUME_PATH, load_profile
+from divapply.config import COVER_LETTER_DIR, RESUME_PATH, load_profile, profile_skills
 from divapply.database import get_connection
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
@@ -35,7 +35,6 @@ def _build_cover_letter_prompt(profile: dict) -> str:
     All personal data, skills, and sign-off name come from the profile.
     """
     personal = profile.get("personal", {})
-    boundary = profile.get("skills_boundary", {})
     resume_facts = profile.get("resume_facts", {})
 
     # Preferred name for the sign-off (falls back to full name)
@@ -43,9 +42,8 @@ def _build_cover_letter_prompt(profile: dict) -> str:
 
     # Flatten all allowed skills
     all_skills: list[str] = []
-    for items in boundary.values():
-        if isinstance(items, list):
-            all_skills.extend(items)
+    for items in profile_skills(profile).values():
+        all_skills.extend(items)
     skills_str = ", ".join(all_skills) if all_skills else "the tools listed in the resume"
 
     # Real metrics from resume_facts

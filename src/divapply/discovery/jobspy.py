@@ -308,16 +308,10 @@ def _location_ok(
 ) -> bool:
     """Check if a job location passes the user's location filter.
 
-    Remote jobs are always accepted. Non-remote jobs must match an accept
-    pattern and not match a reject pattern.
+    Remote jobs are accepted unless their concrete location matches a rejected
+    place. Non-remote jobs must match an accept pattern.
     """
-    if is_remote:
-        return True
-
-    if not location:
-        return allow_unknown
-
-    return location_ok(location, accept, reject, allow_unknown=allow_unknown)
+    return location_ok(location, accept, reject, allow_unknown=allow_unknown, is_remote=is_remote)
 
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------

@@ -141,6 +141,22 @@ def init() -> None:
 
 
 @app.command()
+def edit(
+    port: int = typer.Option(8765, "--port", help="Preferred localhost port for the editor."),
+    no_open: bool = typer.Option(False, "--no-open", help="Print the URL without opening a browser."),
+) -> None:
+    """Open the local browser editor for profile and search settings."""
+    from divapply.editor import run_editor
+
+    console.print("[bold]Starting DivApply editor[/bold]")
+    console.print("Press Ctrl+C in this terminal when you are done.")
+    try:
+        run_editor(port=port, open_browser=not no_open)
+    except KeyboardInterrupt:
+        console.print("\n[green]Editor stopped.[/green]")
+
+
+@app.command()
 def migrate(
     overwrite: bool = typer.Option(False, "--overwrite", help="Replace current files with legacy copies when both exist."),
 ) -> None:

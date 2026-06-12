@@ -1,19 +1,31 @@
 {
   "personal": {
-    "full_name": "YOUR_LEGAL_NAME",
-    "preferred_name": "YOUR_PREFERRED_NAME",
+    "first_name": "Your",
+    "middle_name": "",
+    "last_name": "Name",
+    "full_name": "Your Name",
+    "preferred_name": "Your",
     "email": "your.email@example.com",
-    "password": "YOUR_JOB_SITE_PASSWORD",
     "phone": "555-123-4567",
     "address": "123 Main St",
     "city": "Your City",
-    "province_state": "Your State/Province",
-    "country": "Your Country",
-    "postal_code": "A1B 2C3",
+    "province_state": "UT",
+    "country": "United States",
+    "postal_code": "84321",
     "linkedin_url": "https://www.linkedin.com/in/yourprofile",
-    "github_url": "https://github.com/yourusername",
-    "portfolio_url": "",
+    "github_url": "",
     "website_url": ""
+  },
+  "job_search": {
+    "target": "Low-hour part-time work while in school.",
+    "schedule_type": "part_time",
+    "schedule": "Prefer part-time work at about 20 hours per week.",
+    "preferred_roles": [
+      "student assistant",
+      "front desk",
+      "office assistant",
+      "customer service"
+    ]
   },
   "work_authorization": {
     "legally_authorized_to_work": "Yes",
@@ -22,40 +34,87 @@
   },
   "availability": {
     "earliest_start_date": "Immediately",
-    "available_for_full_time": "Yes",
-    "available_for_contract": "No"
+    "available_for_full_time": "No while in school",
+    "available_for_contract": "No",
+    "available_for_part_time": "Yes, about 20 hours per week preferred."
   },
   "compensation": {
-    "salary_expectation": "85000",
+    "target_hourly_rate": "15",
+    "salary_expectation": "15600",
     "salary_currency": "USD",
-    "salary_range_min": "80000",
-    "salary_range_max": "100000",
-    "currency_conversion_note": ""
+    "salary_range_min": "15600",
+    "salary_range_max": "15600",
+    "hourly_expectation": "Target $15/hr for part-time work. Use the employer's posted range when available."
   },
   "experience": {
     "years_of_experience_total": "3",
-    "education_level": "Bachelor's Degree",
-    "current_job_title": "",
+    "education_level": "Bachelor's Degree (in progress)",
+    "current_job_title": "Student / job seeker",
     "current_company": "",
-    "target_role": "software engineer"
+    "target_role": "Part-time student-friendly role"
   },
-  "skills_boundary": {
-    "languages": ["Python", "SQL", "JavaScript"],
-    "frameworks": ["FastAPI", "Flask", "React"],
-    "devops": ["Docker", "AWS", "CI/CD"],
-    "databases": ["PostgreSQL", "MongoDB"],
-    "tools": ["Git", "Linux"]
-  },
+  "experience_inference": "Use each job title and task summary to infer common, truthful duties normally tied to that work. Do not invent credentials, licenses, exact tools, employers, dates, metrics, or completed certifications.",
+  "work_history": [
+    {
+      "title": "Customer Service Associate",
+      "company": "Example Employer",
+      "dates": "2024 to 2025",
+      "tasks": "Customer service, front desk support, payments, scheduling, and guest assistance."
+    }
+  ],
+  "skills": [
+    "customer service",
+    "front desk",
+    "cash handling",
+    "data entry",
+    "Microsoft Office"
+  ],
+  "education_schools": [
+    {
+      "school": "Example College",
+      "city_state": "Your City, UT",
+      "major": "General Studies",
+      "degree": "Associate Degree",
+      "degree_received": true,
+      "gpa": "3.2",
+      "start_year": "2022",
+      "end_year": "2024",
+      "notes": "Degree completed."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "CPR",
+      "issuer": "Example Issuer",
+      "status": "Active",
+      "expires": "2027"
+    }
+  ],
   "resume_facts": {
-    "preserved_companies": ["Company A", "Company B"],
-    "preserved_projects": ["Project X", "Project Y"],
-    "preserved_school": "Your University",
-    "real_metrics": ["50% improvement", "10x faster"]
+    "preserved_companies": [
+      "Example Employer"
+    ],
+    "preserved_projects": [
+      "Example project"
+    ],
+    "preserved_school": "Example College",
+    "real_metrics": [
+      "3.2 GPA"
+    ]
   },
+  "references": [
+    {
+      "name": "Reference Name",
+      "title": "Former Supervisor",
+      "phone": "555-555-5555",
+      "email": "reference@example.com",
+      "address": "UT, US"
+    }
+  ],
   "eeo_voluntary": {
     "gender": "Decline to self-identify",
     "race_ethnicity": "Decline to self-identify",
-    "veteran_status": "I am not a protected veteran",
-    "disability_status": "I do not wish to answer"
+    "veteran_status": "Decline to self-identify",
+    "disability_status": "Decline to self-identify"
   }
 }
