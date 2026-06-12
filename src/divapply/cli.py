@@ -1290,56 +1290,6 @@ def prune(
 
 
 @app.command()
-def ultimate(
-    job_ref: str = typer.Argument(..., help="Job URL, application URL, URL fragment, or title fragment to target."),
-    out: Optional[str] = typer.Option(None, "--out", "-o", help="Output directory (default: tailored_resumes)."),
-    validation: str = typer.Option(
-        "normal",
-        "--validation",
-        help="Validation strictness: strict, normal, lenient, or none.",
-    ),
-) -> None:
-    """Generate one targeted resume for one saved job posting."""
-    _bootstrap()
-
-    from pathlib import Path
-    from divapply.scoring.ultimate import generate_targeted_resume
-
-    valid_modes = ("strict", "normal", "lenient", "none")
-    if validation not in valid_modes:
-        console.print(
-            f"[red]Invalid --validation value:[/red] '{validation}'. "
-            f"Choose from: {', '.join(valid_modes)}"
-        )
-        raise typer.Exit(code=1)
-
-    output_dir = Path(out) if out else None
-
-    try:
-        result = generate_targeted_resume(
-            job_ref=job_ref,
-            output_dir=output_dir,
-            validation_mode=validation,
-        )
-    except RuntimeError as e:
-        console.print(f"[red]{e}[/red]")
-        raise typer.Exit(code=1)
-
-    job = result["job"]
-    console.print("\n[bold green]Targeted resume generated.[/bold green]")
-    console.print(f"  Job:        {job.get('title') or job.get('url')}")
-    console.print(f"  Status:     {result['status']}")
-    console.print(f"  Attempts:   {result['attempts']}")
-    console.print(f"  Text:       {result['text_path']}")
-    if result.get("pdf_path"):
-        console.print(f"  PDF:        {result['pdf_path']}")
-    console.print(f"  Job trace:  {result['job_path']}")
-    console.print(f"  Report:     {result['report_path']}")
-    console.print(f"  Time:       {result['elapsed']:.1f}s")
-    console.print()
-
-
-@app.command()
 def sync(
     platform: Optional[list[str]] = typer.Argument(
         None,

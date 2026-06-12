@@ -6,6 +6,11 @@ All notable changes to DivApply will be documented here.
 
 - Future work will continue under the DivApply branding.
 
+## 0.4.6
+
+- Removed the legacy one-off targeted resume command and module.
+- Kept resume generation focused on the main `run tailor cover pdf` pipeline.
+
 ## 0.4.5
 
 - Fixed fresh-install database startup by creating the database parent directory before opening SQLite.
@@ -24,7 +29,7 @@ All notable changes to DivApply will be documented here.
 
 - Fixed neutral job scoring edge cases for preferred qualifications and hard requirement gaps.
 - Kept company and source/job-board fields separate in scoring, apply prompts, logs, traces, and exports.
-- Fixed ultimate resume job selection to prioritize highest fit scores before recency.
+- Fixed one-off targeted resume job selection to prioritize highest fit scores before recency.
 - Hardened resume and cover letter HTML escaping for generated PDFs.
 - Added regression coverage for scoring, apply prompt context, PDF template output, and safe exports.
 

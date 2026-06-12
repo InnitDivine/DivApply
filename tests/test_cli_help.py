@@ -18,14 +18,6 @@ def test_short_help_flag_works_for_run_command() -> None:
     assert "Run pipeline stages" in result.output
 
 
-def test_ultimate_help_describes_targeted_resume_not_general_resume() -> None:
-    result = runner.invoke(app, ["ultimate", "-h"])
-
-    assert result.exit_code == 0
-    assert "Generate one targeted resume" in result.output
-    assert "general-purpose" not in result.output
-
-
 def test_run_prune_score_requires_confirmation(monkeypatch) -> None:
     called = False
 

@@ -49,9 +49,9 @@ CHANGELOG.md
 Commit the version change, then tag and push:
 
 ```bash
-git tag v0.4.5
+git tag v0.4.6
 git push origin main
-git push origin v0.4.5
+git push origin v0.4.6
 ```
 
 The `Release` workflow will build the package, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, publish to PyPI, and create a GitHub Release with the built artifacts. After the workflow succeeds, users can install with:

@@ -34,7 +34,7 @@ For PyPI releases:
 2. Update the version in `pyproject.toml` and `src/divapply/__init__.py`.
 3. Add the same version section to `CHANGELOG.md`.
 4. Commit the version change.
-5. Tag with the same version, for example `git tag v0.4.5`.
+5. Tag with the same version, for example `git tag v0.4.6`.
 6. Push `main`, then push the tag.
 7. Verify the GitHub `Release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
 
