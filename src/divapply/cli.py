@@ -88,18 +88,25 @@ def _add_backup_path(
         return 0
 
     archive_resolved = archive_path.resolve()
+    base_resolved = base_dir.resolve()
     added = 0
 
     def should_skip(candidate: Path) -> bool:
+        if candidate.is_symlink():
+            return True
         if candidate.name in excluded_names:
             return True
         if excluded_patterns and any(fnmatch.fnmatch(candidate.name, pattern) for pattern in excluded_patterns):
             return True
         try:
-            if candidate.resolve() == archive_resolved:
+            candidate_resolved = candidate.resolve()
+            if candidate_resolved == archive_resolved:
                 return True
+            candidate_resolved.relative_to(base_resolved)
         except OSError:
-            return False
+            return True
+        except ValueError:
+            return True
         return any(parent.name == "backups" for parent in candidate.parents)
 
     if path.is_file():

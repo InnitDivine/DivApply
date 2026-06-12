@@ -18,6 +18,7 @@ from rich.console import Console
 
 from divapply.config import APP_DIR
 from divapply.database import get_connection
+from divapply.security import sanitize_external_url
 
 console = Console()
 
@@ -61,6 +62,10 @@ def _score_label(score: int) -> str:
 
 def _site_color(site: str) -> str:
     return SITE_COLORS.get(site, "#94a3b8")
+
+
+def _safe_href(url: str | None, *, field: str) -> str:
+    return escape(sanitize_external_url(url, field=field) or "", quote=True)
 
 
 def _truncate(value: str, limit: int) -> str:
@@ -183,12 +188,12 @@ def generate_dashboard(output_path: str | None = None) -> str:
             current_score = score
 
         title = escape(j["title"] or "Untitled")
-        url = escape(j["url"] or "")
+        url = _safe_href(j["url"], field="dashboard job url")
         salary = escape(j["salary"] or "")
         location = escape(j["location"] or "")
         site = escape(j["site"] or "")
         site_color = _site_color(j["site"] or "")
-        apply_url = escape(j["application_url"] or "")
+        apply_url = _safe_href(j["application_url"], field="dashboard apply url")
 
         # Parse keywords and reasoning from score_reasoning
         reasoning_raw = j["score_reasoning"] or ""
@@ -218,11 +223,17 @@ def generate_dashboard(output_path: str | None = None) -> str:
                 f'aria-label="Apply to {title}">Apply</a>'
             )
 
+        title_html = (
+            f'<a href="{url}" class="job-title" target="_blank" rel="noopener noreferrer">{title}</a>'
+            if url
+            else f'<span class="job-title">{title}</span>'
+        )
+
         job_sections += f"""
         <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}">
           <div class="card-header">
             <span class="score-pill" style="background:{_score_color(score)}" aria-label="Fit score {score}">{score}</span>
-            <a href="{url}" class="job-title" target="_blank" rel="noopener noreferrer">{title}</a>
+            {title_html}
           </div>
           <div class="meta-row">{meta_html}</div>
           {f'<div class="keywords-row">{escape(keywords)}</div>' if keywords else ''}

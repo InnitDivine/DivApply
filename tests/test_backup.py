@@ -87,6 +87,33 @@ def test_backup_excludes_secret_bearing_prompt_outputs_by_default(tmp_path, monk
     assert "logs/prompt_example.txt" not in names
 
 
+def test_backup_does_not_follow_symlinks_outside_app_dir(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    logs_dir = app_dir / "logs"
+    logs_dir.mkdir(parents=True)
+    outside = tmp_path / "outside-secret.txt"
+    outside.write_text("do not archive", encoding="utf-8")
+    (logs_dir / "worker-0.log").write_text("regular log", encoding="utf-8")
+    symlink_path = logs_dir / "linked-secret.txt"
+    try:
+        symlink_path.symlink_to(outside)
+    except OSError:
+        return
+
+    out = tmp_path / "backup.zip"
+    cli.backup(out=out, include_secrets=False, include_outputs=True)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+        contents = {name: archive.read(name).decode("utf-8") for name in names}
+
+    assert "logs/worker-0.log" in names
+    assert "logs/linked-secret.txt" not in names
+    assert "do not archive" not in "\n".join(contents.values())
+
+
 def test_backup_can_include_secrets_explicitly(tmp_path, monkeypatch) -> None:
     _patch_backup_paths(monkeypatch, tmp_path)
 
