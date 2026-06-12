@@ -10,12 +10,23 @@ from divapply.database import (
     close_connection,
     get_application_analytics,
     get_application_timeline,
+    get_connection,
     get_due_followups,
     get_jobs_by_stage,
     get_stats,
     init_db,
     store_jobs,
 )
+
+
+def test_get_connection_creates_missing_parent_directory(tmp_path) -> None:
+    db_path = tmp_path / "fresh" / "divapply.db"
+
+    conn = get_connection(db_path)
+
+    assert db_path.exists()
+    conn.execute("SELECT 1").fetchone()
+    close_connection(db_path)
 
 
 def test_application_events_track_timeline_and_followups(tmp_path) -> None:

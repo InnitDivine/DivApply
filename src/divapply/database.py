@@ -69,6 +69,7 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
         sqlite3.Connection configured with WAL mode and row factory.
     """
     resolved_path = _resolve_db_path(db_path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
     path = str(resolved_path)
 
     if not hasattr(_local, 'connections'):

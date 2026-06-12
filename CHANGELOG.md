@@ -6,6 +6,11 @@ All notable changes to DivApply will be documented here.
 
 - Future work will continue under the DivApply branding.
 
+## 0.4.5
+
+- Fixed fresh-install database startup by creating the database parent directory before opening SQLite.
+- Added regression coverage for clean-home database initialization, matching GitHub Actions behavior.
+
 ## 0.4.4
 
 - Added `divapply edit` as the local browser setup editor for profile and search configuration.
