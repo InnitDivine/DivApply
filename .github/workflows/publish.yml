@@ -1,23 +1,22 @@
-name: Publish to PyPI
+name: Release
 
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 concurrency:
-  group: publish-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  publish:
+  release:
     runs-on: ubuntu-latest
     environment:
       name: pypi
       url: https://pypi.org/p/divapply
     permissions:
-      contents: read
+      contents: write
       id-token: write
 
     steps:
@@ -34,7 +33,6 @@ jobs:
         run: python -m pip install --upgrade pip build twine
 
       - name: Validate release version
-        if: startsWith(github.ref, 'refs/tags/v')
         shell: python
         run: |
           import pathlib
@@ -50,6 +48,10 @@ jobs:
               raise SystemExit(
                   f"Version mismatch: tag={tag_version}, pyproject={pyproject_version}, __init__={init_version}"
               )
+
+          changelog = pathlib.Path("CHANGELOG.md").read_text(encoding="utf-8")
+          if f"## {tag_version}" not in changelog:
+              raise SystemExit(f"CHANGELOG.md is missing a section for {tag_version}")
 
       - name: Build package
         run: python -m build
@@ -69,3 +71,9 @@ jobs:
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/*

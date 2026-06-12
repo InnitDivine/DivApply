@@ -12,7 +12,7 @@ CI runs on pull requests, pushes to `main`, and manual dispatch. It verifies:
 - Package metadata with `twine check`
 - Docker image build and CLI smoke checks
 
-Publishing runs on `v*` tags and manual dispatch. Tag releases are blocked when the tag version does not match both `pyproject.toml` and `src/divapply/__init__.py`.
+Publishing runs only on `v*` tags. Tag releases are blocked when the tag version does not match `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`. A successful release publishes to PyPI and creates a matching GitHub Release with the built artifacts.
 
 ## Docker
 
@@ -32,10 +32,11 @@ For PyPI releases:
 
 1. Run `python -m pytest -q` and `ruff check .`.
 2. Update the version in `pyproject.toml` and `src/divapply/__init__.py`.
-3. Commit the version change.
-4. Tag with the same version, for example `git tag v0.4.3`.
-5. Push `main`, then push the tag.
-6. Verify the GitHub `Publish to PyPI` workflow and install the published wheel in a clean environment.
+3. Add the same version section to `CHANGELOG.md`.
+4. Commit the version change.
+5. Tag with the same version, for example `git tag v0.4.4`.
+6. Push `main`, then push the tag.
+7. Verify the GitHub `Release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
 
 Clean install smoke test:
 

@@ -40,15 +40,21 @@ pyproject.toml
 src/divapply/__init__.py
 ```
 
+Add the same version section to:
+
+```text
+CHANGELOG.md
+```
+
 Commit the version change, then tag and push:
 
 ```bash
-git tag v0.4.2
+git tag v0.4.4
 git push origin main
-git push origin v0.4.2
+git push origin v0.4.4
 ```
 
-The `Publish to PyPI` workflow will build the package and publish it. After the workflow succeeds, users can install with:
+The `Release` workflow will build the package, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, publish to PyPI, and create a GitHub Release with the built artifacts. After the workflow succeeds, users can install with:
 
 ```bash
 pip install "divapply[full]"
@@ -68,4 +74,4 @@ divapply --version
 divapply doctor
 ```
 
-The workflow also verifies that the `v*` tag matches both version files before publishing.
+The workflow only runs from `v*` tags and verifies that the tag matches both version files plus the changelog before publishing.

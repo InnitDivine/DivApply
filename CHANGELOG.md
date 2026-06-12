@@ -2,26 +2,18 @@
 
 All notable changes to DivApply will be documented here.
 
-## 0.4.0
+## Unreleased
 
-- Renamed the project from ApplyPilot to DivApply.
-- Moved the Python package to `src/divapply/`.
-- Kept the public CLI entry point as `divapply`.
-- Added a Windows bootstrap install flow for fresh GitHub clones.
-- Added legacy migration support for previous `~/.applypilot` data.
-- Added hidden coursework storage for profile matching.
-- Added one-page resume shaping and tighter PDF layout defaults.
+- Future work will continue under the DivApply branding.
 
-## 0.4.1
+## 0.4.4
 
-- Fixed the GitHub Actions PyPI publish workflow so it requests repository contents access before checkout.
-- Kept the DivApply release/docs branding aligned with the Codex-assisted development disclosure.
-
-## 0.4.2
-
-- Added a PyPI trusted-publishing workflow for `pip install divapply` releases.
-- Reworked the README around the simple pip-first install path.
-- Kept the GitHub clone installers as fallback/development options.
+- Added `divapply edit` as the local browser setup editor for profile and search configuration.
+- Simplified profile/search examples around no-password profile data and tiered search queries.
+- Preserved rich profile fields when saving through the editor, including references, certifications, and education metadata.
+- Improved scoring/search setup compatibility for simple `skills`, preferred roles, and ApplyPilot-style search YAML.
+- Added dashboard/accessibility, discovery, enrichment, Workday, SmartExtract, scoring, and editor regression coverage.
+- Cleaned root documentation by moving migration and AI disclosure notes under `docs/`.
 
 ## 0.4.3
 
@@ -31,6 +23,23 @@ All notable changes to DivApply will be documented here.
 - Hardened resume and cover letter HTML escaping for generated PDFs.
 - Added regression coverage for scoring, apply prompt context, PDF template output, and safe exports.
 
-## Unreleased
+## 0.4.2
 
-- Future work will continue under the DivApply branding.
+- Added a PyPI trusted-publishing workflow for `pip install divapply` releases.
+- Reworked the README around the simple pip-first install path.
+- Kept the GitHub clone installers as fallback/development options.
+
+## 0.4.1
+
+- Fixed the GitHub Actions PyPI publish workflow so it requests repository contents access before checkout.
+- Kept the DivApply release/docs branding aligned with the Codex-assisted development disclosure.
+
+## 0.4.0
+
+- Renamed the project from ApplyPilot to DivApply.
+- Moved the Python package to `src/divapply/`.
+- Kept the public CLI entry point as `divapply`.
+- Added a Windows bootstrap install flow for fresh GitHub clones.
+- Added legacy migration support for previous `~/.applypilot` data.
+- Added hidden coursework storage for profile matching.
+- Added one-page resume shaping and tighter PDF layout defaults.
