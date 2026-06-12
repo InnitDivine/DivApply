@@ -278,4 +278,4 @@ Publishing notes: [PUBLISHING.md](PUBLISHING.md)
 
 Operations notes: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 
-AI assistance disclosure: [AI_ASSISTANCE.md](AI_ASSISTANCE.md)
+AI assistance disclosure: [docs/AI_ASSISTANCE.md](docs/AI_ASSISTANCE.md)

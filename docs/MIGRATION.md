@@ -1,4 +1,4 @@
-# DivApply Migration Checklist
+# DivApply Migration Notes
 
 This file tracks the remaining work to finish the transition from the older ApplyPilot codebase to the current DivApply release.
 
