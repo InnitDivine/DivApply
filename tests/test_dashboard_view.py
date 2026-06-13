@@ -129,16 +129,8 @@ def test_dashboard_does_not_link_unsafe_saved_urls(tmp_path, monkeypatch):
     assert 'href="https://example.com/job"' in html
 
 
-def test_dashboard_shows_archive_button_for_applied_jobs(tmp_path, monkeypatch):
+def test_dashboard_shows_archive_button_for_interactive_jobs(tmp_path, monkeypatch):
     conn = _dashboard_db()
-    conn.execute(
-        """
-        UPDATE jobs
-        SET apply_status = 'applied', applied_at = '2026-06-13T00:00:00Z'
-        WHERE url = 'https://example.com/job'
-        """
-    )
-    conn.commit()
     monkeypatch.setattr(view, "get_connection", lambda: conn)
 
     path = view.generate_dashboard(

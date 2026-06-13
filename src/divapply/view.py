@@ -208,8 +208,6 @@ def generate_dashboard(
         site = escape(j["site"] or "")
         site_color = _site_color(j["site"] or "")
         apply_url = _safe_href(j["application_url"], field="dashboard apply url")
-        is_applied = bool(j["applied_at"]) or j["apply_status"] == "applied"
-
         # Parse keywords and reasoning from score_reasoning
         reasoning_raw = j["score_reasoning"] or ""
         reasoning_lines = reasoning_raw.split("\n")
@@ -238,7 +236,7 @@ def generate_dashboard(
                 f'aria-label="Apply to {title}">Apply</a>'
             )
         archive_html = ""
-        if archive_endpoint and archive_token and is_applied:
+        if archive_endpoint and archive_token:
             archive_html = f"""
               <form method="post" action="{escape(archive_endpoint, quote=True)}" class="archive-form">
                 <input type="hidden" name="token" value="{escape(archive_token, quote=True)}">
