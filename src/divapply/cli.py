@@ -983,13 +983,30 @@ def rescore(
 
 
 @app.command()
-def dashboard() -> None:
-    """Generate and open the HTML dashboard in your browser."""
+def dashboard(
+    static: bool = typer.Option(False, "--static", help="Write a static HTML file instead of starting the interactive dashboard."),
+    port: int = typer.Option(8776, "--port", help="Preferred localhost port for the interactive dashboard."),
+    no_open: bool = typer.Option(False, "--no-open", help="Print the URL/path without opening a browser."),
+) -> None:
+    """Open the dashboard. Interactive mode supports archiving applied jobs."""
     _bootstrap()
 
-    from divapply.view import open_dashboard
+    from divapply.view import generate_dashboard, open_dashboard, serve_dashboard
 
-    open_dashboard()
+    if static:
+        if no_open:
+            path = generate_dashboard()
+            console.print(f"[green]Dashboard written:[/green] {path}")
+        else:
+            open_dashboard()
+        return
+
+    console.print("[bold]Starting DivApply dashboard[/bold]")
+    console.print("Press Ctrl+C in this terminal when you are done.")
+    try:
+        serve_dashboard(port=port, open_browser=not no_open)
+    except KeyboardInterrupt:
+        console.print("\n[green]Dashboard stopped.[/green]")
 
 
 @app.command()

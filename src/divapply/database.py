@@ -118,7 +118,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
       - Cover:      cover_letter_path, cover_letter_at, cover_attempts
       - Apply:      applied_at, apply_status, apply_error, apply_attempts,
                    agent_id, last_attempted_at, apply_duration_ms, apply_task_id,
-                   verification_confidence
+                   verification_confidence, archived_at
 
     Args:
         db_path: Override the default DB_PATH.
@@ -186,7 +186,8 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             last_attempted_at     TEXT,
             apply_duration_ms     INTEGER,
             apply_task_id         TEXT,
-            verification_confidence TEXT
+            verification_confidence TEXT,
+            archived_at           TEXT
         )
     """)
     conn.commit()
@@ -257,6 +258,7 @@ _ALL_COLUMNS: dict[str, str] = {
     "apply_duration_ms": "INTEGER",
     "apply_task_id": "TEXT",
     "verification_confidence": "TEXT",
+    "archived_at": "TEXT",
 }
 
 
@@ -308,6 +310,7 @@ def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_tailor_pending ON jobs(fit_score, tailored_resume_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_cover_pending ON jobs(tailored_resume_path, cover_letter_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_apply_ready ON jobs(tailored_resume_path, applied_at, application_url)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_archived_at ON jobs(archived_at)")
     try:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_canonical_key_unique "
@@ -874,6 +877,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
                 THEN 1 ELSE 0
             END) AS cover_exhausted,
             SUM(CASE WHEN applied_at IS NOT NULL THEN 1 ELSE 0 END) AS applied,
+            SUM(CASE WHEN archived_at IS NOT NULL THEN 1 ELSE 0 END) AS archived,
             SUM(CASE WHEN apply_error IS NOT NULL THEN 1 ELSE 0 END) AS apply_errors,
             SUM(CASE WHEN apply_status = 'in_progress' THEN 1 ELSE 0 END) AS apply_in_progress,
             SUM(CASE
@@ -886,6 +890,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
                 WHEN tailored_resume_path IS NOT NULL
                  AND applied_at IS NULL
                  AND COALESCE(application_url, '') != ''
+                 AND archived_at IS NULL
                 THEN 1 ELSE 0
             END) AS ready_to_apply
         FROM jobs
@@ -914,6 +919,24 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         stats["due_followups"] = 0
 
     return stats
+
+
+def archive_job(url: str, conn: sqlite3.Connection | None = None) -> bool:
+    """Archive one job by URL without deleting its application history."""
+    if conn is None:
+        conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    with _transaction(conn):
+        cursor = conn.execute(
+            """
+            UPDATE jobs
+            SET archived_at = ?
+            WHERE url = ?
+              AND archived_at IS NULL
+            """,
+            (now, url),
+        )
+    return cursor.rowcount > 0
 
 
 _PUNCT_RE = re.compile(r"[^a-z0-9]+")
@@ -1016,9 +1039,10 @@ _STAGE_CONDITIONS = {
     ),
     "pending_apply": (
         "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
-        "AND COALESCE(application_url, '') != ''"
+        "AND COALESCE(application_url, '') != '' AND archived_at IS NULL"
     ),
     "applied": "applied_at IS NOT NULL",
+    "archived": "archived_at IS NOT NULL",
 }
 
 

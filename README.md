@@ -261,6 +261,8 @@ divapply apply --yes
 divapply migrate
 ```
 
+`divapply dashboard` opens an interactive local dashboard. Applied jobs include an Archive button so you can hide submitted applications without deleting their history. Use `divapply dashboard --static` when you only want to write a standalone HTML file.
+
 ## Development
 
 ```powershell

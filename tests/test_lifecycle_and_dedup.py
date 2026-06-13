@@ -6,6 +6,7 @@ import pytest
 
 from divapply.database import (
     add_application_event,
+    archive_job,
     canonical_job_key,
     close_connection,
     get_application_analytics,
@@ -184,6 +185,44 @@ def test_get_stats_reports_apply_lock_monitoring(tmp_path) -> None:
 
     assert stats["apply_in_progress"] == 2
     assert stats["stale_apply_locks"] == 1
+    close_connection(db_path)
+
+
+def test_archive_job_hides_job_from_ready_apply_counts(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, fit_score, full_description, tailored_resume_path,
+            application_url, discovered_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://example.com/archive-me",
+            "Archive Me",
+            8,
+            "Description",
+            "resume.txt",
+            "https://example.com/apply",
+            "2026-01-01",
+        ),
+    )
+    conn.commit()
+
+    assert get_stats(conn)["ready_to_apply"] == 1
+    assert archive_job("https://example.com/archive-me", conn=conn) is True
+    assert archive_job("https://example.com/archive-me", conn=conn) is False
+
+    row = conn.execute(
+        "SELECT archived_at FROM jobs WHERE url = ?",
+        ("https://example.com/archive-me",),
+    ).fetchone()
+    assert row["archived_at"]
+    assert get_stats(conn)["ready_to_apply"] == 0
+    assert get_stats(conn)["archived"] == 1
+    assert get_jobs_by_stage(conn=conn, stage="archived")[0]["url"] == "https://example.com/archive-me"
     close_connection(db_path)
 
 

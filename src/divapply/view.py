@@ -10,14 +10,20 @@ Generates a self-contained HTML dashboard with:
 
 from __future__ import annotations
 
+import secrets
+import socket
+import threading
+import urllib.parse
 import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from html import escape
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 
 from divapply.config import APP_DIR
-from divapply.database import get_connection
+from divapply.database import archive_job, get_connection
 from divapply.security import sanitize_external_url
 
 console = Console()
@@ -75,7 +81,12 @@ def _truncate(value: str, limit: int) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
-def generate_dashboard(output_path: str | None = None) -> str:
+def generate_dashboard(
+    output_path: str | None = None,
+    *,
+    archive_endpoint: str | None = None,
+    archive_token: str | None = None,
+) -> str:
     """Generate an HTML dashboard of all jobs with fit scores.
 
     Args:
@@ -89,16 +100,17 @@ def generate_dashboard(output_path: str | None = None) -> str:
     conn = get_connection()
 
     # Stats
-    total = conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0]
+    total = conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL").fetchone()[0]
+    archived = conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NOT NULL").fetchone()[0]
     ready = conn.execute(
         "SELECT COUNT(*) FROM jobs "
-        "WHERE full_description IS NOT NULL AND COALESCE(application_url, '') != ''"
+        "WHERE archived_at IS NULL AND full_description IS NOT NULL AND COALESCE(application_url, '') != ''"
     ).fetchone()[0]
     scored = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE fit_score IS NOT NULL"
+        "SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL AND fit_score IS NOT NULL"
     ).fetchone()[0]
     high_fit = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE fit_score >= 7"
+        "SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL AND fit_score >= 7"
     ).fetchone()[0]
 
     # Score distribution
@@ -106,7 +118,7 @@ def generate_dashboard(output_path: str | None = None) -> str:
     if scored:
         rows = conn.execute(
             "SELECT fit_score, COUNT(*) FROM jobs "
-            "WHERE fit_score IS NOT NULL "
+            "WHERE archived_at IS NULL AND fit_score IS NOT NULL "
             "GROUP BY fit_score ORDER BY fit_score DESC"
         ).fetchall()
         for r in rows:
@@ -121,16 +133,18 @@ def generate_dashboard(output_path: str | None = None) -> str:
                SUM(CASE WHEN fit_score < 5 AND fit_score IS NOT NULL THEN 1 ELSE 0 END) as low_fit,
                SUM(CASE WHEN fit_score IS NULL THEN 1 ELSE 0 END) as unscored,
                ROUND(AVG(fit_score), 1) as avg_score
-        FROM jobs GROUP BY site ORDER BY high_fit DESC, total DESC
+        FROM jobs
+        WHERE archived_at IS NULL
+        GROUP BY site ORDER BY high_fit DESC, total DESC
     """).fetchall()
 
     # All scored jobs (5+), ordered by score desc
     jobs = conn.execute("""
         SELECT url, title, salary, description, location, site, strategy,
                full_description, application_url, detail_error,
-               fit_score, score_reasoning
+               fit_score, score_reasoning, apply_status, applied_at
         FROM jobs
-        WHERE fit_score >= 5
+        WHERE archived_at IS NULL AND fit_score >= 5
         ORDER BY fit_score DESC, site, title
     """).fetchall()
 
@@ -194,6 +208,7 @@ def generate_dashboard(output_path: str | None = None) -> str:
         site = escape(j["site"] or "")
         site_color = _site_color(j["site"] or "")
         apply_url = _safe_href(j["application_url"], field="dashboard apply url")
+        is_applied = bool(j["applied_at"]) or j["apply_status"] == "applied"
 
         # Parse keywords and reasoning from score_reasoning
         reasoning_raw = j["score_reasoning"] or ""
@@ -222,6 +237,14 @@ def generate_dashboard(output_path: str | None = None) -> str:
                 f'<a href="{apply_url}" class="apply-link" target="_blank" rel="noopener noreferrer" '
                 f'aria-label="Apply to {title}">Apply</a>'
             )
+        archive_html = ""
+        if archive_endpoint and archive_token and is_applied:
+            archive_html = f"""
+              <form method="post" action="{escape(archive_endpoint, quote=True)}" class="archive-form">
+                <input type="hidden" name="token" value="{escape(archive_token, quote=True)}">
+                <input type="hidden" name="url" value="{escape(j['url'] or '', quote=True)}">
+                <button type="submit" class="archive-btn" aria-label="Archive {title}">Archive</button>
+              </form>"""
 
         title_html = (
             f'<a href="{url}" class="job-title" target="_blank" rel="noopener noreferrer">{title}</a>'
@@ -240,7 +263,7 @@ def generate_dashboard(output_path: str | None = None) -> str:
           {f'<div class="reasoning-row">{escape(reasoning)}</div>' if reasoning else ''}
           <p class="desc-preview">{desc_preview}</p>
           {"<details class='full-desc-details'><summary class='expand-btn'>Full description (" + f'{desc_len:,}' + " characters)</summary><div class='full-desc'>" + full_desc_html + "</div></details>" if j["full_description"] else ""}
-          <div class="card-footer">{apply_html}</div>
+          <div class="card-footer">{apply_html}{archive_html}</div>
         </article>"""
 
     if current_score is not None:
@@ -336,8 +359,11 @@ def generate_dashboard(output_path: str | None = None) -> str:
   .desc-preview {{ font-size: 0.85rem; color: #cbd5e1; line-height: 1.5; margin-bottom: 0.75rem; max-height: 3.9em; overflow: hidden; overflow-wrap: anywhere; }}
 
   .card-footer {{ display: flex; justify-content: flex-end; }}
+  .archive-form {{ margin-left: 0.5rem; }}
   .apply-link {{ font-size: 0.85rem; color: #bfdbfe; text-decoration: none; padding: 0.35rem 0.8rem; border: 1px solid #93c5fd; border-radius: 6px; font-weight: 700; min-height: 2.3rem; display: inline-flex; align-items: center; }}
   .apply-link:hover {{ background: #60a5fa22; }}
+  .archive-btn {{ font-size: 0.85rem; color: #fecaca; background: transparent; padding: 0.35rem 0.8rem; border: 1px solid #fca5a5; border-radius: 6px; font-weight: 700; min-height: 2.3rem; cursor: pointer; }}
+  .archive-btn:hover {{ background: #7f1d1d55; }}
 
   /* Expandable full description */
   .full-desc-details {{ margin-bottom: 0.75rem; }}
@@ -379,7 +405,7 @@ def generate_dashboard(output_path: str | None = None) -> str:
 <main>
 <header>
   <h1>DivApply Dashboard</h1>
-  <p class="subtitle">{total} jobs &middot; {scored} scored &middot; {high_fit} strong matches (7+)</p>
+  <p class="subtitle">{total} active jobs &middot; {scored} scored &middot; {high_fit} strong matches (7+) &middot; {archived} archived</p>
 </header>
 
 <section class="summary" aria-label="Pipeline summary">
@@ -490,4 +516,66 @@ def open_dashboard(output_path: str | None = None) -> None:
     path = generate_dashboard(output_path)
     console.print("[dim]Opening in browser...[/dim]")
     webbrowser.open(f"file:///{path}")
+
+
+def _find_port(host: str, preferred: int) -> int:
+    for port in range(preferred, preferred + 25):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            try:
+                sock.bind((host, port))
+            except OSError:
+                continue
+            return port
+    raise RuntimeError(f"No free localhost port found from {preferred} to {preferred + 24}.")
+
+
+def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: bool = True) -> str:
+    """Serve the dashboard locally so archive buttons can update SQLite."""
+    token = secrets.token_urlsafe(24)
+    actual_port = _find_port(host, port)
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, _format: str, *_args: Any) -> None:
+            return
+
+        def do_GET(self) -> None:  # noqa: N802
+            if self.path not in ("/", "/?archived=1"):
+                self.send_error(404)
+                return
+            body = generate_dashboard(
+                archive_endpoint="/archive",
+                archive_token=token,
+            )
+            data = Path(body).read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self) -> None:  # noqa: N802
+            if self.path != "/archive":
+                self.send_error(404)
+                return
+            length = int(self.headers.get("Content-Length", "0") or "0")
+            fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
+            form = {key: values[-1] for key, values in fields.items()}
+            if form.get("token") != token:
+                self.send_error(403)
+                return
+            archive_job(form.get("url", ""))
+            self.send_response(303)
+            self.send_header("Location", "/?archived=1")
+            self.end_headers()
+
+    server = ThreadingHTTPServer((host, actual_port), Handler)
+    url = f"http://{host}:{actual_port}/"
+    console.print(f"[green]Dashboard:[/green] {url}")
+    if open_browser:
+        threading.Timer(0.2, lambda: webbrowser.open(url)).start()
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()
+    return url
 

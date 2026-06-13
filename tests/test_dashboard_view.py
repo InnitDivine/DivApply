@@ -23,7 +23,10 @@ def _dashboard_db() -> sqlite3.Connection:
             application_url TEXT,
             detail_error TEXT,
             fit_score INTEGER,
-            score_reasoning TEXT
+            score_reasoning TEXT,
+            apply_status TEXT,
+            applied_at TEXT,
+            archived_at TEXT
         )
         """
     )
@@ -31,8 +34,9 @@ def _dashboard_db() -> sqlite3.Connection:
         """
         INSERT INTO jobs (
             url, title, salary, description, location, site, strategy,
-            full_description, application_url, detail_error, fit_score, score_reasoning
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            full_description, application_url, detail_error, fit_score, score_reasoning,
+            apply_status, applied_at, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "https://example.com/job",
@@ -47,6 +51,9 @@ def _dashboard_db() -> sqlite3.Connection:
             None,
             8,
             "Python, accessibility\nStrong local fit.",
+            None,
+            None,
+            None,
         ),
     )
     conn.commit()
@@ -88,8 +95,9 @@ def test_dashboard_does_not_link_unsafe_saved_urls(tmp_path, monkeypatch):
         """
         INSERT INTO jobs (
             url, title, salary, description, location, site, strategy,
-            full_description, application_url, detail_error, fit_score, score_reasoning
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            full_description, application_url, detail_error, fit_score, score_reasoning,
+            apply_status, applied_at, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "javascript:alert(1)",
@@ -104,6 +112,9 @@ def test_dashboard_does_not_link_unsafe_saved_urls(tmp_path, monkeypatch):
             None,
             8,
             "keywords\nreasoning",
+            None,
+            None,
+            None,
         ),
     )
     conn.commit()
@@ -116,3 +127,43 @@ def test_dashboard_does_not_link_unsafe_saved_urls(tmp_path, monkeypatch):
     assert "localhost:8080/apply" not in html
     assert '<span class="job-title">Unsafe Job</span>' in html
     assert 'href="https://example.com/job"' in html
+
+
+def test_dashboard_shows_archive_button_for_applied_jobs(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET apply_status = 'applied', applied_at = '2026-06-13T00:00:00Z'
+        WHERE url = 'https://example.com/job'
+        """
+    )
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(
+        str(tmp_path / "dashboard.html"),
+        archive_endpoint="/archive",
+        archive_token="test-token",
+    )
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert 'class="archive-btn"' in html
+    assert 'name="token" value="test-token"' in html
+    assert 'name="url" value="https://example.com/job"' in html
+
+
+def test_dashboard_hides_archived_jobs(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute(
+        "UPDATE jobs SET archived_at = '2026-06-13T00:00:00Z' WHERE url = 'https://example.com/job'"
+    )
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(str(tmp_path / "dashboard.html"))
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert "Software Engineer" not in html
+    assert "0 active jobs" in html
+    assert "1 archived" in html
