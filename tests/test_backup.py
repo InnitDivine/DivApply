@@ -149,3 +149,83 @@ def test_create_backup_returns_reusable_result_metadata(tmp_path, monkeypatch) -
     assert result.path == out.resolve()
     assert result.file_count == 1
     assert result.included_secrets is False
+
+
+def test_create_backup_skips_missing_configured_paths(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    app_dir.mkdir(parents=True)
+
+    out = tmp_path / "empty.zip"
+    result = create_backup(out=out, include_secrets=False, include_outputs=False)
+
+    assert result.file_count == 0
+    with zipfile.ZipFile(out) as archive:
+        assert archive.namelist() == []
+
+
+def test_create_backup_excludes_output_directories_when_disabled(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    tailored_dir = app_dir / "tailored_resumes"
+    cover_dir = app_dir / "cover_letters"
+    logs_dir = app_dir / "logs"
+    tailored_dir.mkdir(parents=True)
+    cover_dir.mkdir()
+    logs_dir.mkdir()
+    (app_dir / "profile.json").write_text("{}", encoding="utf-8")
+    (tailored_dir / "resume.pdf").write_text("resume", encoding="utf-8")
+    (cover_dir / "cover.pdf").write_text("cover", encoding="utf-8")
+    (logs_dir / "worker.log").write_text("log", encoding="utf-8")
+
+    out = tmp_path / "backup.zip"
+    result = create_backup(out=out, include_secrets=False, include_outputs=False)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+
+    assert result.file_count == 1
+    assert names == {"profile.json"}
+
+
+def test_create_backup_excludes_archive_itself_and_backup_folder_contents(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    backups_dir = app_dir / "backups"
+    backups_dir.mkdir(parents=True)
+    (app_dir / "profile.json").write_text("{}", encoding="utf-8")
+    (backups_dir / "old-backup.zip").write_text("old backup", encoding="utf-8")
+
+    out = backups_dir / "new-backup.zip"
+    result = create_backup(out=out, include_secrets=True, include_outputs=True)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+
+    assert result.file_count == 1
+    assert names == {"profile.json"}
+    assert "backups/old-backup.zip" not in names
+    assert "backups/new-backup.zip" not in names
+
+
+def test_create_backup_excludes_mcp_and_apply_prompt_files_without_secrets(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    logs_dir = app_dir / "logs"
+    logs_dir.mkdir(parents=True)
+    (logs_dir / ".mcp-apply-job.json").write_text("token=secret", encoding="utf-8")
+    (logs_dir / "apply_prompt.txt").write_text("password=secret", encoding="utf-8")
+    (logs_dir / "regular.log").write_text("safe", encoding="utf-8")
+
+    out = tmp_path / "backup.zip"
+    result = create_backup(out=out, include_secrets=False, include_outputs=True)
+
+    with zipfile.ZipFile(out) as archive:
+        names = set(archive.namelist())
+
+    assert result.file_count == 1
+    assert names == {"logs/regular.log"}

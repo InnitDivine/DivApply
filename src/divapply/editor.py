@@ -446,6 +446,19 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
       background: var(--bg);
       color: var(--text);
     }}
+    .skip-link {{
+      position: absolute;
+      left: 18px;
+      top: 12px;
+      transform: translateY(-180%);
+      background: var(--text);
+      color: #fff;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      z-index: 10;
+    }}
+    .skip-link:focus-visible {{ transform: translateY(0); }}
     main {{
       max-width: 980px;
       margin: 0 auto;
@@ -482,7 +495,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
       font-weight: 650;
       margin: 14px 0 6px;
     }}
-    input[type="text"], textarea, select {{
+    input:not([type="hidden"]), textarea, select {{
       width: 100%;
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -490,6 +503,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
       font: inherit;
       color: var(--text);
       background: #fff;
+      min-height: 44px;
     }}
     textarea {{ min-height: 92px; resize: vertical; }}
     textarea.tall {{ min-height: 180px; }}
@@ -497,6 +511,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
     input[type="range"] {{
       width: 100%;
       accent-color: var(--accent);
+      min-height: 44px;
     }}
     input:focus, textarea:focus, select:focus, button:focus {{
       outline: 3px solid color-mix(in srgb, var(--focus) 25%, transparent);
@@ -536,6 +551,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
       font: inherit;
       font-weight: 700;
       cursor: pointer;
+      min-height: 44px;
     }}
     button:hover {{ background: var(--accent-dark); }}
     .notice {{
@@ -556,9 +572,10 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
       .actions {{ justify-content: stretch; }}
       button {{ width: 100%; }}
     }}
-  </style>
+</style>
 </head>
 <body>
+  <a class="skip-link" href="#settings-form">Skip to settings form</a>
   <main>
     <header>
       <div>
@@ -567,66 +584,66 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
       </div>
     </header>
     {saved_banner}
-    <form method="post" action="/save">
+    <form id="settings-form" method="post" action="/save" aria-label="DivApply settings">
       <input type="hidden" name="token" value="{_esc(token)}">
       <section class="wide">
         <h2>Personal</h2>
         <div class="compact-grid">
           <div>
             <label for="first_name">First name</label>
-            <input id="first_name" name="first_name" type="text" value="{_esc(values['first_name'])}">
+            <input id="first_name" name="first_name" type="text" autocomplete="given-name" value="{_esc(values['first_name'])}">
           </div>
           <div>
             <label for="middle_name">Middle name</label>
-            <input id="middle_name" name="middle_name" type="text" value="{_esc(values['middle_name'])}">
+            <input id="middle_name" name="middle_name" type="text" autocomplete="additional-name" value="{_esc(values['middle_name'])}">
           </div>
           <div>
             <label for="last_name">Last name</label>
-            <input id="last_name" name="last_name" type="text" value="{_esc(values['last_name'])}">
+            <input id="last_name" name="last_name" type="text" autocomplete="family-name" value="{_esc(values['last_name'])}">
           </div>
           <div>
             <label for="preferred_name">Preferred name</label>
-            <input id="preferred_name" name="preferred_name" type="text" value="{_esc(values['preferred_name'])}">
+            <input id="preferred_name" name="preferred_name" type="text" autocomplete="nickname" value="{_esc(values['preferred_name'])}">
           </div>
           <div>
             <label for="email">Email</label>
-            <input id="email" name="email" type="text" value="{_esc(values['email'])}">
+            <input id="email" name="email" type="email" autocomplete="email" value="{_esc(values['email'])}">
           </div>
           <div>
             <label for="phone">Phone</label>
-            <input id="phone" name="phone" type="text" value="{_esc(values['phone'])}">
+            <input id="phone" name="phone" type="tel" autocomplete="tel" value="{_esc(values['phone'])}">
           </div>
           <div class="wide-field">
             <label for="address">Address</label>
-            <input id="address" name="address" type="text" value="{_esc(values['address'])}">
+            <input id="address" name="address" type="text" autocomplete="street-address" value="{_esc(values['address'])}">
           </div>
           <div>
             <label for="city">City</label>
-            <input id="city" name="city" type="text" value="{_esc(values['city'])}">
+            <input id="city" name="city" type="text" autocomplete="address-level2" value="{_esc(values['city'])}">
           </div>
           <div>
             <label for="province_state">State</label>
-            <input id="province_state" name="province_state" type="text" value="{_esc(values['province_state'])}">
+            <input id="province_state" name="province_state" type="text" autocomplete="address-level1" value="{_esc(values['province_state'])}">
           </div>
           <div>
             <label for="postal_code">Postal code</label>
-            <input id="postal_code" name="postal_code" type="text" value="{_esc(values['postal_code'])}">
+            <input id="postal_code" name="postal_code" type="text" autocomplete="postal-code" value="{_esc(values['postal_code'])}">
           </div>
           <div>
             <label for="country">Country</label>
-            <input id="country" name="country" type="text" value="{_esc(values['country'])}">
+            <input id="country" name="country" type="text" autocomplete="country-name" value="{_esc(values['country'])}">
           </div>
           <div class="wide-field">
             <label for="linkedin_url">LinkedIn</label>
-            <input id="linkedin_url" name="linkedin_url" type="text" value="{_esc(values['linkedin_url'])}">
+            <input id="linkedin_url" name="linkedin_url" type="url" autocomplete="url" value="{_esc(values['linkedin_url'])}">
           </div>
           <div class="wide-field">
             <label for="github_url">GitHub</label>
-            <input id="github_url" name="github_url" type="text" value="{_esc(values['github_url'])}">
+            <input id="github_url" name="github_url" type="url" autocomplete="url" value="{_esc(values['github_url'])}">
           </div>
           <div class="wide-field">
             <label for="website_url">Website</label>
-            <input id="website_url" name="website_url" type="text" value="{_esc(values['website_url'])}">
+            <input id="website_url" name="website_url" type="url" autocomplete="url" value="{_esc(values['website_url'])}">
           </div>
         </div>
       </section>

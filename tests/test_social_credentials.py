@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from divapply import social
+from divapply.security import UnsafeUrlError
 
 
 def test_social_credentials_ignore_profile_passwords(monkeypatch) -> None:
@@ -44,3 +45,21 @@ def test_social_credentials_use_credentials_yaml(monkeypatch) -> None:
 
     assert social._get_credentials(profile, "linkedin.com") == ("site-user", "site-password")
     assert social._get_credentials(profile, "facebook.com") == ("default-user", "default-password")
+
+
+def test_linkedin_profile_url_defaults_and_accepts_linkedin() -> None:
+    assert social._linkedin_profile_url({"personal": {}}) == "https://www.linkedin.com/in/me"
+    assert (
+        social._linkedin_profile_url({"personal": {"linkedin_url": "https://www.linkedin.com/in/example"}})
+        == "https://www.linkedin.com/in/example"
+    )
+
+
+def test_linkedin_profile_url_rejects_unsafe_or_wrong_hosts() -> None:
+    for value in ("javascript:alert(1)", "https://evil.example/in/example", "http://127.0.0.1:8080/profile"):
+        try:
+            social._linkedin_profile_url({"personal": {"linkedin_url": value}})
+        except UnsafeUrlError:
+            pass
+        else:
+            raise AssertionError(f"expected unsafe LinkedIn URL to be rejected: {value}")

@@ -20,6 +20,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 import httpx
 
@@ -27,10 +28,23 @@ from divapply.config import (
     APP_DIR, RESUME_PATH, load_credentials, load_env, load_profile, ensure_dirs, profile_skills,
 )
 from divapply.llm import get_client
+from divapply.security import UnsafeUrlError, validate_external_url
 
 log = logging.getLogger(__name__)
 
 SCREENSHOT_DIR = APP_DIR / "social_screenshots"
+
+
+def _linkedin_profile_url(profile: dict) -> str:
+    """Return a safe LinkedIn profile URL for browser automation."""
+    raw_url = str(profile.get("personal", {}).get("linkedin_url", "") or "").strip()
+    if not raw_url:
+        return "https://www.linkedin.com/in/me"
+    safe_url = validate_external_url(raw_url, field="LinkedIn profile URL")
+    host = (urlparse(safe_url).hostname or "").casefold()
+    if host not in {"linkedin.com", "www.linkedin.com"} and not host.endswith(".linkedin.com"):
+        raise UnsafeUrlError("LinkedIn profile URL must be on linkedin.com")
+    return safe_url
 
 
 # ---------------------------------------------------------------------------
@@ -550,9 +564,7 @@ def _linkedin_check_login(page, profile: dict) -> bool:
 
 def _linkedin_update_headline(page, profile: dict, headline: str) -> bool:
     """Navigate to LinkedIn edit intro and update the headline."""
-    linkedin_url = profile.get("personal", {}).get("linkedin_url", "")
-    if not linkedin_url:
-        linkedin_url = "https://www.linkedin.com/in/me"
+    linkedin_url = _linkedin_profile_url(profile)
 
     # Go to profile page
     page.goto(linkedin_url, wait_until="domcontentloaded", timeout=20000)
@@ -612,9 +624,7 @@ def _linkedin_update_headline(page, profile: dict, headline: str) -> bool:
 
 def _linkedin_update_about(page, profile: dict, summary: str) -> bool:
     """Update the LinkedIn About section."""
-    linkedin_url = profile.get("personal", {}).get("linkedin_url", "")
-    if not linkedin_url:
-        linkedin_url = "https://www.linkedin.com/in/me"
+    linkedin_url = _linkedin_profile_url(profile)
 
     page.goto(linkedin_url, wait_until="domcontentloaded", timeout=20000)
     time.sleep(2)
@@ -679,9 +689,7 @@ def _linkedin_update_about(page, profile: dict, summary: str) -> bool:
 
 def _linkedin_update_contact_info(page, profile: dict) -> bool:
     """Update LinkedIn contact info (website, phone, email)."""
-    linkedin_url = profile.get("personal", {}).get("linkedin_url", "")
-    if not linkedin_url:
-        linkedin_url = "https://www.linkedin.com/in/me"
+    linkedin_url = _linkedin_profile_url(profile)
 
     edit_url = linkedin_url.rstrip("/") + "/edit/contact-info/"
     page.goto(edit_url, wait_until="domcontentloaded", timeout=15000)

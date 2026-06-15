@@ -154,3 +154,37 @@ def test_workday_title_include_filter_keeps_target_roles(monkeypatch) -> None:
 
     assert result["new"] == 1
     assert captured["titles"] == ["Patient Service Representative"]
+
+
+def test_scrape_employers_continues_when_parallel_worker_crashes(monkeypatch) -> None:
+    events: list[tuple[str, dict | None]] = []
+    employers = {
+        "ok": {"name": "OK Employer"},
+        "bad": {"name": "Bad Employer"},
+    }
+
+    monkeypatch.setattr(workday, "init_db", lambda: None)
+    monkeypatch.setattr(
+        workday,
+        "record_reliability_event",
+        lambda category, _message, **kwargs: events.append((category, kwargs.get("context"))),
+    )
+
+    def fake_process_one(key, *_args, **_kwargs):
+        if key == "bad":
+            raise RuntimeError("worker exploded")
+        return {"new": 2, "existing": 1, "found": 3}
+
+    monkeypatch.setattr(workday, "_process_one", fake_process_one)
+
+    result = workday.scrape_employers(
+        "support",
+        employers,
+        employer_keys=["ok", "bad"],
+        workers=2,
+    )
+
+    assert result["new"] == 2
+    assert result["existing"] == 1
+    assert result["found"] == 3
+    assert events == [("workday_worker_crashed", {"employer": "bad", "search_text": "support", "error": "worker exploded"})]

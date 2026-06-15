@@ -104,6 +104,11 @@ def sanitize_external_url(url: str | None, *, field: str = "url") -> str | None:
         return None
 
 
+def validate_navigation_url(url: str | None, *, field: str = "url") -> str:
+    """Validate the final browser navigation URL after redirects."""
+    return validate_external_url(url, field=f"{field} final URL")
+
+
 def protect_file(path: Path | str) -> None:
     """Best-effort user-only permissions for sensitive local files."""
     try:

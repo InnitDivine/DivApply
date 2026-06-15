@@ -93,6 +93,27 @@ def sanitize_text(text: str) -> str:
     return text.strip()
 
 
+def _add_banned_word_findings(text: str, mode: str, errors: list[str], warnings: list[str]) -> None:
+    """Append banned-word findings using the configured validation mode."""
+    if mode == "lenient":
+        return
+    found = [word for word in BANNED_WORDS if re.search(r"\b" + re.escape(word) + r"\b", text)]
+    if not found:
+        return
+    msg = f"Banned words: {', '.join(found[:5])}"
+    if mode == "strict":
+        errors.append(msg)
+    else:
+        warnings.append(msg)
+
+
+def _add_llm_leak_findings(text: str, errors: list[str]) -> None:
+    """Append an error when model self-talk leaked into generated content."""
+    found = [phrase for phrase in LLM_LEAK_PHRASES if phrase in text]
+    if found:
+        errors.append(f"LLM self-talk: '{found[0]}'")
+
+
 # â”€â”€ JSON Field Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dict:
@@ -174,19 +195,10 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     all_text = " ".join(all_text_parts).lower()
 
     # LLM self-talk is always an error regardless of mode (indicates broken output)
-    found_leaks = [p for p in LLM_LEAK_PHRASES if p in all_text]
-    if found_leaks:
-        errors.append(f"LLM self-talk: '{found_leaks[0]}'")
+    _add_llm_leak_findings(all_text, errors)
 
     # Banned filler words â€” severity depends on mode
-    if mode != "lenient":
-        found_banned = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", all_text)]
-        if found_banned:
-            msg = f"Banned words: {', '.join(found_banned[:5])}"
-            if mode == "strict":
-                errors.append(msg)
-            else:  # normal
-                warnings.append(msg)
+    _add_banned_word_findings(all_text, mode, errors, warnings)
 
     return {"passed": len(errors) == 0, "errors": errors, "warnings": warnings}
 
@@ -292,19 +304,10 @@ def validate_tailored_resume(
     # 10. Banned words (word-boundary matching). Severity respects the
     # caller's validation mode so "normal"/"lenient" don't force retries
     # over filler-word complaints.
-    if mode != "lenient":
-        found_banned = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
-        if found_banned:
-            msg = f"Banned words: {', '.join(found_banned[:5])}"
-            if mode == "strict":
-                errors.append(msg)
-            else:  # normal
-                warnings.append(msg)
+    _add_banned_word_findings(text_lower, mode, errors, warnings)
 
     # 11. LLM self-talk leak detection
-    found_leaks = [p for p in LLM_LEAK_PHRASES if p in text_lower]
-    if found_leaks:
-        errors.append(f"LLM self-talk: '{found_leaks[0]}'")
+    _add_llm_leak_findings(text_lower, errors)
 
     # 12. Duplicate section detection
     for section_name in ["summary", "experience", "education", "projects"]:
@@ -365,14 +368,7 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
         errors.append("Contains em dash or en dash.")
 
     # 2. Banned words â€” severity depends on mode
-    if mode != "lenient":
-        found = [w for w in BANNED_WORDS if re.search(r"\b" + re.escape(w) + r"\b", text_lower)]
-        if found:
-            msg = f"Banned words: {', '.join(found[:5])}"
-            if mode == "strict":
-                errors.append(msg)
-            else:  # normal
-                warnings.append(msg)
+    _add_banned_word_findings(text_lower, mode, errors, warnings)
 
     # 3. Word count
     words = len(text.split())
@@ -383,9 +379,7 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
     # lenient: no word count check
 
     # 4. LLM self-talk â€” always an error regardless of mode
-    found_leaks = [p for p in LLM_LEAK_PHRASES if p in text_lower]
-    if found_leaks:
-        errors.append(f"LLM self-talk: '{found_leaks[0]}'")
+    _add_llm_leak_findings(text_lower, errors)
 
     # 5. Must start with "Dear" â€” always checked (preamble should have been stripped)
     stripped = text.strip()

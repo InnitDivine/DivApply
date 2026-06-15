@@ -22,7 +22,7 @@ import yaml
 
 from divapply import config
 from divapply.config import resolve_config_file
-from divapply.database import get_connection, init_db
+from divapply.database import get_connection, init_db, record_reliability_event
 from divapply.discovery.filters import load_location_filter, load_title_excludes, location_ok, title_ok
 from divapply.security import UnsafeUrlError, safe_join_external_url, sanitize_external_url, validate_external_url
 
@@ -469,7 +469,18 @@ def scrape_employers(
                 for key in valid_keys
             }
             for future in as_completed(futures):
-                result = future.result()
+                key = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    log.exception("Workday employer worker crashed for %s", key)
+                    record_reliability_event(
+                        "workday_worker_crashed",
+                        "Workday employer worker crashed",
+                        severity="error",
+                        context={"employer": key, "search_text": search_text, "error": str(exc)},
+                    )
+                    result = {"new": 0, "existing": 0, "found": 0, "error": str(exc)}
                 completed += 1
                 total_new += result["new"]
                 total_existing += result["existing"]

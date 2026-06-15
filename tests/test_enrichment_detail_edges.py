@@ -130,3 +130,23 @@ def test_scrape_site_batch_commits_before_inter_job_delay(tmp_path, monkeypatch)
     )
 
     assert stats["ok"] == 2
+
+
+def test_scrape_detail_page_rejects_redirect_to_private_url() -> None:
+    class FakeResponse:
+        status = 200
+        url = "http://127.0.0.1:8080/admin"
+
+    class FakePage:
+        url = "http://127.0.0.1:8080/admin"
+
+        def goto(self, _url, timeout):
+            return FakeResponse()
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+    result = detail.scrape_detail_page(FakePage(), "https://jobs.example.com/posting")
+
+    assert result["status"] == "error"
+    assert "private or local address" in result["error"]

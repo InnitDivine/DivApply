@@ -325,6 +325,10 @@ def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
         "CREATE INDEX IF NOT EXISTS idx_jobs_dashboard_site "
         "ON jobs(site) WHERE archived_at IS NULL"
     )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_dashboard_ready "
+        "ON jobs(archived_at, application_url) WHERE full_description IS NOT NULL"
+    )
     try:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_canonical_key_unique "

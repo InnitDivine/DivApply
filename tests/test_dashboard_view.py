@@ -78,6 +78,9 @@ def test_generate_dashboard_includes_accessible_controls(tmp_path, monkeypatch):
     assert 'role="list"' in html
     assert 'role="listitem"' in html
     assert 'data-min-score="7"' in html
+    assert 'data-search="software engineer rbc logan, ut $100k python, accessibility strong local fit.' in html
+    assert "card.dataset.search || ''" in html
+    assert "card.textContent.toLowerCase()" not in html
     assert "onclick=" not in html
     assert "oninput=" not in html
 
@@ -221,3 +224,66 @@ def test_fetch_dashboard_snapshot_shapes_dashboard_read_model():
     assert snapshot.high_fit == 1
     assert snapshot.score_dist == {8: 1}
     assert [job["url"] for job in snapshot.jobs] == ["https://example.com/job"]
+
+
+def test_archive_dashboard_form_redirects_after_success(monkeypatch):
+    archived: list[str] = []
+
+    monkeypatch.setattr(view, "archive_job", lambda url: archived.append(url) or True)
+
+    status, message, should_redirect = view._archive_dashboard_form({"url": "https://example.com/job"})
+
+    assert (status, message, should_redirect) == (303, "", True)
+    assert archived == ["https://example.com/job"]
+
+
+def test_archive_dashboard_form_rejects_missing_url(monkeypatch):
+    events: list[str] = []
+
+    monkeypatch.setattr(view, "record_reliability_event", lambda category, _message, **_kwargs: events.append(category))
+
+    status, message, should_redirect = view._archive_dashboard_form({})
+
+    assert (status, message, should_redirect) == (400, "Missing job URL.", False)
+    assert events == ["dashboard_missing_archive_url"]
+
+
+def test_archive_dashboard_form_reports_missing_or_archived_job(monkeypatch):
+    events: list[tuple[str, dict]] = []
+
+    monkeypatch.setattr(view, "archive_job", lambda _url: False)
+    monkeypatch.setattr(
+        view,
+        "record_reliability_event",
+        lambda category, _message, **kwargs: events.append((category, kwargs)),
+    )
+
+    status, message, should_redirect = view._archive_dashboard_form({"url": "https://example.com/missing"})
+
+    assert (status, message, should_redirect) == (404, "Job was not found or is already archived.", False)
+    assert events[0][0] == "dashboard_archive_not_found"
+    assert events[0][1]["context"] == {"url": "https://example.com/missing"}
+
+
+def test_archive_dashboard_form_handles_archive_exception(monkeypatch):
+    events: list[tuple[str, dict]] = []
+
+    def fail_archive(_url: str) -> bool:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(view, "archive_job", fail_archive)
+    monkeypatch.setattr(
+        view,
+        "record_reliability_event",
+        lambda category, _message, **kwargs: events.append((category, kwargs)),
+    )
+
+    status, message, should_redirect = view._archive_dashboard_form({"url": "https://example.com/job"})
+
+    assert (status, message, should_redirect) == (500, "Archive failed.", False)
+    assert events[0][0] == "dashboard_archive_failed"
+    assert events[0][1]["severity"] == "error"
+    assert events[0][1]["context"] == {
+        "url": "https://example.com/job",
+        "error": "database is locked",
+    }

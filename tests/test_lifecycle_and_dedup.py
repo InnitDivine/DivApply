@@ -16,6 +16,7 @@ from divapply.database import (
     get_jobs_by_stage,
     get_stats,
     init_db,
+    record_reliability_event,
     store_jobs,
 )
 
@@ -450,4 +451,37 @@ def test_add_application_event_rolls_back_invalid_event_type(tmp_path) -> None:
 
     assert count == 0
     assert status is None
+    close_connection(db_path)
+
+
+def test_add_application_event_rejects_unknown_job_url(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    with pytest.raises(ValueError, match="job_url does not exist"):
+        add_application_event("https://example.com/missing", "applied", conn=conn)
+
+    count = conn.execute("SELECT COUNT(*) FROM application_events").fetchone()[0]
+    event = conn.execute(
+        "SELECT severity, category FROM reliability_events WHERE category = ?",
+        ("application_event_orphan_rejected",),
+    ).fetchone()
+
+    assert count == 0
+    assert event["severity"] == "error"
+    close_connection(db_path)
+
+
+def test_get_stats_reports_reliability_error_monitoring(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    record_reliability_event(
+        "unit_test_failure",
+        "Simulated reliability event",
+        severity="error",
+        conn=conn,
+    )
+
+    assert get_stats(conn)["reliability_errors"] == 1
     close_connection(db_path)

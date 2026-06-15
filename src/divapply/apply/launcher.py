@@ -25,7 +25,7 @@ from rich.console import Console
 from rich.live import Live
 
 from divapply import config
-from divapply.database import add_application_event, get_connection
+from divapply.database import add_application_event, get_connection, record_reliability_event
 from divapply.apply import prompt as prompt_mod
 from divapply.apply.chrome import (
     launch_chrome, cleanup_worker, kill_all_chrome,
@@ -963,64 +963,81 @@ def main(limit: int = 1, target_url: str | None = None,
             dashboard_stop = threading.Event()
 
             def _refresh():
-                while not dashboard_stop.is_set():
-                    live.update(render_full())
-                    time.sleep(0.5)
+                try:
+                    while not dashboard_stop.is_set():
+                        live.update(render_full())
+                        time.sleep(0.5)
+                except Exception as exc:
+                    logger.exception("Apply dashboard refresh thread crashed")
+                    record_reliability_event(
+                        "apply_dashboard_refresh_crashed",
+                        "Apply dashboard refresh thread crashed",
+                        severity="error",
+                        context={"error": str(exc)},
+                    )
+                    dashboard_stop.set()
 
             refresh_thread = threading.Thread(target=_refresh, daemon=True)
             refresh_thread.start()
 
-            if workers == 1:
-                total_applied, total_failed = worker_loop(
-                    worker_id=0,
-                    limit=effective_limit,
-                    target_url=target_url,
-                    min_score=min_score,
-                    headless=headless,
-                    model=model,
-                    backend=backend,
-                    browser=browser,
-                    dry_run=dry_run,
-                )
-            else:
-                if effective_limit:
-                    base = effective_limit // workers
-                    extra = effective_limit % workers
-                    limits = [base + (1 if i < extra else 0) for i in range(workers)]
+            try:
+                if workers == 1:
+                    total_applied, total_failed = worker_loop(
+                        worker_id=0,
+                        limit=effective_limit,
+                        target_url=target_url,
+                        min_score=min_score,
+                        headless=headless,
+                        model=model,
+                        backend=backend,
+                        browser=browser,
+                        dry_run=dry_run,
+                    )
                 else:
-                    limits = [0] * workers
+                    if effective_limit:
+                        base = effective_limit // workers
+                        extra = effective_limit % workers
+                        limits = [base + (1 if i < extra else 0) for i in range(workers)]
+                    else:
+                        limits = [0] * workers
 
-                with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="apply-worker") as executor:
-                    futures = {
-                        executor.submit(
-                            worker_loop,
-                            worker_id=i,
-                            limit=limits[i],
-                            target_url=target_url,
-                            min_score=min_score,
-                            headless=headless,
-                            model=model,
-                            backend=backend,
-                            browser=browser,
-                            dry_run=dry_run,
-                        ): i
-                        for i in range(workers)
-                    }
+                    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="apply-worker") as executor:
+                        futures = {
+                            executor.submit(
+                                worker_loop,
+                                worker_id=i,
+                                limit=limits[i],
+                                target_url=target_url,
+                                min_score=min_score,
+                                headless=headless,
+                                model=model,
+                                backend=backend,
+                                browser=browser,
+                                dry_run=dry_run,
+                            ): i
+                            for i in range(workers)
+                        }
 
-                    results: list[tuple[int, int]] = []
-                    for future in as_completed(futures):
-                        wid = futures[future]
-                        try:
-                            results.append(future.result())
-                        except Exception:
-                            logger.exception("Worker %d crashed", wid)
-                            results.append((0, 0))
+                        results: list[tuple[int, int]] = []
+                        for future in as_completed(futures):
+                            wid = futures[future]
+                            try:
+                                results.append(future.result())
+                            except Exception as exc:
+                                logger.exception("Worker %d crashed", wid)
+                                record_reliability_event(
+                                    "apply_worker_crashed",
+                                    "Apply worker crashed",
+                                    severity="error",
+                                    context={"worker_id": wid, "error": str(exc)},
+                                )
+                                results.append((0, 0))
 
-                total_applied = sum(r[0] for r in results)
-                total_failed = sum(r[1] for r in results)
-
-            dashboard_stop.set()
-            refresh_thread.join(timeout=2)
+                    total_applied = sum(r[0] for r in results)
+                    total_failed = sum(r[1] for r in results)
+            finally:
+                dashboard_stop.set()
+                refresh_thread.join(timeout=2)
             live.update(render_full())
 
         totals = get_totals()

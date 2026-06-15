@@ -5,7 +5,9 @@ import json
 import pytest
 
 from divapply import config
+from divapply.database import close_connection, init_db
 from divapply.discovery import smartextract
+from divapply.security import UnsafeUrlError
 
 
 def test_extract_json_strips_thinking_and_code_fences() -> None:
@@ -101,3 +103,159 @@ def test_normalize_applicantpro_numeric_url_uses_jobs_path(monkeypatch) -> None:
         smartextract._normalize_job_url("Cache County", "4110020")
         == "https://cachecounty.applicantpro.com/jobs/4110020"
     )
+
+
+def test_run_all_continues_when_parallel_worker_crashes(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    events: list[tuple[str, dict | None]] = []
+
+    monkeypatch.setattr(smartextract, "init_db", lambda: conn)
+    monkeypatch.setattr(smartextract, "get_stats", lambda _conn: {"total": 0, "pending_detail": 0})
+    monkeypatch.setattr(smartextract, "_load_plan_cache", lambda: {})
+    monkeypatch.setattr(smartextract, "_save_plan_cache", lambda _cache: None)
+    monkeypatch.setattr(
+        smartextract,
+        "record_reliability_event",
+        lambda category, _message, **kwargs: events.append((category, kwargs.get("context"))),
+    )
+
+    def fake_run_one_site(name, url, cached_plan=None):
+        if name == "Bad Site":
+            raise RuntimeError("site exploded")
+        return {
+            "name": name,
+            "status": "PASS",
+            "total": 0,
+            "titles": 0,
+            "strategy": "unit",
+            "jobs": [],
+        }
+
+    monkeypatch.setattr(smartextract, "_run_one_site", fake_run_one_site)
+
+    result = smartextract._run_all(
+        [
+            {"name": "Good Site", "url": "https://good.example/jobs"},
+            {"name": "Bad Site", "url": "https://bad.example/jobs"},
+        ],
+        accept_locs=[],
+        reject_locs=[],
+        workers=2,
+    )
+
+    assert result == {"total_new": 0, "total_existing": 0, "passed": 1, "total": 2}
+    assert events == [
+        (
+            "smartextract_worker_crashed",
+            {"target": "Bad Site", "url": "https://bad.example/jobs", "error": "site exploded"},
+        )
+    ]
+    close_connection(db_path)
+
+
+def test_collect_page_intelligence_rejects_redirect_to_private_url(monkeypatch) -> None:
+    class FakeResponse:
+        status = 200
+        url = "http://127.0.0.1:8080/admin"
+
+    class FakePage:
+        url = "http://127.0.0.1:8080/admin"
+
+        def on(self, *_args):
+            return None
+
+        def goto(self, _url, timeout):
+            return FakeResponse()
+
+    class FakeBrowser:
+        def new_page(self, **_kwargs):
+            return FakePage()
+
+    class FakeChromium:
+        def launch(self, **_kwargs):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakeSyncPlaywright:
+        def __enter__(self):
+            return FakePlaywright()
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(smartextract, "sync_playwright", lambda: FakeSyncPlaywright())
+
+    with pytest.raises(UnsafeUrlError):
+        smartextract.collect_page_intelligence("https://jobs.example.com")
+
+
+def test_collect_page_intelligence_skips_private_response_capture(monkeypatch) -> None:
+    class PrivateResponse:
+        status = 200
+        url = "http://127.0.0.1:8080/api/secrets"
+        headers = {"content-type": "application/json"}
+
+        def text(self):
+            raise AssertionError("private response body should not be read")
+
+    class SafeResponse:
+        status = 200
+        url = "https://jobs.example.com"
+
+    class FakePage:
+        url = "https://jobs.example.com"
+
+        def on(self, _event, callback):
+            self._callback = callback
+
+        def goto(self, _url, timeout):
+            self._callback(PrivateResponse())
+            return SafeResponse()
+
+        def wait_for_load_state(self, *_args, **_kwargs):
+            return None
+
+        def title(self):
+            return "Jobs"
+
+        def query_selector_all(self, _selector):
+            return []
+
+        def query_selector(self, _selector):
+            return None
+
+        def evaluate(self, _script):
+            return [] if "querySelectorAll" in _script else {}
+
+        def content(self):
+            return "<html><body></body></html>"
+
+    class FakeBrowser:
+        def new_page(self, **_kwargs):
+            return FakePage()
+
+        def close(self):
+            return None
+
+    class FakeChromium:
+        def launch(self, **_kwargs):
+            return FakeBrowser()
+
+    class FakePlaywright:
+        chromium = FakeChromium()
+
+    class FakeSyncPlaywright:
+        def __enter__(self):
+            return FakePlaywright()
+
+        def __exit__(self, *_exc):
+            return False
+
+    monkeypatch.setattr(smartextract, "sync_playwright", lambda: FakeSyncPlaywright())
+
+    intel = smartextract.collect_page_intelligence("https://jobs.example.com")
+
+    assert intel["api_responses"] == []

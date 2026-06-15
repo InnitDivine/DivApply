@@ -562,3 +562,45 @@ def test_run_job_removes_transient_prompt_file(tmp_path, monkeypatch) -> None:
 
     assert status == "applied"
     assert not (worker_dir / "apply_prompt.txt").exists()
+
+
+def test_main_records_parallel_worker_crashes(monkeypatch) -> None:
+    events: list[tuple[str, dict | None]] = []
+
+    class FakeLive:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc) -> bool:
+            return False
+
+        def update(self, *_args, **_kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(launcher.config, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(launcher, "recover_stale_apply_locks", lambda: 0)
+    monkeypatch.setattr(launcher, "init_worker", lambda _worker_id: None)
+    monkeypatch.setattr(launcher, "render_full", lambda: "")
+    monkeypatch.setattr(launcher, "Live", FakeLive)
+    monkeypatch.setattr(launcher, "kill_all_chrome", lambda: None)
+    monkeypatch.setattr(launcher, "get_totals", lambda: {"cost": 0})
+    monkeypatch.setattr(launcher.signal, "signal", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        launcher,
+        "record_reliability_event",
+        lambda category, _message, **kwargs: events.append((category, kwargs.get("context"))),
+    )
+
+    def fake_worker_loop(*, worker_id, **_kwargs):
+        if worker_id == 0:
+            raise RuntimeError("worker exploded")
+        return (1, 0)
+
+    monkeypatch.setattr(launcher, "worker_loop", fake_worker_loop)
+
+    launcher.main(limit=2, workers=2)
+
+    assert events == [("apply_worker_crashed", {"worker_id": 0, "error": "worker exploded"})]

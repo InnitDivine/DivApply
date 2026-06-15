@@ -22,9 +22,9 @@ from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from divapply.database import init_db
+from divapply.database import init_db, record_reliability_event
 from divapply.llm import get_client
-from divapply.security import sanitize_external_url, validate_external_url
+from divapply.security import sanitize_external_url, validate_external_url, validate_navigation_url
 
 log = logging.getLogger(__name__)
 
@@ -637,6 +637,8 @@ def scrape_detail_page(page, url: str) -> dict:
     try:
         url = validate_external_url(url, field="job url")
         resp = page.goto(url, timeout=45000)
+        if resp is not None:
+            validate_navigation_url(getattr(resp, "url", None), field="job url")
         if resp and resp.status in PERMANENT_FAILURES:
             result["error"] = f"HTTP {resp.status}"
             result["elapsed"] = time.time() - t0
@@ -646,6 +648,7 @@ def scrape_detail_page(page, url: str) -> dict:
             page.wait_for_load_state("networkidle", timeout=10000)
         except Exception:
             pass
+        validate_navigation_url(getattr(page, "url", url), field="job url")
     except Exception as e:
         err_str = str(e)
         if "timeout" in err_str.lower():
@@ -876,7 +879,24 @@ def _run_detail_scraper(
         with ThreadPoolExecutor(max_workers=min(workers, len(order))) as pool:
             futures = {pool.submit(_scrape_site, site): site for site in order}
             for future in as_completed(futures):
-                _merge_stats(future.result())
+                site = futures[future]
+                try:
+                    _merge_stats(future.result())
+                except Exception as exc:
+                    log.exception("Enrichment site worker crashed for %s", site)
+                    record_reliability_event(
+                        "enrichment_worker_crashed",
+                        "Enrichment site worker crashed",
+                        severity="error",
+                        context={"site": site, "error": str(exc)},
+                    )
+                    _merge_stats({
+                        "processed": 0,
+                        "ok": 0,
+                        "partial": 0,
+                        "error": len(site_jobs.get(site, [])) or 1,
+                        "tiers": {},
+                    })
     else:
         # Sequential mode (default)
         for site in order:

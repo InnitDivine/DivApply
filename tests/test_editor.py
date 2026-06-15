@@ -58,6 +58,12 @@ def test_render_editor_shows_simple_setup_controls() -> None:
     )
 
     assert "First name" in html
+    assert '<a class="skip-link" href="#settings-form">Skip to settings form</a>' in html
+    assert '<form id="settings-form" method="post" action="/save" aria-label="DivApply settings">' in html
+    assert 'id="email" name="email" type="email" autocomplete="email"' in html
+    assert 'id="phone" name="phone" type="tel" autocomplete="tel"' in html
+    assert 'id="linkedin_url" name="linkedin_url" type="url" autocomplete="url"' in html
+    assert "min-height: 44px" in html
     assert "Middle name" in html
     assert "Last name" in html
     assert "Email" in html
@@ -87,6 +93,30 @@ def test_render_editor_shows_simple_setup_controls() -> None:
     assert "Projected" not in html
     assert "Weekly" not in html
     assert "Save Settings" in html
+
+
+def test_render_editor_escapes_profile_search_values_and_csrf_token() -> None:
+    html = editor.render_editor(
+        {
+            "personal": {
+                "first_name": '<script>alert("profile")</script>',
+                "email": 'bad" onfocus="alert(1)',
+            },
+            "skills": ['customer <service>'],
+        },
+        {
+            "queries": [{"query": '<img src=x onerror=alert(1)>', "tier": 1}],
+            "locations": [{"location": 'Logan "><script>alert(1)</script>', "remote": False}],
+        },
+        token='token" autofocus onfocus="alert(1)',
+    )
+
+    assert '<script>alert("profile")</script>' not in html
+    assert '<img src=x onerror=alert(1)>' not in html
+    assert 'token" autofocus onfocus="alert(1)' not in html
+    assert "&lt;script&gt;alert(&quot;profile&quot;)&lt;/script&gt;" in html
+    assert "customer &lt;service&gt;" in html
+    assert "token&quot; autofocus onfocus=&quot;alert(1)" in html
 
 
 def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) -> None:
@@ -332,3 +362,42 @@ def test_save_editor_settings_preserves_extra_profile_record_fields(tmp_path, mo
     assert profile["certifications"][0]["expires"] == "2028"
     assert profile["certifications"][0]["number"] == "ABC123"
     assert profile["references"][0]["relationship"] == "Former supervisor"
+
+
+def test_save_editor_settings_clamps_invalid_numbers_and_query_tiers(tmp_path, monkeypatch) -> None:
+    profile_path = tmp_path / "profile.json"
+    search_path = tmp_path / "searches.yaml"
+    profile_path.write_text("{}", encoding="utf-8")
+    search_path.write_text("boards:\n  - indeed\n", encoding="utf-8")
+
+    monkeypatch.setattr(editor, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(editor, "SEARCH_CONFIG_PATH", search_path)
+
+    editor.save_editor_settings(
+        {
+            "target_hourly_rate": "-25",
+            "schedule_type": "side_hustle",
+            "queries": "too high | 99\ntoo low | -2\nnot numeric | senior\nplain query\n",
+            "boards": "",
+            "locations": "",
+            "results_per_site": "0",
+            "hours_old": "not-a-number",
+        }
+    )
+
+    profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    search = yaml.safe_load(search_path.read_text(encoding="utf-8"))
+
+    assert profile["compensation"]["target_hourly_rate"] == "0"
+    assert profile["compensation"]["salary_expectation"] == "0"
+    assert "20 hours per week" in profile["compensation"]["hourly_expectation"]
+    assert search["queries"] == [
+        {"query": "too high", "tier": 3},
+        {"query": "too low", "tier": 1},
+        {"query": "not numeric", "tier": 1},
+        {"query": "plain query", "tier": 1},
+    ]
+    assert search["boards"] == ["indeed"]
+    assert search["defaults"]["results_per_site"] == 1
+    assert search["defaults"]["hours_old"] == 168
+    assert search["require_part_time"] is True

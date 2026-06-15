@@ -24,7 +24,7 @@ from rich.console import Console
 
 from divapply.config import APP_DIR
 from divapply.dashboard_data import fetch_dashboard_snapshot
-from divapply.database import archive_job, get_connection
+from divapply.database import archive_job, get_connection, record_reliability_event
 from divapply.local_server import find_free_port
 from divapply.security import local_request_is_same_origin, parse_local_form_length, sanitize_external_url
 
@@ -183,7 +183,7 @@ def generate_dashboard(
         desc_preview = escape(_truncate(desc_raw, 300))
         full_desc_html = escape(j["full_description"] or "").replace("\n", "<br>")
         desc_len = len(desc_raw)
-        search_text = escape(
+        search_index = escape(
             " ".join(
                 part
                 for part in (
@@ -199,7 +199,6 @@ def generate_dashboard(
             ).casefold(),
             quote=True,
         )
-
         meta_parts = []
         meta_parts.append(
             f'<span class="meta-tag site-tag" style="border-color:{site_color}">{site}</span>'
@@ -232,7 +231,7 @@ def generate_dashboard(
         )
 
         job_section_parts.append(f"""
-        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-search="{search_text}" role="listitem">
+        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-search="{search_index}" role="listitem">
           <div class="card-header">
             <span class="score-pill" style="background:{_score_color(score)}" aria-label="Fit score {score}">{score}</span>
             {title_html}
@@ -436,7 +435,9 @@ def generate_dashboard(
 <script>
 let minScore = 0;
 let searchText = '';
-const jobCards = Array.from(document.querySelectorAll('.job-card'));
+const jobCards = Array.from(document.querySelectorAll('.job-card')).map(card => {{
+  return {{ card, searchText: card.dataset.search || '' }};
+}});
 const scoreGroups = Array.from(document.querySelectorAll('.score-group')).map(group => {{
   return {{ group, grid: group.querySelector('.job-grid') }};
 }});
@@ -460,10 +461,11 @@ function filterText(text) {{
 function applyFilters() {{
   let shown = 0;
   let total = 0;
-  jobCards.forEach(card => {{
+  jobCards.forEach(item => {{
+    const card = item.card;
     total++;
     const score = parseInt(card.dataset.score) || 0;
-    const text = card.dataset.search || '';
+    const text = item.searchText;
     const scoreMatch = score >= (minScore || 5);
     const textMatch = !searchText || text.includes(searchText);
     if (scoreMatch && textMatch) {{
@@ -546,9 +548,39 @@ class _DashboardServer(ThreadingHTTPServer):
     daemon_threads = True
 
 
-def _find_port(host: str, preferred: int) -> int:
-    """Backward-compatible wrapper around the shared localhost port helper."""
-    return find_free_port(host, preferred)
+def _archive_dashboard_form(form: dict[str, str]) -> tuple[int, str, bool]:
+    """Archive the submitted dashboard job and return status, body, redirect flag."""
+    url = form.get("url")
+    if not url:
+        record_reliability_event(
+            "dashboard_missing_archive_url",
+            "Rejected dashboard archive POST without job URL",
+            severity="warning",
+        )
+        return 400, "Missing job URL.", False
+
+    try:
+        archived = archive_job(url)
+    except Exception as exc:
+        log.exception("Dashboard archive failed")
+        record_reliability_event(
+            "dashboard_archive_failed",
+            "Dashboard archive failed",
+            severity="error",
+            context={"url": url, "error": str(exc)},
+        )
+        return 500, "Archive failed.", False
+
+    if not archived:
+        record_reliability_event(
+            "dashboard_archive_not_found",
+            "Dashboard archive requested a missing or already archived job",
+            severity="warning",
+            context={"url": url},
+        )
+        return 404, "Job was not found or is already archived.", False
+
+    return 303, "", True
 
 
 def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: bool = True) -> str:
@@ -563,60 +595,101 @@ def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: 
         def log_message(self, _format: str, *_args: Any) -> None:
             return
 
+        def _send_text(self, status: int, message: str) -> None:
+            data = message.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "text/plain; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.end_headers()
+            self.wfile.write(data)
+
         def do_GET(self) -> None:  # noqa: N802
             if self.path not in ("/", "/?archived=1"):
                 self.send_error(404)
                 return
-            key = _dashboard_cache_key()
-            with self.cache_lock:
-                data = self.response_cache["data"] if self.response_cache["key"] == key else None
-                if data is None:
-                    body = generate_dashboard(
-                        archive_endpoint="/archive",
-                        archive_token=token,
-                    )
-                    data = Path(body).read_bytes()
-                    self.response_cache["key"] = key
-                    self.response_cache["data"] = data
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-store")
-            self.send_header("Referrer-Policy", "same-origin")
-            self.send_header("X-Content-Type-Options", "nosniff")
-            self.end_headers()
-            self.wfile.write(data)
+            try:
+                key = _dashboard_cache_key()
+                with self.cache_lock:
+                    data = self.response_cache["data"] if self.response_cache["key"] == key else None
+                    if data is None:
+                        body = generate_dashboard(
+                            archive_endpoint="/archive",
+                            archive_token=token,
+                        )
+                        data = Path(body).read_bytes()
+                        self.response_cache["key"] = key
+                        self.response_cache["data"] = data
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Referrer-Policy", "same-origin")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                self.wfile.write(data)
+            except Exception as exc:
+                log.exception("Dashboard render failed")
+                record_reliability_event(
+                    "dashboard_render_failed",
+                    "Dashboard render failed",
+                    severity="error",
+                    context={"path": self.path, "error": str(exc)},
+                )
+                self._send_text(500, "Dashboard render failed.")
 
         def do_POST(self) -> None:  # noqa: N802
             if self.path != "/archive":
                 self.send_error(404)
                 return
             if not local_request_is_same_origin(self.headers, host, actual_port):
-                self.send_error(403)
+                record_reliability_event(
+                    "dashboard_cross_origin_post",
+                    "Rejected cross-origin dashboard POST",
+                    severity="warning",
+                    context={"origin": self.headers.get("Origin"), "referer": self.headers.get("Referer")},
+                )
+                self._send_text(403, "Forbidden.")
                 return
             try:
                 length = parse_local_form_length(self.headers.get("Content-Length"))
                 fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
             except UnicodeDecodeError:
-                self.send_error(400)
+                record_reliability_event(
+                    "dashboard_bad_post",
+                    "Rejected non-UTF-8 dashboard POST",
+                    severity="warning",
+                )
+                self._send_text(400, "Bad dashboard request.")
                 return
             except ValueError as exc:
-                self.send_error(413 if "large" in str(exc) else 400)
+                status = 413 if "large" in str(exc) else 400
+                record_reliability_event(
+                    "dashboard_bad_post",
+                    "Rejected malformed dashboard POST",
+                    severity="warning",
+                    context={"error": str(exc), "content_length": self.headers.get("Content-Length")},
+                )
+                self._send_text(status, "Bad dashboard request.")
                 return
             form = {key: values[-1] for key, values in fields.items()}
             if form.get("token") != token:
-                self.send_error(403)
+                record_reliability_event(
+                    "dashboard_bad_token",
+                    "Rejected dashboard archive POST with invalid token",
+                    severity="warning",
+                )
+                self._send_text(403, "Forbidden.")
                 return
-            if not form.get("url"):
-                self.send_error(400, "Missing job URL")
-                return
-            if not archive_job(form["url"]):
-                self.send_error(404, "Job not found or already archived")
+            status, message, should_redirect = _archive_dashboard_form(form)
+            if not should_redirect:
+                self._send_text(status, message)
                 return
             with self.cache_lock:
                 self.response_cache["key"] = None
                 self.response_cache["data"] = None
-            self.send_response(303)
+            self.send_response(status)
             self.send_header("Location", "/?archived=1")
             self.end_headers()
 

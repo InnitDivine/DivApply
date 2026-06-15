@@ -28,7 +28,7 @@ from playwright.sync_api import sync_playwright
 
 from divapply import config
 from divapply.config import resolve_config_file
-from divapply.database import init_db, get_stats
+from divapply.database import init_db, get_stats, record_reliability_event
 from divapply.discovery.filters import (
     load_location_filter,
     load_title_excludes,
@@ -37,7 +37,7 @@ from divapply.discovery.filters import (
     title_ok,
 )
 from divapply.llm import get_client
-from divapply.security import UnsafeUrlError, sanitize_external_url, validate_external_url
+from divapply.security import UnsafeUrlError, sanitize_external_url, validate_external_url, validate_navigation_url
 
 log = logging.getLogger(__name__)
 
@@ -234,6 +234,8 @@ def collect_page_intelligence(url: str, headless: bool = True) -> dict:
     def on_response(response):
         ct = response.headers.get("content-type", "")
         rurl = response.url
+        if sanitize_external_url(rurl, field="captured response url") is None:
+            return
         if any(ext in rurl for ext in [".js", ".css", ".png", ".jpg", ".svg", ".woff", ".ico", ".gif", ".webp"]):
             return
         if "json" in ct or "/api/" in rurl or "algolia" in rurl or "graphql" in rurl:
@@ -257,12 +259,15 @@ def collect_page_intelligence(url: str, headless: bool = True) -> dict:
         page = browser.new_page(user_agent=UA)
         page.on("response", on_response)
 
-        page.goto(url, timeout=60000)
+        resp = page.goto(url, timeout=60000)
+        if resp is not None:
+            validate_navigation_url(getattr(resp, "url", None), field="site url")
         try:
             page.wait_for_load_state("networkidle", timeout=60000)
         except Exception:
             # networkidle timeout is non-fatal â€” use whatever was captured
             pass
+        validate_navigation_url(getattr(page, "url", url), field="site url")
 
         intel["page_title"] = page.title()
 
@@ -374,8 +379,20 @@ def collect_page_intelligence(url: str, headless: bool = True) -> dict:
             }
         """)
 
-        # Capture full rendered HTML
-        intel["full_html"] = page.content()
+        # Capture full rendered HTML when Playwright exposes it; keep lighter
+        # intelligence usable if the browser/page object fails at this point.
+        try:
+            content = getattr(page, "content")
+            intel["full_html"] = content()
+        except Exception as exc:
+            log.warning("Could not capture rendered page HTML for %s: %s", url, exc)
+            record_reliability_event(
+                "smartextract_html_capture_failed",
+                "SmartExtract could not capture rendered page HTML",
+                severity="warning",
+                context={"url": url, "error": str(exc)},
+            )
+            intel["full_html"] = ""
 
         browser.close()
 
@@ -1262,7 +1279,24 @@ def _run_all(
             }
             for future in as_completed(future_to_target):
                 target = future_to_target[future]
-                r = future.result()
+                try:
+                    r = future.result()
+                except Exception as exc:
+                    log.exception("SmartExtract worker crashed for %s", target.get("name"))
+                    record_reliability_event(
+                        "smartextract_worker_crashed",
+                        "SmartExtract worker crashed",
+                        severity="error",
+                        context={"target": target.get("name"), "url": target.get("url"), "error": str(exc)},
+                    )
+                    r = {
+                        "name": target.get("name", "?"),
+                        "status": "FAIL",
+                        "total": 0,
+                        "titles": 0,
+                        "strategy": "?",
+                        "error": str(exc),
+                    }
                 results.append(r)
                 _process_result(r, target)
     else:

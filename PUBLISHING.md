@@ -45,7 +45,7 @@ Add the same version section to:
 CHANGELOG.md
 ```
 
-Commit the version change, then tag and push:
+Commit the version change, merge or fast-forward it onto `main`, then tag and push:
 
 ```bash
 git tag v0.4.6
@@ -53,7 +53,7 @@ git push origin main
 git push origin v0.4.6
 ```
 
-The `Release` workflow will lint, test, build the package, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, publish to PyPI, and create a GitHub Release with the built artifacts. After the workflow succeeds, users can install with:
+The `Release` workflow will lint, test, verify the tagged commit is reachable from `main`, build the package, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, publish to PyPI, and create a GitHub Release with the built artifacts. After the workflow succeeds, users can install with:
 
 ```bash
 pip install "divapply[full]"

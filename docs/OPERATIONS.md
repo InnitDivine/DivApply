@@ -15,7 +15,9 @@ CI runs on pull requests, pushes to `main`, and manual dispatch. It verifies:
 
 CI and release jobs use explicit read-only repository permissions except for the publish step, which grants only the `contents: write` and `id-token: write` permissions needed for GitHub Releases and PyPI Trusted Publishing. Jobs have timeouts so hung tests, builds, audits, or Docker commands do not block the pipeline indefinitely.
 
-Publishing runs only on `v*` tags. Tag releases are blocked when the tag version does not match `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`. The release workflow also runs a pre-publish lint and test gate before building or uploading artifacts. A successful release publishes to PyPI and creates a matching GitHub Release with the built artifacts.
+Publishing runs only on `v*` tags. Tag releases are blocked when the tagged commit is not already reachable from `main`, or when the tag version does not match `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`. The release workflow also runs a pre-publish lint and test gate before building or uploading artifacts. A successful release publishes to PyPI and creates a matching GitHub Release with the built artifacts.
+
+Dependabot opens weekly PRs for GitHub Actions and Python packaging dependencies so CI/CD drift is visible before a release window.
 
 Run the local preflight before tagging:
 
@@ -52,9 +54,10 @@ For PyPI releases:
 3. Update the version in `pyproject.toml` and `src/divapply/__init__.py`.
 4. Add the same version section to `CHANGELOG.md`.
 5. Commit the version change.
-6. Tag with the same version, for example `git tag v0.4.6`.
-7. Push `main`, then push the tag.
-8. Verify the GitHub `Release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
+6. Merge or fast-forward the release commit onto `main`.
+7. Tag the `main` commit with the same version, for example `git tag v0.4.6`.
+8. Push `main`, then push the tag.
+9. Verify the GitHub `Release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
 
 Clean install smoke test:
 

@@ -16,7 +16,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from divapply import config
-from divapply.database import canonical_job_key, get_connection, get_existing_canonical_keys, init_db
+from divapply.database import (
+    canonical_job_key,
+    get_connection,
+    get_existing_canonical_keys,
+    init_db,
+    record_reliability_event,
+)
 from divapply.discovery.filters import (
     REMOTE_TERMS,
     load_location_filter,
@@ -779,7 +785,22 @@ def _full_crawl(
                 for i, s in enumerate(searches)
             }
             for future in as_completed(futures):
-                result = future.result()
+                search = futures[future]
+                try:
+                    result = future.result()
+                except Exception as exc:
+                    log.exception("JobSpy search worker crashed for %s", search)
+                    record_reliability_event(
+                        "jobspy_worker_crashed",
+                        "JobSpy search worker crashed",
+                        severity="error",
+                        context={
+                            "query": search.get("query"),
+                            "location": search.get("location"),
+                            "error": str(exc),
+                        },
+                    )
+                    result = {"new": 0, "existing": 0, "errors": 1, "board_stats": {}}
                 with _lock:
                     total_new += result["new"]
                     total_existing += result["existing"]

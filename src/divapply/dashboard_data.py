@@ -25,52 +25,57 @@ class DashboardSnapshot:
     jobs: list[sqlite3.Row]
 
 
+def _has_index(conn: sqlite3.Connection, index_name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM pragma_index_list('jobs') WHERE name = ? LIMIT 1",
+        (index_name,),
+    ).fetchone() is not None
+
+
 def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> DashboardSnapshot:
     """Fetch and shape all database data required by the dashboard view."""
     if conn is None:
         conn = get_connection()
+    dashboard_score_table = (
+        "jobs INDEXED BY idx_jobs_dashboard_score"
+        if _has_index(conn, "idx_jobs_dashboard_score")
+        else "jobs"
+    )
+    dashboard_ready_table = (
+        "jobs INDEXED BY idx_jobs_dashboard_ready"
+        if _has_index(conn, "idx_jobs_dashboard_ready")
+        else "jobs"
+    )
 
-    counts = conn.execute(
-        """
-        SELECT
-            SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END) AS total,
-            SUM(CASE WHEN archived_at IS NOT NULL THEN 1 ELSE 0 END) AS archived,
-            SUM(CASE
-                WHEN archived_at IS NULL
-                 AND full_description IS NOT NULL
-                 AND COALESCE(application_url, '') != ''
-                THEN 1 ELSE 0
-            END) AS ready,
-            SUM(CASE
-                WHEN archived_at IS NULL
-                 AND fit_score IS NOT NULL
-                THEN 1 ELSE 0
-            END) AS scored,
-            SUM(CASE
-                WHEN archived_at IS NULL
-                 AND fit_score >= 7
-                THEN 1 ELSE 0
-            END) AS high_fit
-        FROM jobs
-        """
-    ).fetchone()
-    total = int(counts["total"] or 0)
-    archived = int(counts["archived"] or 0)
-    ready = int(counts["ready"] or 0)
-    scored = int(counts["scored"] or 0)
-    high_fit = int(counts["high_fit"] or 0)
+    total = int(conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL").fetchone()[0] or 0)
+    archived = int(conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NOT NULL").fetchone()[0] or 0)
+    ready = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_ready_table} "
+        "WHERE archived_at IS NULL "
+        "AND full_description IS NOT NULL "
+        "AND application_url IS NOT NULL "
+        "AND application_url != ''"
+    ).fetchone()[0] or 0)
+    scored = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL AND fit_score IS NOT NULL"
+    ).fetchone()[0] or 0)
+    high_fit = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL AND fit_score >= 7"
+    ).fetchone()[0] or 0)
 
     score_dist: dict[int, int] = {}
     if scored:
         rows = conn.execute(
-            "SELECT fit_score, COUNT(*) FROM jobs "
+            f"SELECT fit_score, COUNT(*) FROM {dashboard_score_table} "
             "WHERE archived_at IS NULL AND fit_score IS NOT NULL "
             "GROUP BY fit_score ORDER BY fit_score DESC"
         ).fetchall()
         for row in rows:
             score_dist[int(row[0])] = int(row[1])
 
-    site_stats = conn.execute("""
+    site_stats = conn.execute(f"""
         SELECT site,
                COUNT(*) as total,
                SUM(CASE WHEN fit_score >= 7 THEN 1 ELSE 0 END) as high_fit,
@@ -78,16 +83,16 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
                SUM(CASE WHEN fit_score < 5 AND fit_score IS NOT NULL THEN 1 ELSE 0 END) as low_fit,
                SUM(CASE WHEN fit_score IS NULL THEN 1 ELSE 0 END) as unscored,
                ROUND(AVG(fit_score), 1) as avg_score
-        FROM jobs
+        FROM {dashboard_score_table}
         WHERE archived_at IS NULL
         GROUP BY site ORDER BY high_fit DESC, total DESC
     """).fetchall()
 
-    jobs = conn.execute("""
+    jobs = conn.execute(f"""
         SELECT url, title, salary, description, location, site, strategy,
                full_description, application_url, detail_error,
                fit_score, score_reasoning, apply_status, applied_at
-        FROM jobs
+        FROM {dashboard_score_table}
         WHERE archived_at IS NULL AND fit_score >= 5
         ORDER BY fit_score DESC, site, title
     """).fetchall()
