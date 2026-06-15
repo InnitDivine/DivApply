@@ -3,6 +3,7 @@ from __future__ import annotations
 import zipfile
 from pathlib import Path
 
+from divapply.backup import create_backup
 from divapply import cli
 
 
@@ -133,3 +134,18 @@ def test_backup_can_include_secrets_explicitly(tmp_path, monkeypatch) -> None:
     assert ".env" in names
     assert "credentials.yaml" in names
     assert "logs/prompt_example.txt" in names
+
+
+def test_create_backup_returns_reusable_result_metadata(tmp_path, monkeypatch) -> None:
+    _patch_backup_paths(monkeypatch, tmp_path)
+
+    app_dir = tmp_path / "app"
+    app_dir.mkdir(parents=True)
+    (app_dir / "profile.json").write_text("{}", encoding="utf-8")
+
+    out = tmp_path / "backup.zip"
+    result = create_backup(out=out, include_secrets=False, include_outputs=False)
+
+    assert result.path == out.resolve()
+    assert result.file_count == 1
+    assert result.included_secrets is False
