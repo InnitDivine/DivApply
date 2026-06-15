@@ -38,11 +38,64 @@ class WorkerState:
     log_file: Path | None = None
 
 
-# Module-level state (thread-safe via _lock)
-_worker_states: dict[int, WorkerState] = {}
-_events: list[str] = []
-_lock = threading.Lock()
 MAX_EVENTS = 8
+
+
+class ApplyDashboardState:
+    """Thread-safe state container for one live apply dashboard."""
+
+    def __init__(self, *, max_events: int = MAX_EVENTS) -> None:
+        self.max_events = max_events
+        self._worker_states: dict[int, WorkerState] = {}
+        self._events: list[str] = []
+        self._lock = threading.Lock()
+
+    def init_worker(self, worker_id: int = 0) -> None:
+        """Register a worker in this dashboard."""
+        with self._lock:
+            self._worker_states[worker_id] = WorkerState(worker_id=worker_id)
+
+    def update_state(self, worker_id: int = 0, **kwargs) -> None:
+        """Update one registered worker's state fields."""
+        with self._lock:
+            state = self._worker_states.get(worker_id)
+            if state is not None:
+                for key, value in kwargs.items():
+                    setattr(state, key, value)
+
+    def get_state(self, worker_id: int = 0) -> WorkerState | None:
+        """Read one worker's current state."""
+        with self._lock:
+            return self._worker_states.get(worker_id)
+
+    def add_event(self, msg: str) -> None:
+        """Add a timestamped event to this dashboard's event log."""
+        ts = datetime.now().strftime("%H:%M:%S")
+        with self._lock:
+            self._events.append(f"[dim]{ts}[/dim] {msg}")
+            if len(self._events) > self.max_events:
+                self._events.pop(0)
+
+    def worker_states(self) -> list[WorkerState]:
+        """Return worker states sorted for deterministic rendering."""
+        with self._lock:
+            return sorted(self._worker_states.values(), key=lambda s: s.worker_id)
+
+    def event_lines(self) -> list[str]:
+        """Return a copy of the recent event log."""
+        with self._lock:
+            return list(self._events)
+
+    def get_totals(self) -> dict[str, int | float]:
+        """Compute aggregate totals across all workers."""
+        with self._lock:
+            applied = sum(s.jobs_applied for s in self._worker_states.values())
+            failed = sum(s.jobs_failed for s in self._worker_states.values())
+            cost = sum(s.total_cost for s in self._worker_states.values())
+        return {"applied": applied, "failed": failed, "cost": cost}
+
+
+_default_state = ApplyDashboardState()
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +104,7 @@ MAX_EVENTS = 8
 
 def init_worker(worker_id: int = 0) -> None:
     """Register the worker in the dashboard state."""
-    with _lock:
-        _worker_states[worker_id] = WorkerState(worker_id=worker_id)
+    _default_state.init_worker(worker_id)
 
 
 def update_state(worker_id: int = 0, **kwargs) -> None:
@@ -62,17 +114,12 @@ def update_state(worker_id: int = 0, **kwargs) -> None:
         worker_id: Which worker to update.
         **kwargs: Field names and values to set on WorkerState.
     """
-    with _lock:
-        state = _worker_states.get(worker_id)
-        if state is not None:
-            for key, value in kwargs.items():
-                setattr(state, key, value)
+    _default_state.update_state(worker_id, **kwargs)
 
 
 def get_state(worker_id: int = 0) -> WorkerState | None:
     """Read the worker's current state."""
-    with _lock:
-        return _worker_states.get(worker_id)
+    return _default_state.get_state(worker_id)
 
 
 def add_event(msg: str) -> None:
@@ -81,11 +128,7 @@ def add_event(msg: str) -> None:
     Args:
         msg: Rich markup string describing the event.
     """
-    ts = datetime.now().strftime("%H:%M:%S")
-    with _lock:
-        _events.append(f"[dim]{ts}[/dim] {msg}")
-        if len(_events) > MAX_EVENTS:
-            _events.pop(0)
+    _default_state.add_event(msg)
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +149,7 @@ _STATUS_STYLES: dict[str, str] = {
 }
 
 
-def render_dashboard() -> Table:
+def render_dashboard(state: ApplyDashboardState | None = None) -> Table:
     """Build the Rich table showing all worker statuses.
 
     Returns:
@@ -123,8 +166,8 @@ def render_dashboard() -> Table:
     table.add_column("Fail", width=4, justify="right", style="red")
     table.add_column("Cost", width=8, justify="right")
 
-    with _lock:
-        states = sorted(_worker_states.values(), key=lambda s: s.worker_id)
+    dashboard_state = state or _default_state
+    states = dashboard_state.worker_states()
 
     total_applied = 0
     total_failed = 0
@@ -166,16 +209,15 @@ def render_dashboard() -> Table:
     return table
 
 
-def render_full() -> Table | Group:
+def render_full(state: ApplyDashboardState | None = None) -> Table | Group:
     """Render the dashboard table plus the recent events panel.
 
     Returns:
         A Rich Group (table + events panel) or just the table if no events.
     """
-    table = render_dashboard()
-
-    with _lock:
-        event_lines = list(_events)
+    dashboard_state = state or _default_state
+    table = render_dashboard(dashboard_state)
+    event_lines = dashboard_state.event_lines()
 
     if event_lines:
         event_text = Text.from_markup("\n".join(event_lines))
@@ -196,8 +238,4 @@ def get_totals() -> dict[str, int | float]:
     Returns:
         Dict with keys: applied, failed, cost.
     """
-    with _lock:
-        applied = sum(s.jobs_applied for s in _worker_states.values())
-        failed = sum(s.jobs_failed for s in _worker_states.values())
-        cost = sum(s.total_cost for s in _worker_states.values())
-    return {"applied": applied, "failed": failed, "cost": cost}
+    return _default_state.get_totals()
