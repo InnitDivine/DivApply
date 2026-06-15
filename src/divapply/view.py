@@ -524,22 +524,7 @@ document.querySelectorAll('.filter-btn').forEach(button => {{
   button.addEventListener('click', () => filterScore(parseInt(button.dataset.minScore) || 0, button));
 }});
 document.getElementById('job-search').addEventListener('input', event => filterText(event.target.value));
-document.querySelectorAll('.full-desc-details[data-description-url]').forEach(details => {{
-  details.addEventListener('toggle', async () => {{
-    if (!details.open) return;
-    const container = details.querySelector('.full-desc');
-    if (!container || container.dataset.loaded === 'true') return;
-    container.textContent = 'Loading description...';
-    try {{
-      const response = await fetch(details.dataset.descriptionUrl, {{ credentials: 'same-origin' }});
-      if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
-      container.textContent = await response.text();
-      container.dataset.loaded = 'true';
-    }} catch (error) {{
-      container.textContent = 'Could not load the description. Open the job posting link instead.';
-    }}
-  }});
-}});
+{lazy_description_js}
 
 applyFilters();
 </script>

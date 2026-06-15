@@ -6,6 +6,11 @@ All notable changes to DivApply will be documented here.
 
 - Future work will continue under the DivApply branding.
 
+## 0.4.7
+
+- Fixed interactive dashboard description loading after the lazy-rendering optimization.
+- Preserved dashboard performance improvements while keeping static dashboards read-only.
+
 ## 0.4.6
 
 - Removed the legacy one-off targeted resume command and module.
