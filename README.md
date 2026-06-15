@@ -20,7 +20,7 @@ discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 
 ## Quick Start
 
-Use Python 3.12 for the smoothest setup.
+Use Python 3.12 for the smoothest setup. The maintained Windows setup for this project currently uses Python 3.12.13. Python 3.14 may be installed on the same PC, but JobSpy-backed discovery is still expected to run from the Python 3.12 environment because of upstream dependency pins.
 
 Recommended CLI install with `pipx`:
 
@@ -37,6 +37,7 @@ divapply doctor
 Virtualenv install:
 
 ```powershell
+python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -50,10 +51,11 @@ divapply doctor
 Install directly from GitHub before a PyPI release is available:
 
 ```powershell
+python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
 ```
 
-Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy-backed board discovery, or `divapply[full]` for both.
+Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy runtime dependencies, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins a vulnerable `markdownify` range, the repo installer installs `python-jobspy` separately with `--no-deps` after installing DivApply's secure dependency floor. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
 
 Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code.
 
@@ -269,6 +271,7 @@ divapply migrate
 git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
 .\install.ps1 -Dev
+python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pytest -q
 ```
 
@@ -279,3 +282,4 @@ Publishing notes: [PUBLISHING.md](PUBLISHING.md)
 Operations notes: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 
 AI assistance disclosure: [docs/AI_ASSISTANCE.md](docs/AI_ASSISTANCE.md)
+
