@@ -23,6 +23,7 @@ from typing import Any
 from rich.console import Console
 
 from divapply.config import APP_DIR
+from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply.database import archive_job, get_connection
 from divapply.security import sanitize_external_url
 
@@ -97,56 +98,15 @@ def generate_dashboard(
     """
     out = Path(output_path) if output_path else APP_DIR / "dashboard.html"
 
-    conn = get_connection()
-
-    # Stats
-    total = conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL").fetchone()[0]
-    archived = conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NOT NULL").fetchone()[0]
-    ready = conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE archived_at IS NULL AND full_description IS NOT NULL AND COALESCE(application_url, '') != ''"
-    ).fetchone()[0]
-    scored = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL AND fit_score IS NOT NULL"
-    ).fetchone()[0]
-    high_fit = conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL AND fit_score >= 7"
-    ).fetchone()[0]
-
-    # Score distribution
-    score_dist: dict[int, int] = {}
-    if scored:
-        rows = conn.execute(
-            "SELECT fit_score, COUNT(*) FROM jobs "
-            "WHERE archived_at IS NULL AND fit_score IS NOT NULL "
-            "GROUP BY fit_score ORDER BY fit_score DESC"
-        ).fetchall()
-        for r in rows:
-            score_dist[r[0]] = r[1]
-
-    # Site stats
-    site_stats = conn.execute("""
-        SELECT site,
-               COUNT(*) as total,
-               SUM(CASE WHEN fit_score >= 7 THEN 1 ELSE 0 END) as high_fit,
-               SUM(CASE WHEN fit_score BETWEEN 5 AND 6 THEN 1 ELSE 0 END) as mid_fit,
-               SUM(CASE WHEN fit_score < 5 AND fit_score IS NOT NULL THEN 1 ELSE 0 END) as low_fit,
-               SUM(CASE WHEN fit_score IS NULL THEN 1 ELSE 0 END) as unscored,
-               ROUND(AVG(fit_score), 1) as avg_score
-        FROM jobs
-        WHERE archived_at IS NULL
-        GROUP BY site ORDER BY high_fit DESC, total DESC
-    """).fetchall()
-
-    # All scored jobs (5+), ordered by score desc
-    jobs = conn.execute("""
-        SELECT url, title, salary, description, location, site, strategy,
-               full_description, application_url, detail_error,
-               fit_score, score_reasoning, apply_status, applied_at
-        FROM jobs
-        WHERE archived_at IS NULL AND fit_score >= 5
-        ORDER BY fit_score DESC, site, title
-    """).fetchall()
+    snapshot = fetch_dashboard_snapshot(get_connection())
+    total = snapshot.total
+    archived = snapshot.archived
+    ready = snapshot.ready
+    scored = snapshot.scored
+    high_fit = snapshot.high_fit
+    score_dist = snapshot.score_dist
+    site_stats = snapshot.site_stats
+    jobs = snapshot.jobs
 
     # Score distribution bar chart
     score_bars = ""

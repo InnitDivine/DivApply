@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply import view
 
 
@@ -159,3 +160,44 @@ def test_dashboard_hides_archived_jobs(tmp_path, monkeypatch):
     assert "Software Engineer" not in html
     assert "0 active jobs" in html
     assert "1 archived" in html
+
+
+def test_fetch_dashboard_snapshot_shapes_dashboard_read_model():
+    conn = _dashboard_db()
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, salary, description, location, site, strategy,
+            full_description, application_url, detail_error, fit_score, score_reasoning,
+            apply_status, applied_at, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://example.com/archived",
+            "Archived Job",
+            "",
+            "Old posting",
+            "Logan, UT",
+            "RBC",
+            "direct",
+            "Already handled.",
+            "https://example.com/apply-archived",
+            None,
+            9,
+            "keywords\nreasoning",
+            None,
+            None,
+            "2026-06-13T00:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    snapshot = fetch_dashboard_snapshot(conn)
+
+    assert snapshot.total == 1
+    assert snapshot.archived == 1
+    assert snapshot.ready == 1
+    assert snapshot.scored == 1
+    assert snapshot.high_fit == 1
+    assert snapshot.score_dist == {8: 1}
+    assert [job["url"] for job in snapshot.jobs] == ["https://example.com/job"]
