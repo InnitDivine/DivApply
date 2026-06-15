@@ -25,7 +25,7 @@ from rich.console import Console
 from divapply.config import APP_DIR
 from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply.database import archive_job, get_connection, record_reliability_event
-from divapply.local_server import find_free_port
+from divapply.local_server import bind_local_server
 from divapply.security import local_request_is_same_origin, parse_local_form_length, sanitize_external_url
 
 console = Console()
@@ -89,6 +89,7 @@ def generate_dashboard(
     *,
     archive_endpoint: str | None = None,
     archive_token: str | None = None,
+    description_endpoint: str | None = None,
 ) -> str:
     """Generate an HTML dashboard of all jobs with fit scores.
 
@@ -181,24 +182,7 @@ def generate_dashboard(
 
         desc_raw = j["full_description"] or ""
         desc_preview = escape(_truncate(desc_raw, 300))
-        full_desc_html = escape(j["full_description"] or "").replace("\n", "<br>")
         desc_len = len(desc_raw)
-        search_index = escape(
-            " ".join(
-                part
-                for part in (
-                    j["title"] or "",
-                    j["site"] or "",
-                    j["location"] or "",
-                    j["salary"] or "",
-                    keywords,
-                    reasoning,
-                    _truncate(desc_raw, 300),
-                )
-                if part
-            ).casefold(),
-            quote=True,
-        )
         meta_parts = []
         meta_parts.append(
             f'<span class="meta-tag site-tag" style="border-color:{site_color}">{site}</span>'
@@ -229,9 +213,37 @@ def generate_dashboard(
             if url
             else f'<span class="job-title">{title}</span>'
         )
+        full_description_html = ""
+        if desc_raw and description_endpoint and archive_token and j["url"]:
+            desc_params = urllib.parse.urlencode({"token": archive_token, "url": j["url"]})
+            desc_url = escape(f"{description_endpoint}?{desc_params}", quote=True)
+            full_description_html = (
+                "<details class='full-desc-details' data-description-url=\""
+                f"{desc_url}\"><summary class='expand-btn'>Full description ({desc_len:,} characters)"
+                "</summary><div class='full-desc' data-loaded='false'>Open to load description.</div></details>"
+            )
+        elif desc_raw:
+            full_description_html = (
+                "<details class='full-desc-details'><summary class='expand-btn'>Description preview only "
+                f"({desc_len:,} characters in database)</summary><div class='full-desc'>"
+                "Open the job posting link for the full description.</div></details>"
+            )
+        search_text = " ".join(
+            part
+            for part in (
+                j["title"] or "",
+                j["site"] or "",
+                j["location"] or "",
+                j["salary"] or "",
+                keywords,
+                reasoning,
+                _truncate(desc_raw, 300),
+            )
+            if part
+        ).casefold()
 
         job_section_parts.append(f"""
-        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-search="{search_index}" role="listitem">
+        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-search="{escape(search_text, quote=True)}" role="listitem">
           <div class="card-header">
             <span class="score-pill" style="background:{_score_color(score)}" aria-label="Fit score {score}">{score}</span>
             {title_html}
@@ -240,7 +252,7 @@ def generate_dashboard(
           {f'<div class="keywords-row">{escape(keywords)}</div>' if keywords else ''}
           {f'<div class="reasoning-row">{escape(reasoning)}</div>' if reasoning else ''}
           <p class="desc-preview">{desc_preview}</p>
-          {"<details class='full-desc-details'><summary class='expand-btn'>Full description (" + f'{desc_len:,}' + " characters)</summary><div class='full-desc'>" + full_desc_html + "</div></details>" if j["full_description"] else ""}
+          {full_description_html}
           <div class="card-footer">{apply_html}{archive_html}</div>
         </article>""")
 
@@ -253,6 +265,26 @@ def generate_dashboard(
         <div class="empty-state" role="status">
           No active scored jobs match the dashboard criteria.
         </div>"""
+    lazy_description_js = ""
+    if description_endpoint and archive_token:
+        lazy_description_js = """
+document.querySelectorAll('.full-desc-details[data-description-url]').forEach(details => {
+  details.addEventListener('toggle', async () => {
+    if (!details.open) return;
+    const container = details.querySelector('.full-desc');
+    if (!container || container.dataset.loaded === 'true') return;
+    container.textContent = 'Loading description...';
+    try {
+      const response = await fetch(details.dataset.descriptionUrl, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      container.textContent = await response.text();
+      container.dataset.loaded = 'true';
+    } catch (error) {
+      container.textContent = 'Could not load the description. Open the job posting link instead.';
+    }
+  });
+});
+"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -492,6 +524,22 @@ document.querySelectorAll('.filter-btn').forEach(button => {{
   button.addEventListener('click', () => filterScore(parseInt(button.dataset.minScore) || 0, button));
 }});
 document.getElementById('job-search').addEventListener('input', event => filterText(event.target.value));
+document.querySelectorAll('.full-desc-details[data-description-url]').forEach(details => {{
+  details.addEventListener('toggle', async () => {{
+    if (!details.open) return;
+    const container = details.querySelector('.full-desc');
+    if (!container || container.dataset.loaded === 'true') return;
+    container.textContent = 'Loading description...';
+    try {{
+      const response = await fetch(details.dataset.descriptionUrl, {{ credentials: 'same-origin' }});
+      if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
+      container.textContent = await response.text();
+      container.dataset.loaded = 'true';
+    }} catch (error) {{
+      container.textContent = 'Could not load the description. Open the job posting link instead.';
+    }}
+  }});
+}});
 
 applyFilters();
 </script>
@@ -521,27 +569,7 @@ def open_dashboard(output_path: str | None = None) -> None:
 def _dashboard_cache_key() -> tuple:
     """Return a compact freshness key for the live dashboard response."""
     conn = get_connection()
-    data_version = conn.execute("PRAGMA data_version").fetchone()[0]
-    row = conn.execute(
-        """
-        SELECT COUNT(*) AS rows,
-               MAX(archived_at) AS archived_at,
-               MAX(scored_at) AS scored_at,
-               MAX(detail_scraped_at) AS detail_scraped_at,
-               MAX(discovered_at) AS discovered_at,
-               MAX(applied_at) AS applied_at
-        FROM jobs
-        """
-    ).fetchone()
-    return (
-        data_version,
-        row["rows"],
-        row["archived_at"],
-        row["scored_at"],
-        row["detail_scraped_at"],
-        row["discovered_at"],
-        row["applied_at"],
-    )
+    return (conn.execute("PRAGMA data_version").fetchone()[0], conn.total_changes)
 
 
 class _DashboardServer(ThreadingHTTPServer):
@@ -583,10 +611,29 @@ def _archive_dashboard_form(form: dict[str, str]) -> tuple[int, str, bool]:
     return 303, "", True
 
 
+def _dashboard_description_text(form: dict[str, str]) -> tuple[int, str]:
+    """Return one job's full description for the interactive dashboard."""
+    url = form.get("url")
+    if not url:
+        return 400, "Missing job URL."
+    row = get_connection().execute(
+        """
+        SELECT full_description
+        FROM jobs
+        WHERE url = ?
+          AND archived_at IS NULL
+        LIMIT 1
+        """,
+        (url,),
+    ).fetchone()
+    if not row or not row["full_description"]:
+        return 404, "Description was not found."
+    return 200, str(row["full_description"])
+
+
 def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: bool = True) -> str:
     """Serve the dashboard locally so archive buttons can update SQLite."""
     token = secrets.token_urlsafe(24)
-    actual_port = find_free_port(host, port)
 
     class Handler(BaseHTTPRequestHandler):
         cache_lock = threading.Lock()
@@ -606,6 +653,21 @@ def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: 
             self.wfile.write(data)
 
         def do_GET(self) -> None:  # noqa: N802
+            parsed = urllib.parse.urlparse(self.path)
+            if parsed.path == "/description":
+                fields = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+                form = {key: values[-1] for key, values in fields.items()}
+                if form.get("token") != token:
+                    record_reliability_event(
+                        "dashboard_bad_description_token",
+                        "Rejected dashboard description GET with invalid token",
+                        severity="warning",
+                    )
+                    self._send_text(403, "Forbidden.")
+                    return
+                status, message = _dashboard_description_text(form)
+                self._send_text(status, message)
+                return
             if self.path not in ("/", "/?archived=1"):
                 self.send_error(404)
                 return
@@ -617,6 +679,7 @@ def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: 
                         body = generate_dashboard(
                             archive_endpoint="/archive",
                             archive_token=token,
+                            description_endpoint="/description",
                         )
                         data = Path(body).read_bytes()
                         self.response_cache["key"] = key
@@ -693,7 +756,7 @@ def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: 
             self.send_header("Location", "/?archived=1")
             self.end_headers()
 
-    server = _DashboardServer((host, actual_port), Handler)
+    server, actual_port = bind_local_server(_DashboardServer, Handler, host, port)
     url = f"http://{host}:{actual_port}/"
     console.print(f"[green]Dashboard:[/green] {url}")
     if open_browser:

@@ -15,7 +15,7 @@ from typing import Any
 import yaml
 
 from divapply.config import PROFILE_PATH, SEARCH_CONFIG_PATH
-from divapply.local_server import find_free_port
+from divapply.local_server import bind_local_server
 from divapply.security import (
     local_request_is_same_origin,
     parse_local_form_length,
@@ -920,7 +920,6 @@ def save_editor_settings(form: dict[str, str]) -> None:
 def run_editor(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> str:
     """Start the local editor server and block until interrupted."""
     token = secrets.token_urlsafe(24)
-    actual_port = find_free_port(host, port)
     saved = False
 
     class Handler(BaseHTTPRequestHandler):
@@ -973,7 +972,7 @@ def run_editor(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool 
             self.send_header("Location", "/?saved=1")
             self.end_headers()
 
-    server = ThreadingHTTPServer((host, actual_port), Handler)
+    server, actual_port = bind_local_server(ThreadingHTTPServer, Handler, host, port)
     url = f"http://{host}:{actual_port}/"
     if open_browser:
         threading.Timer(0.2, lambda: webbrowser.open(url)).start()

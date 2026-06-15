@@ -185,6 +185,57 @@ def test_dashboard_hides_archived_jobs(tmp_path, monkeypatch):
     assert "1 archived" in html
 
 
+def test_static_dashboard_does_not_embed_full_description_tail(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute(
+        "UPDATE jobs SET full_description = ? WHERE url = 'https://example.com/job'",
+        ("Visible preview. " + ("detail " * 80) + "UNIQUE_FULL_DESCRIPTION_TAIL",),
+    )
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(str(tmp_path / "dashboard.html"))
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert "Visible preview." in html
+    assert "UNIQUE_FULL_DESCRIPTION_TAIL" not in html
+    assert "Description preview only" in html
+    assert '<details class=\'full-desc-details\' data-description-url=' not in html
+
+
+def test_interactive_dashboard_uses_lazy_description_url(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute(
+        "UPDATE jobs SET full_description = ? WHERE url = 'https://example.com/job'",
+        ("Visible preview. " + ("detail " * 80) + "UNIQUE_FULL_DESCRIPTION_TAIL",),
+    )
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(
+        str(tmp_path / "dashboard.html"),
+        archive_endpoint="/archive",
+        archive_token="test-token",
+        description_endpoint="/description",
+    )
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert "UNIQUE_FULL_DESCRIPTION_TAIL" not in html
+    assert "data-description-url=" in html
+    assert "/description?token=test-token" in html
+    assert "Open to load description." in html
+
+
+def test_dashboard_description_text_returns_full_description(monkeypatch):
+    conn = _dashboard_db()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    status, text = view._dashboard_description_text({"url": "https://example.com/job"})
+
+    assert status == 200
+    assert text == "Build accessible tools for job search workflows."
+
+
 def test_fetch_dashboard_snapshot_shapes_dashboard_read_model():
     conn = _dashboard_db()
     conn.execute(
@@ -224,6 +275,19 @@ def test_fetch_dashboard_snapshot_shapes_dashboard_read_model():
     assert snapshot.high_fit == 1
     assert snapshot.score_dist == {8: 1}
     assert [job["url"] for job in snapshot.jobs] == ["https://example.com/job"]
+
+
+def test_dashboard_cache_key_changes_after_same_connection_job_update(monkeypatch):
+    conn = _dashboard_db()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    before = view._dashboard_cache_key()
+    conn.execute(
+        "UPDATE jobs SET archived_at = '2026-06-15T12:00:00Z' WHERE url = 'https://example.com/job'"
+    )
+    conn.commit()
+
+    assert view._dashboard_cache_key() != before
 
 
 def test_archive_dashboard_form_redirects_after_success(monkeypatch):
