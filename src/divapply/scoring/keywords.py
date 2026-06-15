@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 import os
 import re
@@ -44,6 +45,14 @@ _SKILL_HINTS = {
     "troubleshooting", "networking", "security", "compliance", "inventory",
     "scheduling", "reporting", "reconciliation", "billing", "crm",
 }
+
+
+@dataclass(frozen=True)
+class KeywordScoringPolicy:
+    """Weights and matching rules for keyword scoring."""
+
+    required_weight: float = 1.0
+    preferred_weight: float = 0.25
 
 
 def _normalize_token(token: str) -> str:
@@ -159,8 +168,24 @@ def extract_preferred_keywords(job_description: str) -> tuple[str, ...]:
     return tuple(_extract_preferred_keywords_local(job_description or ""))
 
 
-def score_keywords(job_description: str, resume_text: str) -> dict:
+def keyword_present(keyword: str, text: str) -> bool:
+    """Return True when a keyword or all meaningful keyword parts are present."""
+    if not keyword:
+        return False
+    if keyword in text:
+        return True
+    parts = [part for part in keyword.split() if part not in _STOPWORDS]
+    return bool(parts) and all(part in text for part in parts)
+
+
+def score_keywords(
+    job_description: str,
+    resume_text: str,
+    *,
+    policy: KeywordScoringPolicy | None = None,
+) -> dict:
     """Score required keywords heavily and preferred keywords lightly."""
+    policy = policy or KeywordScoringPolicy()
     required_keywords = list(extract_requirement_keywords(job_description))
     preferred_keywords = [
         keyword for keyword in extract_preferred_keywords(job_description)
@@ -172,30 +197,20 @@ def score_keywords(job_description: str, resume_text: str) -> dict:
     preferred_hits: list[str] = []
     preferred_misses: list[str] = []
 
-    def _has_keyword(keyword: str) -> bool:
-        if not keyword:
-            return False
-        if keyword in resume:
-            return True
-        parts = [part for part in keyword.split() if part not in _STOPWORDS]
-        return bool(parts) and all(part in resume for part in parts)
-
     for keyword in required_keywords:
-        if _has_keyword(keyword):
+        if keyword_present(keyword, resume):
             hits.append(keyword)
         elif keyword:
             misses.append(keyword)
 
     for keyword in preferred_keywords:
-        if _has_keyword(keyword):
+        if keyword_present(keyword, resume):
             preferred_hits.append(keyword)
         elif keyword:
             preferred_misses.append(keyword)
 
-    required_weight = 1.0
-    preferred_weight = 0.25
-    earned = len(hits) * required_weight + len(preferred_hits) * preferred_weight
-    possible = len(required_keywords) * required_weight + len(preferred_keywords) * preferred_weight
+    earned = len(hits) * policy.required_weight + len(preferred_hits) * policy.preferred_weight
+    possible = len(required_keywords) * policy.required_weight + len(preferred_keywords) * policy.preferred_weight
     score = (earned / possible) if possible else 0.0
     return {
         "score": round(score, 4),

@@ -5,7 +5,7 @@ import json
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
 from divapply.scoring.embedding import embedding_score
-from divapply.scoring.keywords import score_keywords
+from divapply.scoring.keywords import KeywordScoringPolicy, keyword_present, score_keywords
 from divapply.scoring import scorer
 from divapply.scoring.scorer import _build_profile_evidence_context, _build_search_evidence_context
 
@@ -21,6 +21,11 @@ def test_keyword_score_reports_hits_and_misses() -> None:
     assert "kubernetes" in result["misses"]
 
 
+def test_keyword_present_matches_meaningful_phrase_parts() -> None:
+    assert keyword_present("customer support", "support specialist with customer-facing work")
+    assert not keyword_present("customer support", "customer records only")
+
+
 def test_keyword_score_weights_preferred_certifications_lightly() -> None:
     jd = "\n".join([
         "Required skills: Python, SQL.",
@@ -33,6 +38,19 @@ def test_keyword_score_weights_preferred_certifications_lightly() -> None:
     assert any("aws" in keyword for keyword in result["preferred_keywords"])
     assert not any("aws" in keyword for keyword in result["required_keywords"])
     assert result["score"] >= 0.7
+
+
+def test_keyword_score_accepts_custom_policy_weights() -> None:
+    jd = "Required: Python. Preferred: AWS."
+    resume = "Python and AWS."
+
+    result = score_keywords(
+        jd,
+        resume,
+        policy=KeywordScoringPolicy(required_weight=1.0, preferred_weight=0.0),
+    )
+
+    assert result["score"] == 1.0
 
 
 def test_keyword_score_keeps_preferred_qualifications_out_of_required_bucket() -> None:
