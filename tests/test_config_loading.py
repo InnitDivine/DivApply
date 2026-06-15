@@ -40,7 +40,7 @@ def test_normalize_search_config_accepts_simple_user_keys() -> None:
     assert cfg["customer_service_max_hours_per_week"] == 15
 
 
-def test_normalize_profile_accepts_flat_skills_and_job_search() -> None:
+def test_normalize_profile_accepts_flat_skills_without_job_search_aliases() -> None:
     profile = config._normalize_profile(
         {
             "skills": ["customer service", "data entry"],
@@ -49,12 +49,24 @@ def test_normalize_profile_accepts_flat_skills_and_job_search() -> None:
                 "schedule": "5-15 hours per week",
                 "preferred_roles": ["front desk", "student assistant"],
             },
+            "availability": {"available_for_part_time": "5-15 hours per week"},
+            "experience_inference": "legacy profile policy",
+            "experience": {
+                "target_role": "outdated search role",
+                "target_roles": {"tier1": "front desk"},
+                "years_of_experience_total": "99",
+                "years_of_experience_customer_service": "2",
+            },
             "compensation": {"hourly_expectation": "Use posted hourly range."},
         }
     )
 
+    assert "job_search" not in profile
     assert profile["skills_boundary"] == {"skills": ["customer service", "data entry"]}
-    assert profile["experience"]["target_role"] == "easy part-time work"
-    assert profile["experience"]["target_roles"]["tier1"] == "front desk"
-    assert profile["availability"]["available_for_part_time"] == "5-15 hours per week"
+    assert "target_role" not in profile["experience"]
+    assert "target_roles" not in profile["experience"]
+    assert "years_of_experience_total" not in profile["experience"]
+    assert profile["experience"]["years_of_experience_customer_service"] == "2"
+    assert "availability" not in profile
+    assert "experience_inference" not in profile
     assert profile["compensation"]["part_time_hourly_expectation"] == "Use posted hourly range."

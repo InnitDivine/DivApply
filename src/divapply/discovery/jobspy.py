@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 from divapply import config
-from divapply.database import canonical_job_key, get_connection, init_db
+from divapply.database import canonical_job_key, get_connection, get_existing_canonical_keys, init_db
 from divapply.discovery.filters import (
     REMOTE_TERMS,
     load_location_filter,
@@ -27,6 +27,52 @@ from divapply.discovery.filters import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _empty_board_stats() -> dict:
+    return {"calls": 0, "seconds": 0.0, "total": 0, "new": 0, "existing": 0, "errors": 0}
+
+
+def _merge_board_stats(target: dict, source: dict | None) -> None:
+    for site, stats in (source or {}).items():
+        bucket = target.setdefault(site, _empty_board_stats())
+        for key in ("calls", "total", "new", "existing", "errors"):
+            bucket[key] += int(stats.get(key, 0) or 0)
+        bucket["seconds"] += float(stats.get("seconds", 0.0) or 0.0)
+
+
+def _record_scrape_stats(
+    board_stats: dict,
+    sites: list[str],
+    *,
+    elapsed: float,
+    total: int = 0,
+    errors: int = 0,
+) -> None:
+    if not sites:
+        return
+    share = total / len(sites) if total else 0
+    elapsed_share = elapsed / len(sites)
+    for site in sites:
+        bucket = board_stats.setdefault(site, _empty_board_stats())
+        bucket["calls"] += 1
+        bucket["seconds"] += elapsed_share
+        bucket["total"] += int(round(share))
+        bucket["errors"] += errors
+
+
+def _finalize_board_stats(board_stats: dict) -> dict:
+    return {
+        site: {
+            "calls": int(stats["calls"]),
+            "seconds": round(float(stats["seconds"]), 2),
+            "total": int(stats["total"]),
+            "new": int(stats["new"]),
+            "existing": int(stats["existing"]),
+            "errors": int(stats["errors"]),
+        }
+        for site, stats in sorted(board_stats.items())
+    }
 
 
 # -- Proxy parsing -----------------------------------------------------------
@@ -321,6 +367,7 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
+    prepared: list[dict] = []
 
     for _, row in df.iterrows():
         url = str(row.get("job_url", ""))
@@ -366,21 +413,54 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
         # Extract apply URL if JobSpy provided it
         apply_url = str(row.get("job_url_direct", "")) if str(row.get("job_url_direct", "")) != "nan" else None
 
+        prepared.append({
+            "url": url,
+            "canonical_key": canonical_key,
+            "title": title,
+            "company": company,
+            "salary": salary,
+            "description": description,
+            "location": location_str,
+            "site": site_label,
+            "strategy": strategy,
+            "full_description": full_description,
+            "application_url": apply_url,
+            "detail_scraped_at": detail_scraped_at,
+        })
+
+    existing_keys = get_existing_canonical_keys(
+        conn,
+        {job["canonical_key"] for job in prepared if job["canonical_key"]},
+    )
+    seen_keys: set[str] = set()
+
+    for job in prepared:
         try:
+            canonical_key = job["canonical_key"]
             if canonical_key:
-                found = conn.execute(
-                    "SELECT 1 FROM jobs WHERE canonical_key = ? LIMIT 1",
-                    (canonical_key,),
-                ).fetchone()
-                if found:
+                if canonical_key in existing_keys or canonical_key in seen_keys:
                     existing += 1
                     continue
+                seen_keys.add(canonical_key)
             conn.execute(
                 "INSERT INTO jobs (url, canonical_key, title, company, salary, description, location, site, strategy, discovered_at, "
                 "full_description, application_url, detail_scraped_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, canonical_key, title, company, salary, description, location_str, site_label, strategy, now,
-                 full_description, apply_url, detail_scraped_at),
+                (
+                    job["url"],
+                    canonical_key,
+                    job["title"],
+                    job["company"],
+                    job["salary"],
+                    job["description"],
+                    job["location"],
+                    job["site"],
+                    job["strategy"],
+                    now,
+                    job["full_description"],
+                    job["application_url"],
+                    job["detail_scraped_at"],
+                ),
             )
             new += 1
         except sqlite3.IntegrityError:
@@ -418,6 +498,7 @@ def _run_one_search(
     other_sites = [si for si in sites if si != "glassdoor"]
 
     all_dfs = []
+    board_stats: dict = {}
 
     # Run non-Glassdoor sites with original location
     if other_sites:
@@ -438,9 +519,12 @@ def _run_one_search(
         if "linkedin" in other_sites:
             kwargs["linkedin_fetch_description"] = True
         try:
+            started = time.perf_counter()
             df = _scrape_with_retry(kwargs, max_retries=max_retries)
+            _record_scrape_stats(board_stats, other_sites, elapsed=time.perf_counter() - started, total=len(df))
             all_dfs.append(df)
         except Exception as e:
+            _record_scrape_stats(board_stats, other_sites, elapsed=0.0, errors=1)
             log.error("[%s] (non-gd): %s", label, e)
 
     # Run Glassdoor separately with simplified location
@@ -459,14 +543,17 @@ def _run_one_search(
         if proxy_config:
             gd_kwargs["proxies"] = [proxy_config["jobspy"]]
         try:
+            started = time.perf_counter()
             gd_df = _scrape_with_retry(gd_kwargs, max_retries=max_retries)
+            _record_scrape_stats(board_stats, ["glassdoor"], elapsed=time.perf_counter() - started, total=len(gd_df))
             all_dfs.append(gd_df)
         except Exception as e:
+            _record_scrape_stats(board_stats, ["glassdoor"], elapsed=0.0, errors=1)
             log.error("[%s] (glassdoor): %s", label, e)
 
     if not all_dfs:
         log.error("[%s]: all sites failed", label)
-        return {"new": 0, "existing": 0, "errors": 1, "filtered": 0, "total": 0, "label": label}
+        return {"new": 0, "existing": 0, "errors": 1, "filtered": 0, "total": 0, "label": label, "board_stats": _finalize_board_stats(board_stats)}
 
     import pandas as pd
     import warnings
@@ -476,7 +563,7 @@ def _run_one_search(
 
     if len(df) == 0:
         log.info("[%s] 0 results", label)
-        return {"new": 0, "existing": 0, "errors": 0, "filtered": 0, "total": 0, "label": label}
+        return {"new": 0, "existing": 0, "errors": 0, "filtered": 0, "total": 0, "label": label, "board_stats": _finalize_board_stats(board_stats)}
 
     # Filter by location before storing
     before = len(df)
@@ -507,6 +594,12 @@ def _run_one_search(
 
     conn = get_connection()
     new, existing = store_jobspy_results(conn, df, s["query"])
+    if board_stats:
+        total_calls = sum(max(1, int(stats.get("calls", 0))) for stats in board_stats.values())
+        for stats in board_stats.values():
+            weight = max(1, int(stats.get("calls", 0))) / total_calls
+            stats["new"] += int(round(new * weight))
+            stats["existing"] += int(round(existing * weight))
 
     msg = f"[{label}] {before} results -> {new} new, {existing} dupes"
     if filtered_loc:
@@ -524,6 +617,7 @@ def _run_one_search(
         "filtered": filtered_loc + filtered_title + filtered_rules,
         "total": before,
         "label": label,
+        "board_stats": _finalize_board_stats(board_stats),
     }
 
 
@@ -660,6 +754,7 @@ def _full_crawl(
     total_existing = 0
     total_errors = 0
     completed = 0
+    board_stats: dict = {}
 
     def _run_search(idx_search: tuple[int, dict]) -> dict:
         import random
@@ -689,6 +784,7 @@ def _full_crawl(
                     total_new += result["new"]
                     total_existing += result["existing"]
                     total_errors += result["errors"]
+                    _merge_board_stats(board_stats, result.get("board_stats"))
                     completed += 1
                     if completed % 5 == 0 or completed == len(searches):
                         log.info("Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
@@ -699,6 +795,7 @@ def _full_crawl(
             total_new += result["new"]
             total_existing += result["existing"]
             total_errors += result["errors"]
+            _merge_board_stats(board_stats, result.get("board_stats"))
             completed += 1
             if completed % 5 == 0 or completed == len(searches):
                 log.info("Progress: %d/%d queries done (%d new, %d dupes, %d errors)",
@@ -710,6 +807,17 @@ def _full_crawl(
 
     log.info("Full crawl complete: %d new | %d dupes | %d errors | %d total in DB",
              total_new, total_existing, total_errors, db_total)
+    finalized_board_stats = _finalize_board_stats(board_stats)
+    for site, stats in finalized_board_stats.items():
+        log.info(
+            "Board stats: %s | %.2fs | %d raw | %d new | %d dupes | %d errors",
+            site,
+            stats["seconds"],
+            stats["total"],
+            stats["new"],
+            stats["existing"],
+            stats["errors"],
+        )
 
     return {
         "new": total_new,
@@ -717,6 +825,7 @@ def _full_crawl(
         "errors": total_errors,
         "db_total": db_total,
         "queries": len(searches),
+        "board_stats": finalized_board_stats,
     }
 
 

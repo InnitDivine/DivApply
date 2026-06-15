@@ -5,7 +5,6 @@ from __future__ import annotations
 import html
 import json
 import secrets
-import socket
 import threading
 import urllib.parse
 import webbrowser
@@ -16,7 +15,12 @@ from typing import Any
 import yaml
 
 from divapply.config import PROFILE_PATH, SEARCH_CONFIG_PATH
-from divapply.security import protect_file
+from divapply.local_server import find_free_port
+from divapply.security import (
+    local_request_is_same_origin,
+    parse_local_form_length,
+    write_private_text,
+)
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -346,11 +350,10 @@ def _option(value: str, current: str, label: str) -> str:
 
 def _profile_values(profile: dict[str, Any], search_cfg: dict[str, Any]) -> dict[str, Any]:
     compensation = profile.get("compensation", {}) if isinstance(profile.get("compensation"), dict) else {}
-    job_search = profile.get("job_search", {}) if isinstance(profile.get("job_search"), dict) else {}
     personal = profile.get("personal", {}) if isinstance(profile.get("personal"), dict) else {}
 
     hourly = _to_float(compensation.get("target_hourly_rate"), 15.0)
-    schedule_type = job_search.get("schedule_type") or ("part_time" if search_cfg.get("require_part_time", True) else "either")
+    schedule_type = "part_time" if search_cfg.get("require_part_time", True) else "either"
     if schedule_type not in {"part_time", "full_time", "either"}:
         schedule_type = "part_time"
     first_name, middle_name, last_name = _split_name(personal)
@@ -378,8 +381,6 @@ def _profile_values(profile: dict[str, Any], search_cfg: dict[str, Any]) -> dict
         "github_url": personal.get("github_url", ""),
         "website_url": personal.get("website_url", ""),
         "search_city": search_cfg.get("search_city") or first_location or personal.get("city") or "Logan, UT",
-        "target": job_search.get("target", ""),
-        "preferred_roles": _list_to_text(job_search.get("preferred_roles")),
         "skills": _list_to_text(profile.get("skills")),
         "work_history": _work_history_to_text(profile.get("work_history")),
         "education": _education_to_text(profile.get("education_schools")),
@@ -641,12 +642,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
         <input id="target_hourly_rate" name="target_hourly_rate" type="text" inputmode="decimal" value="{hourly:g}">
         <p class="hint">DivApply converts this to a rough salary target when scoring jobs.</p>
 
-        <label for="target">What kind of work do you want?</label>
-        <textarea id="target" name="target">{_esc(values['target'])}</textarea>
-
-        <label for="preferred_roles">Roles you prefer</label>
-        <textarea id="preferred_roles" name="preferred_roles">{_esc(values['preferred_roles'])}</textarea>
-        <p class="hint">One simple role per line. These help quickstart search and scoring.</p>
+        <p class="hint">Search intent lives in the query list below. Profile facts stay limited to who you are and what you can truthfully claim.</p>
       </section>
 
       <section>
@@ -823,19 +819,7 @@ def save_editor_settings(form: dict[str, str]) -> None:
     )
     profile["compensation"] = compensation
 
-    job_search = dict(profile.get("job_search", {}) or {})
-    if "target" in form:
-        job_search["target"] = form["target"].strip()
-    if "preferred_roles" in form:
-        job_search["preferred_roles"] = _text_to_list(form.get("preferred_roles"))
-    job_search["schedule_type"] = schedule_type
-    schedule_label = {
-        "part_time": "part-time",
-        "full_time": "full-time",
-        "either": "part-time or full-time",
-    }[schedule_type]
-    job_search["schedule"] = f"Prefer {schedule_label} work at about {hours} hours per week."
-    profile["job_search"] = job_search
+    profile.pop("job_search", None)
     if "skills" in form:
         profile["skills"] = _text_to_list(form.get("skills"))
     if "work_history" in form:
@@ -872,12 +856,7 @@ def save_editor_settings(form: dict[str, str]) -> None:
             resume_facts["real_metrics"] = _text_to_list(form.get("real_metrics"))
         profile["resume_facts"] = resume_facts
 
-    availability = dict(profile.get("availability", {}) or {})
-    availability["available_for_full_time"] = "Yes" if schedule_type in {"full_time", "either"} else "No while in school"
-    availability["available_for_part_time"] = "Yes" if schedule_type in {"part_time", "either"} else "No"
-    if schedule_type in {"part_time", "either"}:
-        availability["available_for_part_time"] = f"Yes, about {hours} hours per week preferred at roughly ${hourly:g}/hr."
-    profile["availability"] = availability
+    profile.pop("availability", None)
 
     locations = _text_to_locations(form.get("locations"))
     if locations:
@@ -917,27 +896,14 @@ def save_editor_settings(form: dict[str, str]) -> None:
     search_cfg.pop("reject_locations", None)
     search_cfg.pop("avoid_titles", None)
 
-    PROFILE_PATH.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    SEARCH_CONFIG_PATH.write_text(yaml.safe_dump(search_cfg, sort_keys=False, allow_unicode=True), encoding="utf-8")
-    protect_file(PROFILE_PATH)
-    protect_file(SEARCH_CONFIG_PATH)
-
-
-def _find_port(host: str, preferred: int) -> int:
-    for port in range(preferred, preferred + 25):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind((host, port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError(f"No free localhost port found from {preferred} to {preferred + 24}.")
+    write_private_text(PROFILE_PATH, json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
+    write_private_text(SEARCH_CONFIG_PATH, yaml.safe_dump(search_cfg, sort_keys=False, allow_unicode=True))
 
 
 def run_editor(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool = True) -> str:
     """Start the local editor server and block until interrupted."""
     token = secrets.token_urlsafe(24)
-    actual_port = _find_port(host, port)
+    actual_port = find_free_port(host, port)
     saved = False
 
     class Handler(BaseHTTPRequestHandler):
@@ -957,6 +923,9 @@ def run_editor(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool 
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "same-origin")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(data)
 
@@ -965,8 +934,18 @@ def run_editor(*, host: str = "127.0.0.1", port: int = 8765, open_browser: bool 
             if self.path != "/save":
                 self.send_error(404)
                 return
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
+            if not local_request_is_same_origin(self.headers, host, actual_port):
+                self.send_error(403)
+                return
+            try:
+                length = parse_local_form_length(self.headers.get("Content-Length"))
+                fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
+            except UnicodeDecodeError:
+                self.send_error(400)
+                return
+            except ValueError as exc:
+                self.send_error(413 if "large" in str(exc) else 400)
+                return
             form = {key: values[-1] for key, values in fields.items()}
             if form.get("token") != token:
                 self.send_error(403)

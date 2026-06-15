@@ -27,7 +27,6 @@ def _build_profile_summary(profile: dict) -> str:
     work_auth = p.get("work_authorization", {})
     comp = p.get("compensation", {})
     exp = p.get("experience", {})
-    avail = p.get("availability", {})
     eeo = p.get("eeo_voluntary", {})
     standard = p.get("standard_answers", {})
 
@@ -71,9 +70,6 @@ def _build_profile_summary(profile: dict) -> str:
         lines.append(f"Years Experience: {exp['years_of_experience_total']}")
     if exp.get("education_level"):
         lines.append(f"Education: {exp['education_level']}")
-
-    # Availability
-    lines.append(f"Available: {avail.get('earliest_start_date', 'Immediately')}")
 
     # Standard responses stay profile-driven. Use "See profile" when absent.
     lines.extend([
@@ -167,13 +163,23 @@ Read the job page. Determine the work arrangement. Then decide:
 Do NOT fill out forms for jobs that are clearly onsite in a non-acceptable location. Check EARLY, save time."""
 
 
-def _build_salary_section(profile: dict) -> str:
+def _search_requires_part_time(search_config: dict | None) -> bool:
+    if not isinstance(search_config, dict):
+        return False
+    return bool(
+        search_config.get("require_part_time")
+        or search_config.get("customer_service_require_part_time")
+        or search_config.get("max_hours_per_week")
+        or search_config.get("customer_service_max_hours_per_week")
+    )
+
+
+def _build_salary_section(profile: dict, search_config: dict | None = None) -> str:
     """Build the salary negotiation instructions.
 
     Adapts floor, range, and currency from the profile's compensation section.
     """
     comp = profile["compensation"]
-    availability = profile.get("availability", {})
     currency = comp.get("salary_currency", "USD")
     floor = comp["salary_expectation"]
     range_min = comp.get("salary_range_min", floor)
@@ -183,11 +189,10 @@ def _build_salary_section(profile: dict) -> str:
         "Use the employer's posted hourly range when available.",
     )
     conversion_note = comp.get("currency_conversion_note", "")
-    full_time_available = str(availability.get("available_for_full_time", "")).strip().lower()
 
-    if full_time_available.startswith("no"):
+    if _search_requires_part_time(search_config):
         return f"""== PAY (think, don't just copy) ==
-The current target is low-hour part-time work while in school.
+The active searches.yaml filters target low-hour part-time work.
 
 Decision tree:
 1. Hourly part-time job with posted pay range? -> Use the MIDPOINT of the posted hourly range.
@@ -290,17 +295,29 @@ def _build_application_context(profile: dict) -> str:
     return "\n".join(f"  - {fact}" for fact in facts)
 
 
-def _build_screening_section(profile: dict) -> str:
+def _build_screening_section(profile: dict, search_config: dict | None = None) -> str:
     """Build the screening questions guidance section."""
     personal = profile["personal"]
     exp = profile.get("experience", {})
     city = personal.get("city", "their city")
-    years = exp.get("years_of_experience_total", "multiple")
-    target_role = exp.get("target_role", personal.get("current_job_title", "software engineer"))
+    experience_context = exp.get("experience_summary") or exp.get("current_job_title") or exp.get("current_title")
+    if exp.get("years_of_experience_total") and experience_context:
+        experience_line = f"This candidate has {exp['years_of_experience_total']} years of profile/resume-backed experience, including {experience_context}."
+    elif exp.get("years_of_experience_total"):
+        experience_line = f"This candidate has {exp['years_of_experience_total']} years of profile/resume-backed experience."
+    elif experience_context:
+        experience_line = f"This candidate has profile/resume-backed experience including {experience_context}."
+    else:
+        experience_line = "Use only profile/resume-backed experience; do not infer years or seniority from the search target."
     work_auth = profile["work_authorization"]
     eeo = profile.get("eeo_voluntary", {})
     background_block = _build_application_context(profile)
     education_rules = _build_education_rules(profile)
+    schedule_line = (
+        "Active searches.yaml schedule filter: target part-time/low-hour roles; do not continue full-time salaried flows unless explicitly selected."
+        if _search_requires_part_time(search_config)
+        else "Active searches.yaml schedule filter does not require part-time only; answer schedule questions from the job posting and verified facts."
+    )
 
     return f"""== SCREENING QUESTIONS (be strategic) ==
 Hard facts -> answer truthfully from the profile. No guessing. This includes:
@@ -309,7 +326,8 @@ Hard facts -> answer truthfully from the profile. No guessing. This includes:
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
 
-Skills and tools -> answer only from verified profile/resume/coursework facts. This candidate is a {target_role} with {years} years experience, but total experience does not mean direct experience with every tool. If unsupported, answer No or explain transferable experience honestly.
+Skills and tools -> answer only from verified profile/resume/coursework facts. {experience_line} Search titles are discovery criteria, not profile facts. If unsupported, answer No or explain transferable experience honestly.
+Schedule/work type -> {schedule_line}
 
 ABSOLUTE RULE: NEVER leave ANY required field blank. NEVER click Next or Submit with unanswered required fields.
   - If a field has "Error: This field is required" or an asterisk (*), it MUST be filled before proceeding.
@@ -351,8 +369,8 @@ COMMON RADIO ANSWERS for government applications:
   - Retirement system membership -> answer from profile/question bank only
   - "Are you under 18?" -> answer from profile; adult applicants usually answer No
   - "Do you have a valid driver's license?" -> answer from profile/question bank only
-  - Overtime/weekend/evening availability -> answer from profile availability only
-  - Shift availability checkboxes -> select only options supported by profile availability
+  - Overtime/weekend/evening availability -> answer conservatively from the active searches.yaml schedule filters and the job posting
+  - Shift availability checkboxes -> select only options consistent with active searches.yaml schedule filters
   - "Where did you hear about this position?" -> choose the closest truthful source, usually online job board
 
 EEO / Voluntary Self-Identification / Agency Questions -> Use the profile's real voluntary answers. Do not guess:
@@ -744,8 +762,8 @@ def build_prompt(job: dict, tailored_resume: str,
     # --- Build all prompt sections ---
     profile_summary = _build_profile_summary(profile)
     location_check = _build_location_check(profile, search_config)
-    salary_section = _build_salary_section(profile)
-    screening_section = _build_screening_section(profile)
+    salary_section = _build_salary_section(profile, search_config)
+    screening_section = _build_screening_section(profile, search_config)
     hard_rules = _build_hard_rules(profile)
     captcha_section = _build_captcha_section()
     try:
@@ -900,7 +918,7 @@ Before filling any form, spend 2 actions verifying this is a legitimate employer
 - NEVER grant camera, microphone, screen sharing, or location permissions. If a site requests them -> RESULT:FAILED:unsafe_permissions
 - NEVER do video/audio verification, selfie capture, ID photo upload, or biometric anything -> RESULT:FAILED:unsafe_verification
 - NEVER set up a freelancing profile (Mercor, Toptal, Upwork, Fiverr, Turing, etc.). These are contractor marketplaces, not job applications -> RESULT:FAILED:not_a_job_application
-- NEVER set up contractor/freelance hourly-rate profiles or "set your rate" marketplace flows. Normal hourly employee applications are OK when they match the profile's part-time availability.
+- NEVER set up contractor/freelance hourly-rate profiles or "set your rate" marketplace flows. Normal hourly employee applications are OK when they match active searches.yaml schedule filters.
 - NEVER install browser extensions, download executables, or run assessment software.
 - NEVER enter payment info, bank details, or SSN/SIN.
 - NEVER click "Allow" on any browser permission popup. Always deny/block.

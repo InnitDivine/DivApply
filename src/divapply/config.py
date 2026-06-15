@@ -138,6 +138,16 @@ def load_profile() -> dict:
 def _normalize_profile(profile: dict) -> dict:
     """Expand simple user-facing profile keys into legacy internal aliases."""
     profile = dict(profile or {})
+    profile.pop("job_search", None)
+    profile.pop("availability", None)
+    profile.pop("experience_inference", None)
+
+    exp = profile.get("experience")
+    if isinstance(exp, dict):
+        exp = dict(exp)
+        for key in ("target_role", "target_roles", "years_of_experience_total"):
+            exp.pop(key, None)
+        profile["experience"] = exp
 
     skills = profile.get("skills")
     if skills and not profile.get("skills_boundary"):
@@ -145,22 +155,6 @@ def _normalize_profile(profile: dict) -> dict:
             profile["skills_boundary"] = {"skills": skills}
         elif isinstance(skills, dict):
             profile["skills_boundary"] = skills
-
-    job_search = profile.get("job_search")
-    if isinstance(job_search, dict):
-        exp = dict(profile.get("experience", {}) or {})
-        if job_search.get("target") and not exp.get("target_role"):
-            exp["target_role"] = job_search["target"]
-        if job_search.get("preferred_roles") and not exp.get("target_roles"):
-            roles = job_search["preferred_roles"]
-            if isinstance(roles, list):
-                exp["target_roles"] = {f"tier{i}": role for i, role in enumerate(roles, 1)}
-        profile["experience"] = exp
-
-        availability = dict(profile.get("availability", {}) or {})
-        if job_search.get("schedule") and not availability.get("available_for_part_time"):
-            availability["available_for_part_time"] = job_search["schedule"]
-        profile["availability"] = availability
 
     comp = profile.get("compensation")
     if isinstance(comp, dict) and comp.get("hourly_expectation") and not comp.get("part_time_hourly_expectation"):

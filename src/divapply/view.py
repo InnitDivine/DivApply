@@ -10,8 +10,8 @@ Generates a self-contained HTML dashboard with:
 
 from __future__ import annotations
 
+import logging
 import secrets
-import socket
 import threading
 import urllib.parse
 import webbrowser
@@ -25,9 +25,11 @@ from rich.console import Console
 from divapply.config import APP_DIR
 from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply.database import archive_job, get_connection
-from divapply.security import sanitize_external_url
+from divapply.local_server import find_free_port
+from divapply.security import local_request_is_same_origin, parse_local_form_length, sanitize_external_url
 
 console = Console()
+log = logging.getLogger(__name__)
 
 SITE_COLORS = {
     "RemoteOK": "#10b981",
@@ -109,30 +111,31 @@ def generate_dashboard(
     jobs = snapshot.jobs
 
     # Score distribution bar chart
-    score_bars = ""
+    score_bar_parts: list[str] = []
     max_count = max(score_dist.values()) if score_dist else 1
     for s in range(10, 0, -1):
         count = score_dist.get(s, 0)
         pct = (count / max_count * 100) if max_count else 0
         score_color = _score_color(s)
-        score_bars += f"""
+        score_bar_parts.append(f"""
         <div class="score-row" aria-label="Score {s}: {count} jobs">
           <span class="score-label">{s}</span>
           <div class="score-bar-track">
             <div class="score-bar-fill" style="width:{pct}%;background:{score_color}" aria-hidden="true"></div>
           </div>
           <span class="score-count">{count}</span>
-        </div>"""
+        </div>""")
+    score_bars = "".join(score_bar_parts)
 
     # Site stats rows
-    site_rows = ""
+    site_row_parts: list[str] = []
     for s in site_stats:
         site = s["site"] or "?"
         color = _site_color(site)
         avg = s["avg_score"] or 0
         high_pct = s["high_fit"] / max(s["total"], 1) * 100
         mid_pct = s["mid_fit"] / max(s["total"], 1) * 100
-        site_rows += f"""
+        site_row_parts.append(f"""
         <div class="site-row">
           <div class="site-name" style="border-color:{color}">{escape(site)}</div>
           <div class="site-nums">{s['total']} jobs &middot; {s['high_fit']} strong fit &middot; avg score {avg}</div>
@@ -140,25 +143,27 @@ def generate_dashboard(
             <div class="bar-fill" style="width:{high_pct}%;background:{color}" aria-hidden="true"></div>
             <div class="bar-fill" style="width:{mid_pct}%;background:{color}66" aria-hidden="true"></div>
           </div>
-        </div>"""
+        </div>""")
+    site_rows = "".join(site_row_parts)
 
     # Job cards grouped by score
-    job_sections = ""
+    job_section_parts: list[str] = []
     current_score = None
     for j in jobs:
         score = j["fit_score"] or 0
         if score != current_score:
             if current_score is not None:
-                job_sections += "</div>"
+                job_section_parts.append("</div></section>")
             score_color = _score_color(score)
             score_label = _score_label(score)
             count_at_score = score_dist.get(score, 0)
-            job_sections += f"""
-            <h2 class="score-header" style="border-color:{score_color}">
+            job_section_parts.append(f"""
+            <section class="score-group" aria-labelledby="score-group-{score}">
+            <h2 id="score-group-{score}" class="score-header" style="border-color:{score_color}">
               <span class="score-badge" style="background:{score_color}">{score}</span>
               {score_label} ({count_at_score} jobs)
             </h2>
-            <div class="job-grid">"""
+            <div class="job-grid" role="list">""")
             current_score = score
 
         title = escape(j["title"] or "Untitled")
@@ -178,6 +183,22 @@ def generate_dashboard(
         desc_preview = escape(_truncate(desc_raw, 300))
         full_desc_html = escape(j["full_description"] or "").replace("\n", "<br>")
         desc_len = len(desc_raw)
+        search_text = escape(
+            " ".join(
+                part
+                for part in (
+                    j["title"] or "",
+                    j["site"] or "",
+                    j["location"] or "",
+                    j["salary"] or "",
+                    keywords,
+                    reasoning,
+                    _truncate(desc_raw, 300),
+                )
+                if part
+            ).casefold(),
+            quote=True,
+        )
 
         meta_parts = []
         meta_parts.append(
@@ -210,8 +231,8 @@ def generate_dashboard(
             else f'<span class="job-title">{title}</span>'
         )
 
-        job_sections += f"""
-        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}">
+        job_section_parts.append(f"""
+        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-search="{search_text}" role="listitem">
           <div class="card-header">
             <span class="score-pill" style="background:{_score_color(score)}" aria-label="Fit score {score}">{score}</span>
             {title_html}
@@ -222,10 +243,17 @@ def generate_dashboard(
           <p class="desc-preview">{desc_preview}</p>
           {"<details class='full-desc-details'><summary class='expand-btn'>Full description (" + f'{desc_len:,}' + " characters)</summary><div class='full-desc'>" + full_desc_html + "</div></details>" if j["full_description"] else ""}
           <div class="card-footer">{apply_html}{archive_html}</div>
-        </article>"""
+        </article>""")
 
     if current_score is not None:
-        job_sections += "</div>"
+        job_section_parts.append("</div></section>")
+    job_sections = "".join(job_section_parts)
+
+    if not job_sections:
+        job_sections = """
+        <div class="empty-state" role="status">
+          No active scored jobs match the dashboard criteria.
+        </div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -259,10 +287,10 @@ def generate_dashboard(
   /* Filters */
   .filters {{ background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1.25rem; margin-bottom: 2rem; display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }}
   .filter-label {{ color: #cbd5e1; font-size: 0.85rem; font-weight: 600; }}
-  .filter-btn {{ background: #334155; border: 1px solid #475569; color: #e2e8f0; padding: 0.45rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: background 0.15s, color 0.15s; }}
+  .filter-btn {{ background: #334155; border: 1px solid #475569; color: #e2e8f0; padding: 0.45rem 0.8rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; min-height: 2.75rem; transition: background 0.15s, color 0.15s; }}
   .filter-btn:hover {{ background: #475569; color: #e2e8f0; }}
   .filter-btn.active {{ background: #bfdbfe; border-color: #bfdbfe; color: #0f172a; font-weight: 700; }}
-  .search-input {{ background: #334155; border: 1px solid #64748b; color: #f8fafc; padding: 0.45rem 0.8rem; border-radius: 6px; font-size: 0.9rem; width: 220px; min-height: 2.4rem; }}
+  .search-input {{ background: #334155; border: 1px solid #64748b; color: #f8fafc; padding: 0.45rem 0.8rem; border-radius: 6px; font-size: 0.9rem; width: 220px; min-height: 2.75rem; }}
   .search-input::placeholder {{ color: #cbd5e1; }}
 
   /* Score distribution */
@@ -291,7 +319,7 @@ def generate_dashboard(
   /* Job grid */
   .job-grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); gap: 1rem; }}
 
-  .job-card {{ background: #1e293b; border: 1px solid #334155; border-left: 3px solid #334155; border-radius: 8px; padding: 1rem; transition: transform 0.15s, box-shadow 0.15s; min-width: 0; }}
+  .job-card {{ background: #1e293b; border: 1px solid #334155; border-left: 3px solid #334155; border-radius: 8px; padding: 1rem; transition: transform 0.15s, box-shadow 0.15s; min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 340px; }}
   .job-card:hover {{ transform: translateY(-2px); box-shadow: 0 4px 12px #00000044; }}
   .job-card[data-score="9"], .job-card[data-score="10"] {{ border-left-color: #10b981; }}
   .job-card[data-score="8"] {{ border-left-color: #34d399; }}
@@ -316,11 +344,11 @@ def generate_dashboard(
 
   .desc-preview {{ font-size: 0.85rem; color: #cbd5e1; line-height: 1.5; margin-bottom: 0.75rem; max-height: 3.9em; overflow: hidden; overflow-wrap: anywhere; }}
 
-  .card-footer {{ display: flex; justify-content: flex-end; }}
-  .archive-form {{ margin-left: 0.5rem; }}
-  .apply-link {{ font-size: 0.85rem; color: #bfdbfe; text-decoration: none; padding: 0.35rem 0.8rem; border: 1px solid #93c5fd; border-radius: 6px; font-weight: 700; min-height: 2.3rem; display: inline-flex; align-items: center; }}
+  .card-footer {{ display: flex; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }}
+  .archive-form {{ margin-left: 0; }}
+  .apply-link {{ font-size: 0.85rem; color: #bfdbfe; text-decoration: none; padding: 0.35rem 0.8rem; border: 1px solid #93c5fd; border-radius: 6px; font-weight: 700; min-height: 2.75rem; display: inline-flex; align-items: center; justify-content: center; }}
   .apply-link:hover {{ background: #60a5fa22; }}
-  .archive-btn {{ font-size: 0.85rem; color: #fecaca; background: transparent; padding: 0.35rem 0.8rem; border: 1px solid #fca5a5; border-radius: 6px; font-weight: 700; min-height: 2.3rem; cursor: pointer; }}
+  .archive-btn {{ font-size: 0.85rem; color: #fecaca; background: transparent; padding: 0.35rem 0.8rem; border: 1px solid #fca5a5; border-radius: 6px; font-weight: 700; min-height: 2.75rem; cursor: pointer; }}
   .archive-btn:hover {{ background: #7f1d1d55; }}
 
   /* Expandable full description */
@@ -332,6 +360,7 @@ def generate_dashboard(
 
   .hidden {{ display: none !important; }}
   .job-count {{ color: #cbd5e1; font-size: 0.9rem; margin-bottom: 1rem; }}
+  .empty-state {{ background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; padding: 1.25rem; }}
 
   @media (max-width: 768px) {{
     .summary {{ grid-template-columns: repeat(2, 1fr); }}
@@ -349,6 +378,8 @@ def generate_dashboard(
     .search-input {{ width: 100%; }}
     .score-header {{ align-items: flex-start; }}
     .card-header {{ align-items: flex-start; }}
+    .card-footer {{ align-items: stretch; flex-direction: column; }}
+    .apply-link, .archive-btn {{ width: 100%; }}
   }}
   @media (prefers-reduced-motion: reduce) {{
     html {{ scroll-behavior: auto; }}
@@ -375,12 +406,12 @@ def generate_dashboard(
 
 <section class="filters" aria-label="Job filters">
   <span class="filter-label" id="score-filter-label">Score:</span>
-  <button type="button" class="filter-btn active" aria-pressed="true" aria-describedby="score-filter-label" onclick="filterScore(0, this)">All 5+</button>
-  <button type="button" class="filter-btn" aria-pressed="false" aria-describedby="score-filter-label" onclick="filterScore(7, this)">7+ Strong</button>
-  <button type="button" class="filter-btn" aria-pressed="false" aria-describedby="score-filter-label" onclick="filterScore(8, this)">8+ Excellent</button>
-  <button type="button" class="filter-btn" aria-pressed="false" aria-describedby="score-filter-label" onclick="filterScore(9, this)">9+ Perfect</button>
+  <button type="button" class="filter-btn active" data-min-score="0" aria-pressed="true" aria-describedby="score-filter-label">All 5+</button>
+  <button type="button" class="filter-btn" data-min-score="7" aria-pressed="false" aria-describedby="score-filter-label">7+ Strong</button>
+  <button type="button" class="filter-btn" data-min-score="8" aria-pressed="false" aria-describedby="score-filter-label">8+ Excellent</button>
+  <button type="button" class="filter-btn" data-min-score="9" aria-pressed="false" aria-describedby="score-filter-label">9+ Perfect</button>
   <label class="filter-label" for="job-search">Search:</label>
-  <input id="job-search" type="search" class="search-input" placeholder="Filter by title, site..." aria-controls="jobs" oninput="filterText(this.value)">
+  <input id="job-search" type="search" class="search-input" placeholder="Filter by title, site..." aria-controls="jobs" autocomplete="off">
 </section>
 
 <section class="score-section" aria-label="Job analytics">
@@ -405,6 +436,10 @@ def generate_dashboard(
 <script>
 let minScore = 0;
 let searchText = '';
+const jobCards = Array.from(document.querySelectorAll('.job-card'));
+const scoreGroups = Array.from(document.querySelectorAll('.score-group')).map(group => {{
+  return {{ group, grid: group.querySelector('.job-grid') }};
+}});
 
 function filterScore(min, button) {{
   minScore = min;
@@ -425,10 +460,10 @@ function filterText(text) {{
 function applyFilters() {{
   let shown = 0;
   let total = 0;
-  document.querySelectorAll('.job-card').forEach(card => {{
+  jobCards.forEach(card => {{
     total++;
     const score = parseInt(card.dataset.score) || 0;
-    const text = card.textContent.toLowerCase();
+    const text = card.dataset.search || '';
     const scoreMatch = score >= (minScore || 5);
     const textMatch = !searchText || text.includes(searchText);
     if (scoreMatch && textMatch) {{
@@ -441,15 +476,20 @@ function applyFilters() {{
   document.getElementById('job-count').textContent = `Showing ${{shown}} of ${{total}} jobs`;
 
   // Hide empty score groups
-  document.querySelectorAll('.score-header').forEach(header => {{
-    const grid = header.nextElementSibling;
+  scoreGroups.forEach(item => {{
+    const group = item.group;
+    const grid = item.grid;
     if (grid && grid.classList.contains('job-grid')) {{
       const visible = grid.querySelectorAll('.job-card:not(.hidden)').length;
-      header.style.display = visible ? '' : 'none';
-      grid.style.display = visible ? '' : 'none';
+      group.style.display = visible ? '' : 'none';
     }}
   }});
 }}
+
+document.querySelectorAll('.filter-btn').forEach(button => {{
+  button.addEventListener('click', () => filterScore(parseInt(button.dataset.minScore) || 0, button));
+}});
+document.getElementById('job-search').addEventListener('input', event => filterText(event.target.value));
 
 applyFilters();
 </script>
@@ -476,23 +516,50 @@ def open_dashboard(output_path: str | None = None) -> None:
     webbrowser.open(f"file:///{path}")
 
 
+def _dashboard_cache_key() -> tuple:
+    """Return a compact freshness key for the live dashboard response."""
+    conn = get_connection()
+    data_version = conn.execute("PRAGMA data_version").fetchone()[0]
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS rows,
+               MAX(archived_at) AS archived_at,
+               MAX(scored_at) AS scored_at,
+               MAX(detail_scraped_at) AS detail_scraped_at,
+               MAX(discovered_at) AS discovered_at,
+               MAX(applied_at) AS applied_at
+        FROM jobs
+        """
+    ).fetchone()
+    return (
+        data_version,
+        row["rows"],
+        row["archived_at"],
+        row["scored_at"],
+        row["detail_scraped_at"],
+        row["discovered_at"],
+        row["applied_at"],
+    )
+
+
+class _DashboardServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+
 def _find_port(host: str, preferred: int) -> int:
-    for port in range(preferred, preferred + 25):
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-            try:
-                sock.bind((host, port))
-            except OSError:
-                continue
-            return port
-    raise RuntimeError(f"No free localhost port found from {preferred} to {preferred + 24}.")
+    """Backward-compatible wrapper around the shared localhost port helper."""
+    return find_free_port(host, preferred)
 
 
 def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: bool = True) -> str:
     """Serve the dashboard locally so archive buttons can update SQLite."""
     token = secrets.token_urlsafe(24)
-    actual_port = _find_port(host, port)
+    actual_port = find_free_port(host, port)
 
     class Handler(BaseHTTPRequestHandler):
+        cache_lock = threading.Lock()
+        response_cache: dict[str, Any] = {"key": None, "data": None}
+
         def log_message(self, _format: str, *_args: Any) -> None:
             return
 
@@ -500,14 +567,23 @@ def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: 
             if self.path not in ("/", "/?archived=1"):
                 self.send_error(404)
                 return
-            body = generate_dashboard(
-                archive_endpoint="/archive",
-                archive_token=token,
-            )
-            data = Path(body).read_bytes()
+            key = _dashboard_cache_key()
+            with self.cache_lock:
+                data = self.response_cache["data"] if self.response_cache["key"] == key else None
+                if data is None:
+                    body = generate_dashboard(
+                        archive_endpoint="/archive",
+                        archive_token=token,
+                    )
+                    data = Path(body).read_bytes()
+                    self.response_cache["key"] = key
+                    self.response_cache["data"] = data
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Referrer-Policy", "same-origin")
+            self.send_header("X-Content-Type-Options", "nosniff")
             self.end_headers()
             self.wfile.write(data)
 
@@ -515,18 +591,36 @@ def serve_dashboard(*, host: str = "127.0.0.1", port: int = 8776, open_browser: 
             if self.path != "/archive":
                 self.send_error(404)
                 return
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
+            if not local_request_is_same_origin(self.headers, host, actual_port):
+                self.send_error(403)
+                return
+            try:
+                length = parse_local_form_length(self.headers.get("Content-Length"))
+                fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"), keep_blank_values=True)
+            except UnicodeDecodeError:
+                self.send_error(400)
+                return
+            except ValueError as exc:
+                self.send_error(413 if "large" in str(exc) else 400)
+                return
             form = {key: values[-1] for key, values in fields.items()}
             if form.get("token") != token:
                 self.send_error(403)
                 return
-            archive_job(form.get("url", ""))
+            if not form.get("url"):
+                self.send_error(400, "Missing job URL")
+                return
+            if not archive_job(form["url"]):
+                self.send_error(404, "Job not found or already archived")
+                return
+            with self.cache_lock:
+                self.response_cache["key"] = None
+                self.response_cache["data"] = None
             self.send_response(303)
             self.send_header("Location", "/?archived=1")
             self.end_headers()
 
-    server = ThreadingHTTPServer((host, actual_port), Handler)
+    server = _DashboardServer((host, actual_port), Handler)
     url = f"http://{host}:{actual_port}/"
     console.print(f"[green]Dashboard:[/green] {url}")
     if open_browser:

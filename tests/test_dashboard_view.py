@@ -75,6 +75,11 @@ def test_generate_dashboard_includes_accessible_controls(tmp_path, monkeypatch):
     assert 'role="status" aria-live="polite"' in html
     assert 'type="search"' in html
     assert 'target="_blank" rel="noopener noreferrer"' in html
+    assert 'role="list"' in html
+    assert 'role="listitem"' in html
+    assert 'data-min-score="7"' in html
+    assert "onclick=" not in html
+    assert "oninput=" not in html
 
 
 def test_dashboard_uses_contrast_safe_brand_accents(tmp_path, monkeypatch):
@@ -88,6 +93,21 @@ def test_dashboard_uses_contrast_safe_brand_accents(tmp_path, monkeypatch):
     assert 'style="color:#003168"' not in html
     assert "grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr))" in html
     assert "@media (prefers-reduced-motion: reduce)" in html
+    assert "min-height: 2.75rem" in html
+    assert ".apply-link, .archive-btn { width: 100%; }" in html
+
+
+def test_dashboard_empty_state_is_accessible(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute("UPDATE jobs SET fit_score = 4 WHERE url = 'https://example.com/job'")
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(str(tmp_path / "dashboard.html"))
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert 'class="empty-state" role="status"' in html
+    assert "No active scored jobs match the dashboard criteria." in html
 
 
 def test_dashboard_does_not_link_unsafe_saved_urls(tmp_path, monkeypatch):

@@ -11,7 +11,6 @@ def test_render_editor_shows_simple_setup_controls() -> None:
     html = editor.render_editor(
         {
             "personal": {"full_name": "Dalton Joseph De Arrieta", "email": "dalton@example.com"},
-            "job_search": {"schedule_type": "part_time"},
             "compensation": {
                 "target_hourly_rate": "15",
             },
@@ -98,7 +97,6 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
             {
                 "personal": {"full_name": "Old Name"},
                 "job_search": {"target": "old", "schedule": "old"},
-                "availability": {},
                 "compensation": {"salary_currency": "USD"},
                 "resume_facts": {"preserved_projects": ["Old project"], "real_metrics": ["Old metric"]},
             }
@@ -109,7 +107,6 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
 
     monkeypatch.setattr(editor, "PROFILE_PATH", profile_path)
     monkeypatch.setattr(editor, "SEARCH_CONFIG_PATH", search_path)
-    monkeypatch.setattr(editor, "protect_file", lambda _path: None)
 
     editor.save_editor_settings(
         {
@@ -128,8 +125,6 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
             "github_url": "https://github.com/InnitDivine",
             "website_url": "https://example.com",
             "target_hourly_rate": "15",
-            "target": "easy part-time work",
-            "preferred_roles": "front desk\nstudent assistant\n",
             "skills": "customer service\nfront desk\n",
             "work_history": (
                 "Front Desk Associate | Example Gym | 2024 to 2025 | Customer service and facility support.\n"
@@ -172,12 +167,8 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
     assert profile["compensation"]["salary_range_min"] == "15600"
     assert profile["compensation"]["salary_range_max"] == "15600"
     assert "$15/hr" in profile["compensation"]["hourly_expectation"]
-    assert "20 hours" in profile["availability"]["available_for_part_time"]
-    assert profile["availability"]["available_for_full_time"] == "No while in school"
-    assert profile["job_search"]["target"] == "easy part-time work"
-    assert profile["job_search"]["preferred_roles"] == ["front desk", "student assistant"]
-    assert profile["job_search"]["schedule_type"] == "part_time"
-    assert profile["job_search"]["schedule"] == "Prefer part-time work at about 20 hours per week."
+    assert "availability" not in profile
+    assert "job_search" not in profile
     assert profile["skills"] == ["customer service", "front desk"]
     assert profile["work_history"] == [
         {
@@ -257,7 +248,6 @@ def test_save_editor_settings_preserves_extra_profile_record_fields(tmp_path, mo
             {
                 "personal": {},
                 "job_search": {},
-                "availability": {},
                 "compensation": {},
                 "work_history": [
                     {
@@ -310,7 +300,6 @@ def test_save_editor_settings_preserves_extra_profile_record_fields(tmp_path, mo
 
     monkeypatch.setattr(editor, "PROFILE_PATH", profile_path)
     monkeypatch.setattr(editor, "SEARCH_CONFIG_PATH", search_path)
-    monkeypatch.setattr(editor, "protect_file", lambda _path: None)
 
     editor.save_editor_settings(
         {

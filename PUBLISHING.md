@@ -26,12 +26,11 @@ If PyPI asks for the full workflow path, use:
 
 Before tagging, run the local checks:
 
-```bash
-python -m pytest -q
-ruff check .
-python -m build
-python -m twine check dist/*
+```powershell
+.\tools\preflight.ps1
 ```
+
+The preflight runs Ruff, pytest, package build, `twine check`, dependency audit, Docker build, and Docker selfcheck. If Docker is unavailable on the release machine, use `.\tools\preflight.ps1 -SkipDocker` and make sure the GitHub CI container job passes before tagging.
 
 Update the version in both files:
 
@@ -54,7 +53,7 @@ git push origin main
 git push origin v0.4.6
 ```
 
-The `Release` workflow will build the package, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, publish to PyPI, and create a GitHub Release with the built artifacts. After the workflow succeeds, users can install with:
+The `Release` workflow will lint, test, build the package, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, publish to PyPI, and create a GitHub Release with the built artifacts. After the workflow succeeds, users can install with:
 
 ```bash
 pip install "divapply[full]"
@@ -74,4 +73,4 @@ divapply --version
 divapply doctor
 ```
 
-The workflow only runs from `v*` tags and verifies that the tag matches both version files plus the changelog before publishing.
+The workflow only runs from `v*` tags, uses PyPI Trusted Publishing, and verifies that the tag matches both version files plus the changelog before publishing.

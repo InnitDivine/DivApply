@@ -896,7 +896,7 @@ def dashboard(
     if static:
         if no_open:
             path = generate_dashboard()
-            console.print(f"[green]Dashboard written:[/green] {path}")
+            typer.echo(f"Dashboard written: {path}")
         else:
             open_dashboard()
         return
@@ -1075,7 +1075,7 @@ def doctor() -> None:
         results.append(("python-jobspy", ok_mark, "Job board scraping available"))
     except ImportError:
         results.append(("python-jobspy", warn_mark,
-                        "pip install --no-deps python-jobspy && pip install pydantic tls-client requests markdownify regex"))
+                        "pip install --no-deps python-jobspy && pip install pydantic tls-client requests 'markdownify>=0.14.1' regex"))
 
     # --- Tier 2 checks ---
     import os

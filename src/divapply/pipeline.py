@@ -42,8 +42,17 @@ def _run_discover(workers: int = 4) -> dict:
     console.print(f"  [cyan]JobSpy full crawl (workers={workers})...[/cyan]")
     try:
         from divapply.discovery.jobspy import run_discovery
-        run_discovery(workers=workers)
+        result = run_discovery(workers=workers)
         stats["jobspy"] = "ok"
+        if result.get("board_stats"):
+            stats["jobspy_board_stats"] = result["board_stats"]
+            for site, board in result["board_stats"].items():
+                console.print(
+                    "    "
+                    f"[dim]{site}: {board['seconds']:.2f}s, "
+                    f"{board['total']} raw, {board['new']} new, "
+                    f"{board['existing']} dupes, {board['errors']} errors[/dim]"
+                )
     except Exception as e:
         log.exception("JobSpy crawl failed")
         console.print(f"  [red]JobSpy error:[/red] {e}")

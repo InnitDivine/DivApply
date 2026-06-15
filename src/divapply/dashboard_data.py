@@ -30,18 +30,35 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     if conn is None:
         conn = get_connection()
 
-    total = int(conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL").fetchone()[0])
-    archived = int(conn.execute("SELECT COUNT(*) FROM jobs WHERE archived_at IS NOT NULL").fetchone()[0])
-    ready = int(conn.execute(
-        "SELECT COUNT(*) FROM jobs "
-        "WHERE archived_at IS NULL AND full_description IS NOT NULL AND COALESCE(application_url, '') != ''"
-    ).fetchone()[0])
-    scored = int(conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL AND fit_score IS NOT NULL"
-    ).fetchone()[0])
-    high_fit = int(conn.execute(
-        "SELECT COUNT(*) FROM jobs WHERE archived_at IS NULL AND fit_score >= 7"
-    ).fetchone()[0])
+    counts = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN archived_at IS NULL THEN 1 ELSE 0 END) AS total,
+            SUM(CASE WHEN archived_at IS NOT NULL THEN 1 ELSE 0 END) AS archived,
+            SUM(CASE
+                WHEN archived_at IS NULL
+                 AND full_description IS NOT NULL
+                 AND COALESCE(application_url, '') != ''
+                THEN 1 ELSE 0
+            END) AS ready,
+            SUM(CASE
+                WHEN archived_at IS NULL
+                 AND fit_score IS NOT NULL
+                THEN 1 ELSE 0
+            END) AS scored,
+            SUM(CASE
+                WHEN archived_at IS NULL
+                 AND fit_score >= 7
+                THEN 1 ELSE 0
+            END) AS high_fit
+        FROM jobs
+        """
+    ).fetchone()
+    total = int(counts["total"] or 0)
+    archived = int(counts["archived"] or 0)
+    ready = int(counts["ready"] or 0)
+    scored = int(counts["scored"] or 0)
+    high_fit = int(counts["high_fit"] or 0)
 
     score_dist: dict[int, int] = {}
     if scored:

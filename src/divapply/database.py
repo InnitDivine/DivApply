@@ -21,7 +21,7 @@ from divapply.migrations import run_migrations
 
 log = logging.getLogger(__name__)
 
-# Thread-local connection storage â€” each thread gets its own connection
+# Thread-local connection storage - each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
 
@@ -81,11 +81,16 @@ def get_connection(db_path: Path | str | None = None) -> sqlite3.Connection:
             conn.execute("SELECT 1")
             return conn
         except sqlite3.ProgrammingError:
-            pass
+            _local.connections.pop(path, None)
 
     conn = sqlite3.connect(path, timeout=30)
-    conn.execute("PRAGMA journal_mode=WAL")
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+    except sqlite3.OperationalError as exc:
+        log.debug("Could not enable SQLite WAL mode for %s: %s", path, exc)
     conn.execute("PRAGMA busy_timeout=10000")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA synchronous=NORMAL")
     conn.row_factory = sqlite3.Row
     _local.connections[path] = conn
     return conn
@@ -134,7 +139,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     conn = get_connection(path)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS jobs (
-            -- Discovery stage (smart_extract / job_search)
+            -- Discovery stage (smart_extract / searches.yaml)
             url                   TEXT PRIMARY KEY,
             canonical_key         TEXT,
             title                 TEXT,
@@ -202,6 +207,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     ensure_job_indexes(conn)
     ensure_application_events_table(conn)
     backfill_application_events(conn)
+    ensure_reliability_events_table(conn)
 
     return conn
 
@@ -311,6 +317,14 @@ def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_cover_pending ON jobs(tailored_resume_path, cover_letter_path)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_apply_ready ON jobs(tailored_resume_path, applied_at, application_url)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_archived_at ON jobs(archived_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_dashboard_score "
+        "ON jobs(fit_score DESC, site, title) WHERE archived_at IS NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_dashboard_site "
+        "ON jobs(site) WHERE archived_at IS NULL"
+    )
     try:
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_canonical_key_unique "
@@ -343,6 +357,60 @@ def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> N
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_follow_up ON application_events(follow_up_at)")
     if should_commit:
         conn.commit()
+
+
+def ensure_reliability_events_table(conn: sqlite3.Connection | None = None) -> None:
+    """Create the local operational event table used for production monitoring."""
+    if conn is None:
+        conn = get_connection()
+
+    should_commit = not conn.in_transaction
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS reliability_events (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts              TEXT NOT NULL,
+            severity        TEXT NOT NULL,
+            category        TEXT NOT NULL,
+            message         TEXT NOT NULL,
+            context         TEXT
+        )
+    """)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reliability_events_ts ON reliability_events(ts)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_reliability_events_category ON reliability_events(category)")
+    if should_commit:
+        conn.commit()
+
+
+def record_reliability_event(
+    category: str,
+    message: str,
+    *,
+    severity: str = "warning",
+    context: dict | None = None,
+    conn: sqlite3.Connection | None = None,
+) -> None:
+    """Persist an operational signal without making monitoring a new failure source."""
+    try:
+        if conn is None:
+            conn = get_connection()
+        ensure_reliability_events_table(conn)
+        conn.execute(
+            """
+            INSERT INTO reliability_events (ts, severity, category, message, context)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                datetime.now(timezone.utc).isoformat(),
+                severity,
+                category,
+                message,
+                json.dumps(context, sort_keys=True, ensure_ascii=True) if context else None,
+            ),
+        )
+        if not conn.in_transaction:
+            conn.commit()
+    except Exception:
+        log.debug("Could not record reliability event", exc_info=True)
 
 
 def backfill_application_events(conn: sqlite3.Connection | None = None) -> int:
@@ -393,6 +461,15 @@ def add_application_event(
     event = event_type.strip().lower().replace("-", "_")
     if not event:
         raise ValueError("event_type must not be empty")
+    if conn.execute("SELECT 1 FROM jobs WHERE url = ? LIMIT 1", (job_url,)).fetchone() is None:
+        record_reliability_event(
+            "application_event_orphan_rejected",
+            "Rejected lifecycle event for unknown job URL",
+            severity="error",
+            context={"job_url": job_url, "event_type": event},
+            conn=conn,
+        )
+        raise ValueError(f"job_url does not exist: {job_url}")
 
     now = ts or datetime.now(timezone.utc).isoformat()
 
@@ -917,6 +994,13 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
         stats["due_followups"] = count_due_followups(conn=conn)
     except Exception:
         stats["due_followups"] = 0
+    try:
+        ensure_reliability_events_table(conn)
+        stats["reliability_errors"] = int(conn.execute(
+            "SELECT COUNT(*) FROM reliability_events WHERE severity IN ('error', 'critical')"
+        ).fetchone()[0])
+    except Exception:
+        stats["reliability_errors"] = 0
 
     return stats
 
@@ -996,6 +1080,12 @@ def _delete_job_artifacts(job: dict) -> list[Path]:
                 deleted.append(candidate)
         except OSError:
             log.warning("Could not delete archived job artifact: %s", candidate)
+            record_reliability_event(
+                "archive_artifact_delete_failed",
+                "Could not delete archived job artifact",
+                severity="warning",
+                context={"path": str(candidate)},
+            )
     return deleted
 
 
@@ -1018,6 +1108,27 @@ def canonical_job_key(title: str | None, company: str | None, location: str | No
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
 
+def get_existing_canonical_keys(
+    conn: sqlite3.Connection,
+    canonical_keys: list[str] | set[str],
+) -> set[str]:
+    """Return canonical keys already present in the jobs table."""
+    keys = [key for key in canonical_keys if key]
+    if not keys:
+        return set()
+
+    existing: set[str] = set()
+    for offset in range(0, len(keys), 900):
+        chunk = keys[offset: offset + 900]
+        placeholders = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT canonical_key FROM jobs WHERE canonical_key IN ({placeholders})",
+            chunk,
+        ).fetchall()
+        existing.update(str(row[0]) for row in rows if row[0])
+    return existing
+
+
 def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
                site: str, strategy: str) -> tuple[int, int]:
     """Store discovered jobs, skipping duplicates by URL or canonical role key.
@@ -1034,24 +1145,31 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
+    prepared: list[tuple[dict, str, str | None, str | None, str | None, str | None]] = []
+
+    for job in jobs:
+        url = job.get("url")
+        if not url:
+            continue
+        title = job.get("title")
+        company = job.get("company")
+        location = job.get("location")
+        canonical_key = canonical_job_key(title, company, location)
+        prepared.append((job, url, title, company, location, canonical_key))
+
+    existing_keys = get_existing_canonical_keys(
+        conn,
+        {canonical_key for *_rest, canonical_key in prepared if canonical_key},
+    )
+    seen_keys: set[str] = set()
 
     with _transaction(conn):
-        for job in jobs:
-            url = job.get("url")
-            if not url:
+        for job, url, title, company, location, canonical_key in prepared:
+            if canonical_key and (canonical_key in existing_keys or canonical_key in seen_keys):
+                existing += 1
                 continue
-            title = job.get("title")
-            company = job.get("company")
-            location = job.get("location")
-            canonical_key = canonical_job_key(title, company, location)
             if canonical_key:
-                found = conn.execute(
-                    "SELECT 1 FROM jobs WHERE canonical_key = ? LIMIT 1",
-                    (canonical_key,),
-                ).fetchone()
-                if found:
-                    existing += 1
-                    continue
+                seen_keys.add(canonical_key)
             try:
                 conn.execute(
                     """

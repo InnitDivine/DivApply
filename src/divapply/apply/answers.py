@@ -11,7 +11,7 @@ from pathlib import Path
 import yaml
 
 from divapply.config import ANSWERS_PATH
-from divapply.security import protect_file
+from divapply.security import write_private_text
 
 
 _TOKEN_RE = re.compile(r"[a-z][a-z0-9+#.\-]{1,}", re.IGNORECASE)
@@ -63,10 +63,8 @@ def load_answer_bank(path: Path | None = None) -> list[dict]:
 
 def save_answer_bank(entries: list[dict], path: Path | None = None) -> None:
     bank_path = path or ANSWERS_PATH
-    bank_path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"answers": entries}
-    bank_path.write_text(yaml.safe_dump(payload, sort_keys=False, allow_unicode=False), encoding="utf-8")
-    protect_file(bank_path)
+    write_private_text(bank_path, yaml.safe_dump(payload, sort_keys=False, allow_unicode=False))
 
 
 def add_answer(question: str, answer: str, *, tags: list[str] | None = None, path: Path | None = None) -> dict:

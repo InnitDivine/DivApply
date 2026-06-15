@@ -31,10 +31,20 @@ dependencies = [
 [project.optional-dependencies]
 coursework = ["pypdf>=4.0"]
 jobspy-runtime = [
-    "python-jobspy>=1.1.82,<1.2",
+    "numpy==1.26.3; python_version < '3.13'",
+    "pydantic>=2.0",
+    "requests>=2.31",
+    "tls-client>=1.0",
+    "regex>=2024.0",
+    "markdownify>=0.14.1",
 ]
 full = [
-    "python-jobspy>=1.1.82,<1.2",
+    "numpy==1.26.3; python_version < '3.13'",
+    "pydantic>=2.0",
+    "requests>=2.31",
+    "tls-client>=1.0",
+    "regex>=2024.0",
+    "markdownify>=0.14.1",
     "pypdf>=4.0",
 ]
 dev = ["pytest>=7.0", "ruff>=0.1", "pip-audit>=2.10"]

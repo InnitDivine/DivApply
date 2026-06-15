@@ -7,10 +7,13 @@ import pytest
 from divapply.security import (
     UnsafeUrlError,
     collect_known_secret_values,
+    local_request_is_same_origin,
+    parse_local_form_length,
     redact_known_secrets,
     safe_join_external_url,
     sanitize_external_url,
     validate_external_url,
+    write_private_text,
 )
 
 
@@ -81,3 +84,32 @@ def test_redact_known_secrets_removes_values_and_common_credentials(monkeypatch)
     assert "sk-test-secret-token" not in redacted
     assert "abc12345" not in redacted
     assert "[redacted]" in redacted
+
+
+def test_local_form_length_rejects_invalid_or_large_bodies() -> None:
+    assert parse_local_form_length("42") == 42
+
+    with pytest.raises(ValueError):
+        parse_local_form_length("-1")
+
+    with pytest.raises(ValueError):
+        parse_local_form_length("not-a-number")
+
+    with pytest.raises(ValueError):
+        parse_local_form_length(str(64 * 1024 + 1))
+
+
+def test_local_same_origin_accepts_local_origin_and_rejects_cross_site() -> None:
+    assert local_request_is_same_origin({"Origin": "http://127.0.0.1:8765"}, "127.0.0.1", 8765)
+    assert local_request_is_same_origin({"Referer": "http://localhost:8765/?saved=1"}, "127.0.0.1", 8765)
+
+    assert not local_request_is_same_origin({"Origin": "https://evil.example"}, "127.0.0.1", 8765)
+    assert not local_request_is_same_origin({"Referer": "https://evil.example/form"}, "127.0.0.1", 8765)
+
+
+def test_write_private_text_writes_content(tmp_path) -> None:
+    path = tmp_path / "nested" / "secret.txt"
+
+    write_private_text(path, "secret-value")
+
+    assert path.read_text(encoding="utf-8") == "secret-value"

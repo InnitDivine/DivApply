@@ -85,7 +85,7 @@ divapply edit
 
 This creates your local app folder and setup files:
 
-- `profile.json` - personal details, work history, preferences
+- `profile.json` - applicant facts such as personal details, compensation, work history, education, and verified skills
 - `resume.txt` - master resume facts
 - `searches.yaml` - job searches and filters
 - `.env` - API keys and runtime settings
@@ -96,12 +96,11 @@ These files are private and ignored by git.
 Use `divapply edit` as the normal setup screen after initialization. It opens a local-only browser editor for:
 
 - Personal/contact details
-- Target work type and hourly pay
-- Preferred roles and skills
+- Compensation and verified skills
 - Work history, education, certifications, references, projects, and real metrics
-- Search locations, query tiers, job boards, and filters
+- Search roles, schedule/work-type filters, locations, query tiers, job boards, and filters
 
-The editor saves `profile.json` and `searches.yaml` for you, so most users do not need to hand-edit JSON or YAML.
+The editor saves applicant facts to `profile.json` and job-search intent to `searches.yaml`, so most users do not need to hand-edit JSON or YAML.
 
 ## Daily Workflow
 

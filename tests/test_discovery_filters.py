@@ -4,7 +4,10 @@ import builtins
 
 import pytest
 
+from divapply.database import close_connection, init_db
+from divapply.discovery import jobspy as jobspy_mod
 from divapply.discovery.jobspy import (
+    _full_crawl,
     _job_row_passes_filters,
     _location_ok,
     _load_filter_rules,
@@ -168,3 +171,50 @@ def test_customer_service_filter_allows_only_low_hour_side_work() -> None:
         },
         rules,
     )
+
+
+def test_full_crawl_reports_board_timing_stats(tmp_path, monkeypatch) -> None:
+    pd = pytest.importorskip("pandas")
+    db_path = tmp_path / "jobs.db"
+    conn = init_db(db_path)
+
+    def fake_scrape(kwargs, max_retries=2):
+        sites = kwargs["site_name"]
+        return pd.DataFrame(
+            [
+                {
+                    "job_url": f"https://example.com/{site}/job",
+                    "title": f"{site} support",
+                    "company": "Example Co",
+                    "location": "Logan, UT",
+                    "description": "Part-time support role in Logan, UT.",
+                    "site": site,
+                }
+                for site in sites
+            ]
+        )
+
+    monkeypatch.setattr(jobspy_mod, "_scrape_with_retry", fake_scrape)
+    monkeypatch.setattr(jobspy_mod, "init_db", lambda: conn)
+    monkeypatch.setattr(jobspy_mod, "get_connection", lambda: conn)
+
+    result = _full_crawl(
+        {
+            "queries": [{"query": "support", "tier": 1}],
+            "locations": [{"label": "Logan", "location": "Logan, UT"}],
+            "location": {"accept_patterns": ["Logan"], "reject_patterns": []},
+        },
+        sites=["indeed", "linkedin"],
+        workers=1,
+        results_per_site=2,
+    )
+
+    assert result["new"] == 2
+    assert result["queries"] == 1
+    assert set(result["board_stats"]) == {"indeed", "linkedin"}
+    assert result["board_stats"]["indeed"]["calls"] == 1
+    assert result["board_stats"]["indeed"]["total"] == 1
+    assert result["board_stats"]["linkedin"]["calls"] == 1
+    assert result["board_stats"]["linkedin"]["total"] == 1
+
+    close_connection(db_path)

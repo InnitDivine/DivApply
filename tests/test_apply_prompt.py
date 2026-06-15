@@ -26,8 +26,8 @@ def test_apply_prompt_keeps_company_and_source_separate(tmp_path, monkeypatch) -
     monkeypatch.setattr(prompt_mod.config, "load_credentials", lambda: {})
     monkeypatch.setattr(prompt_mod, "_build_profile_summary", lambda profile: "profile summary")
     monkeypatch.setattr(prompt_mod, "_build_location_check", lambda profile, search_config: "location check")
-    monkeypatch.setattr(prompt_mod, "_build_salary_section", lambda profile: "salary section")
-    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile: "screening section")
+    monkeypatch.setattr(prompt_mod, "_build_salary_section", lambda profile, search_config=None: "salary section")
+    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile, search_config=None: "screening section")
     monkeypatch.setattr(prompt_mod, "_build_hard_rules", lambda profile: "hard rules")
     monkeypatch.setattr(answers, "render_answer_bank_for_prompt", lambda: "answer bank")
 
@@ -82,8 +82,8 @@ def test_apply_prompt_ignores_credentials_saved_in_profile(tmp_path, monkeypatch
     monkeypatch.setattr(prompt_mod.config, "load_credentials", lambda: {})
     monkeypatch.setattr(prompt_mod, "_build_profile_summary", lambda profile: "profile summary")
     monkeypatch.setattr(prompt_mod, "_build_location_check", lambda profile, search_config: "location check")
-    monkeypatch.setattr(prompt_mod, "_build_salary_section", lambda profile: "salary section")
-    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile: "screening section")
+    monkeypatch.setattr(prompt_mod, "_build_salary_section", lambda profile, search_config=None: "salary section")
+    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile, search_config=None: "screening section")
     monkeypatch.setattr(prompt_mod, "_build_hard_rules", lambda profile: "hard rules")
     monkeypatch.setattr(answers, "render_answer_bank_for_prompt", lambda: "answer bank")
 
@@ -106,10 +106,9 @@ def test_apply_prompt_ignores_credentials_saved_in_profile(tmp_path, monkeypatch
     assert "No saved default password is available" in prompt
 
 
-def test_salary_section_uses_part_time_guidance_when_full_time_unavailable() -> None:
+def test_salary_section_uses_part_time_guidance_from_search_config() -> None:
     section = prompt_mod._build_salary_section(
         {
-            "availability": {"available_for_full_time": "No while in school"},
             "compensation": {
                 "salary_expectation": "55000",
                 "salary_currency": "USD",
@@ -117,10 +116,11 @@ def test_salary_section_uses_part_time_guidance_when_full_time_unavailable() -> 
                 "salary_range_max": "65000",
                 "part_time_hourly_expectation": "Use posted hourly range.",
             },
-        }
+        },
+        {"require_part_time": True, "customer_service_max_hours_per_week": 20},
     )
 
-    assert "low-hour part-time work while in school" in section
+    assert "active searches.yaml filters target low-hour part-time work" in section
     assert "Use posted hourly range." in section
     assert "Do not apply unless the user explicitly selected it" in section
 
@@ -138,7 +138,6 @@ def test_apply_prompt_allows_normal_hourly_employee_applications(tmp_path, monke
             "phone": "555-0100",
             "city": "Logan",
         },
-        "availability": {"available_for_full_time": "No while in school"},
         "compensation": {
             "salary_expectation": "55000",
             "salary_currency": "USD",
@@ -149,12 +148,12 @@ def test_apply_prompt_allows_normal_hourly_employee_applications(tmp_path, monke
 
     monkeypatch.setattr(prompt_mod.config, "APPLY_WORKER_DIR", tmp_path / "workers")
     monkeypatch.setattr(prompt_mod.config, "load_profile", lambda: profile)
-    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: {"require_part_time": True})
     monkeypatch.setattr(prompt_mod.config, "load_blocked_sso", lambda: [])
     monkeypatch.setattr(prompt_mod.config, "load_credentials", lambda: {})
     monkeypatch.setattr(prompt_mod, "_build_profile_summary", lambda profile: "profile summary")
     monkeypatch.setattr(prompt_mod, "_build_location_check", lambda profile, search_config: "location check")
-    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile: "screening section")
+    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile, search_config=None: "screening section")
     monkeypatch.setattr(prompt_mod, "_build_hard_rules", lambda profile: "hard rules")
     monkeypatch.setattr(answers, "render_answer_bank_for_prompt", lambda: "answer bank")
 

@@ -24,7 +24,7 @@ from pathlib import Path
 import httpx
 
 from divapply.config import (
-    APP_DIR, RESUME_PATH, load_credentials, load_env, load_profile, ensure_dirs,
+    APP_DIR, RESUME_PATH, load_credentials, load_env, load_profile, ensure_dirs, profile_skills,
 )
 from divapply.llm import get_client
 
@@ -182,7 +182,7 @@ def _build_profile_summary(profile: dict) -> str:
     exp = profile.get("experience", {})
     narrative = profile.get("professional_narrative", "")
     diffs = profile.get("key_differentiators", [])
-    skills = profile.get("skills_boundary", {})
+    skills = profile_skills(profile)
 
     all_skills: list[str] = []
     for category_skills in skills.values():
@@ -192,10 +192,7 @@ def _build_profile_summary(profile: dict) -> str:
     return (
         f"Name: {p.get('full_name', 'N/A')}\n"
         f"Location: {p.get('city', '')}, {p.get('province_state', '')}\n"
-        f"Current role: {exp.get('current_job_title', '')} at {exp.get('current_company', '')}\n"
-        f"Target role: {exp.get('target_role', '')}\n"
-        f"Total experience: {exp.get('years_of_experience_total', '')} years\n"
-        f"IT experience: {exp.get('years_of_experience_it', '')} years\n"
+        f"Current role: {exp.get('current_job_title') or exp.get('current_title', '')} at {exp.get('current_company', '')}\n"
         f"Education: {exp.get('education_level', '')}\n"
         f"Narrative: {narrative}\n"
         f"Key differentiators: {'; '.join(diffs[:4])}\n"

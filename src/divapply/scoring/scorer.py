@@ -1,4 +1,4 @@
-﻿"""Job fit scoring: hybrid evaluation of candidate-job match quality.
+"""Job fit scoring: hybrid evaluation of candidate-job match quality.
 
 Scores jobs on a 1-10 scale by blending keyword hit-rate, local hashed
 embedding similarity, and the LLM evaluator. All personal data is loaded at
@@ -10,13 +10,20 @@ import re
 import time
 from datetime import datetime, timezone
 
-from divapply.config import RESUME_PATH, load_profile, profile_skills
+from divapply.config import RESUME_PATH, load_profile, load_search_config, profile_skills
 from divapply.database import get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
 
 log = logging.getLogger(__name__)
+
+EXPERIENCE_INFERENCE_GUIDANCE = (
+    "Use each job title and task summary to infer common, truthful duties normally tied to that work. "
+    "For example, haul truck driving can imply safety procedures, equipment checks, radio communication, "
+    "and site rules. Do not invent credentials, licenses, exact tools, employers, dates, metrics, "
+    "or completed certifications."
+)
 
 
 # â”€â”€ Scoring Prompt â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -25,8 +32,8 @@ SCORE_PROMPT = """You are a neutral job fit evaluator. Read the candidate's resu
 
 CORE POLICY:
 - Rank only job fit: verified candidate evidence against the posting's stated and clearly implied criteria.
-- When verified profile facts state the current search target, availability, schedule limits, or preferred role type, treat those as job-fit evidence.
-- Do not reward or penalize any job family, industry, employer type, or schedule type unless the profile's current search target or availability makes it relevant.
+- When verified profile facts and active search filters state schedule limits or preferred role type, treat those as job-fit evidence.
+- Do not reward or penalize any job family, industry, employer type, or schedule type unless active search filters or verified profile facts make it relevant.
 - Use general role sense only to interpret common requirements, not to invent unstated requirements.
 - Transferable experience counts when duties, tools, domain knowledge, education, or coursework reasonably map to the job's work.
 - For entry-level, low-hour, student, customer service, cashier, front desk, office assistant, data entry, library, recreation, retail, or food service roles, do not require the same prior job title or exact industry/tool when the candidate has verified transferable public-facing service, records, payments, scheduling, data entry, or administrative experience.
@@ -35,7 +42,7 @@ CORE POLICY:
 
 SCORING CRITERIA:
 - 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
-- 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge. For low-hour/student searches, this includes easy part-time roles that match availability, location, and transferable customer service/admin skills.
+- 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge. For low-hour/student searches, this includes easy part-time roles that match search filters, location, and transferable customer service/admin skills.
 - 5-6: Moderate match. Relevant background exists but meaningful gaps in required experience, credentials, schedule, or stated search preferences.
 - 3-4: Weak match. Some transferable skills but significant gaps. Candidate could apply but is unlikely to be competitive.
 - 1-2: Incompatible. Role requires specific licensure, certification, or field experience the candidate does not have and cannot substitute.
@@ -147,12 +154,6 @@ def _build_profile_evidence_context(profile: dict) -> str:
     if isinstance(target_roles, dict):
         lines.append("Target roles: " + "; ".join(str(v) for v in target_roles.values() if v))
 
-    availability = profile.get("availability", {})
-    if isinstance(availability, dict):
-        for key, value in availability.items():
-            if value:
-                lines.append(f"{key.replace('_', ' ').title()}: {value}")
-
     if profile.get("professional_narrative"):
         lines.append(f"Professional narrative: {profile['professional_narrative']}")
 
@@ -180,9 +181,7 @@ def _build_profile_evidence_context(profile: dict) -> str:
         ]
         lines.append("Work history: " + " | ".join(str(part) for part in parts if part))
 
-    inference_guidance = profile.get("experience_inference")
-    if inference_guidance:
-        lines.append(f"Experience inference guidance: {inference_guidance}")
+    lines.append(f"Experience inference guidance: {EXPERIENCE_INFERENCE_GUIDANCE}")
 
     for category, items in profile_skills(profile).items():
         if items:
@@ -230,6 +229,27 @@ def _build_profile_evidence_context(profile: dict) -> str:
             elif isinstance(value, str) and value:
                 lines.append(f"{label}: {value}")
 
+    return "\n".join(lines)
+
+
+def _build_search_evidence_context(search_config: dict) -> str:
+    """Build scoring-safe search constraints from searches.yaml."""
+    lines: list[str] = []
+    if search_config.get("require_part_time") or search_config.get("customer_service_require_part_time"):
+        lines.append("Search schedule filter: part-time roles required")
+    max_hours = search_config.get("customer_service_max_hours_per_week") or search_config.get("max_hours_per_week")
+    if max_hours:
+        lines.append(f"Search max hours per week: {max_hours}")
+    queries = search_config.get("queries")
+    if isinstance(queries, list):
+        query_terms = [str(item.get("query") or "").strip() for item in queries if isinstance(item, dict)]
+        if query_terms:
+            lines.append("Search queries: " + "; ".join(query_terms[:20]))
+    locations = search_config.get("locations")
+    if isinstance(locations, list):
+        loc_terms = [str(item.get("location") or "").strip() for item in locations if isinstance(item, dict)]
+        if loc_terms:
+            lines.append("Search locations: " + "; ".join(loc_terms))
     return "\n".join(lines)
 
 
@@ -319,7 +339,8 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     coursework_summary = "\n".join(profile.get("coursework_summary", []))
     coursework_skills_summary = "\n".join(profile.get("coursework_skills", []))
-    profile_context = _build_profile_evidence_context(profile)
+    search_context = _build_search_evidence_context(load_search_config())
+    profile_context = "\n".join(part for part in (_build_profile_evidence_context(profile), search_context) if part)
     conn = get_connection()
 
     if rescore:

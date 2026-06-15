@@ -16,6 +16,7 @@ class UnsafeUrlError(ValueError):
 
 _PRIVATE_HOST_SUFFIXES = (".local", ".localhost", ".internal")
 _SECRET_TOKEN_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._~+/=-]{7,}")
+MAX_LOCAL_FORM_BYTES = 64 * 1024
 
 
 def _private_networks_allowed() -> bool:
@@ -109,6 +110,59 @@ def protect_file(path: Path | str) -> None:
         Path(path).chmod(0o600)
     except OSError:
         pass
+
+
+def write_private_text(path: Path | str, text: str, *, encoding: str = "utf-8") -> None:
+    """Write sensitive text with user-only permissions from file creation."""
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = text.encode(encoding)
+    fd = os.open(str(target), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+    finally:
+        protect_file(target)
+
+
+def parse_local_form_length(raw_length: str | None, *, max_bytes: int = MAX_LOCAL_FORM_BYTES) -> int:
+    """Validate a local form Content-Length before reading the request body."""
+    try:
+        length = int(raw_length or "0")
+    except ValueError as exc:
+        raise ValueError("invalid content length") from exc
+    if length < 0:
+        raise ValueError("invalid content length")
+    if length > max_bytes:
+        raise ValueError("request body too large")
+    return length
+
+
+def local_request_is_same_origin(headers: object, host: str, port: int) -> bool:
+    """Return False for browser cross-origin writes to local-only HTTP tools."""
+    allowed = {
+        f"http://{host}:{port}",
+        f"http://localhost:{port}" if host in {"127.0.0.1", "::1"} else f"http://{host}:{port}",
+    }
+
+    def _get(name: str) -> str:
+        getter = getattr(headers, "get", None)
+        if getter is None:
+            return ""
+        return str(getter(name, "") or "").strip()
+
+    origin = _get("Origin")
+    if origin and origin.rstrip("/") not in allowed:
+        return False
+
+    referer = _get("Referer")
+    if referer:
+        parsed = urlparse(referer)
+        referer_origin = f"{parsed.scheme}://{parsed.netloc}"
+        if referer_origin not in allowed:
+            return False
+
+    return True
 
 
 def collect_known_secret_values(*sources: object) -> set[str]:

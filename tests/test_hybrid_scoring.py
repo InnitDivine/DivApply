@@ -7,7 +7,7 @@ from divapply.scoring.context import format_job_context
 from divapply.scoring.embedding import embedding_score
 from divapply.scoring.keywords import score_keywords
 from divapply.scoring import scorer
-from divapply.scoring.scorer import _build_profile_evidence_context
+from divapply.scoring.scorer import _build_profile_evidence_context, _build_search_evidence_context
 
 
 def test_keyword_score_reports_hits_and_misses() -> None:
@@ -194,8 +194,8 @@ def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     prompt = scorer.SCORE_PROMPT
 
     assert "Rank only job fit" in prompt
-    assert "current search target, availability, schedule limits" in prompt
-    assert "unless the profile's current search target or availability makes it relevant" in prompt
+    assert "active search filters state schedule limits" in prompt
+    assert "unless active search filters or verified profile facts make it relevant" in prompt
     assert "do not require the same prior job title or exact industry/tool" in prompt
     assert "avoid scoring below 6 solely because the candidate lacks exact same-title experience" in prompt
     assert "Do not penalize legitimate remote" in prompt
@@ -215,10 +215,6 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
             "years_of_experience_it": "3",
             "education_level": "Bachelor's Degree (in progress)",
         },
-        "availability": {
-            "available_for_full_time": "No while in school",
-            "available_for_part_time": "Yes, 5-15 hours per week",
-        },
         "skills_boundary": {
             "infrastructure": ["Oracle Cloud Infrastructure", "Nginx"],
             "networking": ["DNS", "SSH"],
@@ -237,9 +233,25 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
 
     assert "Location: Logan, UT" in context
     assert "IT Support Analyst" in context
-    assert "Available For Full Time: No while in school" in context
-    assert "Available For Part Time: Yes, 5-15 hours per week" in context
     assert "Oracle Cloud Infrastructure" in context
+    assert "Use each job title and task summary" in context
+    assert "Do not invent credentials" in context
     assert "Bridgerland Technical College" in context
     assert "do-not-include" not in context
     assert "Password should not appear" not in context
+
+
+def test_search_evidence_context_includes_schedule_filters() -> None:
+    context = _build_search_evidence_context(
+        {
+            "require_part_time": True,
+            "customer_service_max_hours_per_week": 20,
+            "queries": [{"query": "front desk part time", "tier": 1}],
+            "locations": [{"location": "Logan, UT", "remote": False}],
+        }
+    )
+
+    assert "Search schedule filter: part-time roles required" in context
+    assert "Search max hours per week: 20" in context
+    assert "front desk part time" in context
+    assert "Logan, UT" in context

@@ -3,6 +3,28 @@ from __future__ import annotations
 import threading
 
 from divapply import pipeline
+from divapply.discovery import jobspy
+from divapply.discovery import smartextract
+from divapply.discovery import workday
+
+
+def test_discover_stage_preserves_jobspy_board_stats(monkeypatch) -> None:
+    expected = {
+        "indeed": {"calls": 1, "seconds": 0.2, "total": 3, "new": 2, "existing": 1, "errors": 0}
+    }
+
+    monkeypatch.setattr(
+        jobspy,
+        "run_discovery",
+        lambda workers=4: {"new": 2, "existing": 1, "errors": 0, "board_stats": expected},
+    )
+    monkeypatch.setattr(workday, "run_workday_discovery", lambda workers=1: {"status": "ok"})
+    monkeypatch.setattr(smartextract, "run_smart_extract", lambda workers=1: {"status": "ok"})
+
+    result = pipeline._run_discover(workers=1)
+
+    assert result["jobspy"] == "ok"
+    assert result["jobspy_board_stats"] == expected
 
 
 def test_streaming_discover_normalizes_partial_substage_errors(monkeypatch) -> None:
