@@ -45,12 +45,6 @@ defaults:
   prune_score: 3
   country_indeed: usa
 
-excluded_keywords:
-  - "active top secret"
-  - "top secret clearance"
-  - "ts/sci"
-  - "clearance required"
-
 customer_service_title_terms:
   - "customer service"
   - "front desk"

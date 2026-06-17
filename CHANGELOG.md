@@ -10,6 +10,7 @@ All notable changes to DivApply will be documented here.
 - Simplified default search configuration to use accept-location filtering without default reject patterns.
 - Made configured `locations` the default source for discovery location filtering, so normal configs do not need `accept_patterns`.
 - Removed default title exclusion filters from shipped search config and made optional title excludes use safer term matching.
+- Removed default excluded keyword filters from shipped search config so scoring and pruning decide fit by default.
 
 ## 0.4.7
 
