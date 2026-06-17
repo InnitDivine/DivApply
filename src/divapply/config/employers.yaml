@@ -10,8 +10,8 @@ employers: {}
 #   sutter_health:
 #     name: "Sutter Health"
 #     tenant: "sutterhealth"
-#     site_id: "External"
-#     base_url: "https://sutterhealth.wd5.myworkdayjobs.com"
+#     site_id: "SH"
+#     base_url: "https://wd1.myworkdaysite.com"
 #
 #   uc_davis_health:
 #     name: "UC Davis Health"
