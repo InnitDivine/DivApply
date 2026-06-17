@@ -9,7 +9,7 @@ skip_doctor=0
 run_init=0
 python_cmd="${DIVAPPLY_PYTHON:-}"
 venv_dir=".venv"
-browsers="chromium,firefox"
+browsers="chromium"
 
 usage() {
   cat <<'EOF'
@@ -134,7 +134,7 @@ if [[ "$skip_browsers" -eq 0 ]]; then
     step "Installing Playwright browsers: ${browser_list[*]}"
     if ! "$venv_python" -m playwright install "${browser_list[@]}"; then
       warn "Playwright browser download failed. You can rerun: ./install.sh --browsers $browsers"
-      warn "PDF export needs chromium. Auto-apply defaults to firefox."
+      warn "PDF export and default auto-apply need chromium."
     fi
   fi
 fi

@@ -29,7 +29,7 @@ python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
 python -m pip install --no-deps python-jobspy
-python -m playwright install chromium firefox
+python -m playwright install chromium
 divapply init
 divapply edit
 divapply doctor
@@ -44,7 +44,7 @@ python -m venv .venv
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
 python -m pip install --no-deps python-jobspy
-python -m playwright install chromium firefox
+python -m playwright install chromium
 divapply init
 divapply edit
 divapply doctor
@@ -60,7 +60,7 @@ python -m pip install --no-deps python-jobspy
 
 Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy runtime dependencies, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins a vulnerable `markdownify` range, install DivApply's secure dependency floor first, then install `python-jobspy` separately with `--no-deps`. If JobSpy is missing, run `python -m pip install "divapply[full]" && python -m pip install --no-deps python-jobspy`. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
 
-Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code.
+Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
 
 ## Clone Setup
 
@@ -131,6 +131,8 @@ divapply apply --gen --url https://example.com/job
 divapply apply --yes
 ```
 
+Auto-apply launches a dedicated Chromium browser session for each worker, navigates to application pages, fills supported form fields from your profile and resume facts, uploads generated documents when available, answers screening questions through the selected agent backend, and shows progress in the live terminal dashboard.
+
 ## Search Config
 
 `searches.yaml` controls what DivApply looks for.
@@ -141,7 +143,7 @@ Example:
 queries:
   - query: "student assistant"
     tier: 1
-  - query: "front desk part time"
+  - query: "front desk"
     tier: 2
   - query: "customer service"
     tier: 3

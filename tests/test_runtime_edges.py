@@ -3,10 +3,10 @@ from __future__ import annotations
 from divapply import runtime
 
 
-def test_get_apply_browser_defaults_invalid_values_to_firefox(monkeypatch) -> None:
+def test_get_apply_browser_defaults_invalid_values_to_chromium(monkeypatch) -> None:
     monkeypatch.setenv("DIVAPPLY_BROWSER", "not-a-browser")
 
-    assert runtime.get_apply_browser() == "firefox"
+    assert runtime.get_apply_browser() == "chromium"
 
 
 def test_get_apply_backend_rejects_unavailable_requested_backend(monkeypatch) -> None:
@@ -21,4 +21,3 @@ def test_get_chrome_path_prefers_existing_env_path(tmp_path, monkeypatch) -> Non
     monkeypatch.setenv("CHROME_PATH", str(chrome))
 
     assert runtime.get_chrome_path() == str(chrome)
-

@@ -76,7 +76,7 @@ if platform.system() != "Windows":
 
 def _make_mcp_config(
     cdp_port: int,
-    browser: str = "firefox",
+    browser: str = "chromium",
     worker_profile_dir: Path | None = None,
     headless: bool = False,
 ) -> dict:
@@ -575,7 +575,7 @@ def get_manual_command(backend: str, model: str, prompt_file: Path, mcp_path: Pa
 
 def gen_prompt(target_url: str, min_score: int = 7,
                model: str = "gpt-5.4-mini", worker_id: int = 0,
-               backend: str | None = None, browser: str = "firefox",
+               backend: str | None = None, browser: str = "chromium",
                headless: bool = False) -> Path | None:
     """Generate prompt and MCP files without running the apply agent."""
     job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
@@ -618,7 +618,7 @@ def gen_prompt(target_url: str, min_score: int = 7,
 
 def run_job(job: dict, port: int, worker_id: int = 0,
             model: str = "gpt-5.4-mini", backend: str = "codex",
-            browser: str = "firefox", dry_run: bool = False,
+            browser: str = "chromium", dry_run: bool = False,
             headless: bool = False) -> tuple[str, int]:
     """Run one auto-apply job through the selected backend."""
     resume_text = _read_tailored_resume_text(job)
@@ -807,7 +807,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
                 min_score: int = 7, headless: bool = False,
                 model: str = "gpt-5.4-mini", backend: str = "codex",
-                browser: str = "firefox",
+                browser: str = "chromium",
                 dry_run: bool = False) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty."""
     applied = 0
@@ -908,7 +908,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 def main(limit: int = 1, target_url: str | None = None,
          min_score: int = 7, headless: bool = False,
          model: str = "gpt-5.4-mini", backend: str = "codex",
-         browser: str = "firefox",
+         browser: str = "chromium",
          dry_run: bool = False, continuous: bool = False,
          poll_interval: int = 60, workers: int = 1) -> None:
     """Launch the apply pipeline."""

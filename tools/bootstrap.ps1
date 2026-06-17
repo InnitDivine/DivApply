@@ -6,7 +6,7 @@ param(
     [switch]$SkipBrowsers,
     [switch]$SkipDoctor,
     [switch]$Init,
-    [string]$Browsers = "chromium,firefox",
+    [string]$Browsers = "chromium",
     [string]$PythonCommand = $env:DIVAPPLY_PYTHON,
     [string]$VenvDir = ".venv"
 )
@@ -217,7 +217,7 @@ if (-not $SkipBrowsers) {
             -Args (@("-m", "playwright", "install") + $browserList) `
             -Warning "Playwright browser download failed. You can rerun: .\install.ps1 -Browsers `"$Browsers`""
         if (-not $ok) {
-            Write-SoftWarning "PDF export needs chromium. Auto-apply defaults to firefox."
+            Write-SoftWarning "PDF export and default auto-apply need chromium."
         }
     }
 }

@@ -413,7 +413,7 @@ def apply(
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Apply agent model name."),
     backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Apply agent backend: codex or claude."),
-    browser: str = typer.Option("firefox", "--browser", help="Playwright browser: firefox, chrome, msedge, webkit."),
+    browser: str = typer.Option("chromium", "--browser", help="Playwright browser: chromium, chrome, msedge, firefox, webkit."),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),

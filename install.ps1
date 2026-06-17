@@ -6,7 +6,7 @@ param(
     [switch]$SkipBrowsers,
     [switch]$SkipDoctor,
     [switch]$Init,
-    [string]$Browsers = "chromium,firefox",
+    [string]$Browsers = "chromium",
     [string]$PythonCommand = $env:DIVAPPLY_PYTHON,
     [string]$VenvDir = ".venv"
 )

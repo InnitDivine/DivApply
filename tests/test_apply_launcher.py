@@ -65,6 +65,16 @@ def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
     assert "mcp_servers.playwright.required=true" in cmd
 
 
+def test_mcp_config_defaults_to_chromium() -> None:
+    config = launcher._make_mcp_config(cdp_port=9222)
+
+    assert config["mcpServers"]["playwright"]["args"] == [
+        "@playwright/mcp@0.0.70",
+        "--browser=chromium",
+        "--viewport-size=1280x900",
+    ]
+
+
 def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

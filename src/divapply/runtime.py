@@ -26,6 +26,7 @@ APPLY_AGENT_LABELS = {
 }
 
 APPLY_BROWSER_LABELS = {
+    "chromium": "Chromium",
     "firefox": "Firefox",
     "chrome": "Google Chrome",
     "msedge": "Microsoft Edge",
@@ -118,9 +119,9 @@ def get_apply_backend_label(backend: str | None) -> str:
 
 def get_apply_browser(preferred: str | None = None) -> str:
     """Resolve which Playwright MCP browser channel to use."""
-    requested = preferred or os.environ.get("DIVAPPLY_BROWSER") or os.environ.get("APPLYPILOT_BROWSER") or "firefox"
+    requested = preferred or os.environ.get("DIVAPPLY_BROWSER") or os.environ.get("APPLYPILOT_BROWSER") or "chromium"
     browser = requested.strip().lower()
-    return browser if browser in APPLY_BROWSER_LABELS else "firefox"
+    return browser if browser in APPLY_BROWSER_LABELS else "chromium"
 
 
 def get_apply_browser_label(browser: str | None) -> str:
