@@ -106,6 +106,8 @@ jobs:
           python -m pip install --upgrade pip
           WHEEL="$(ls dist/*.whl)"
           python -m pip install "$WHEEL[full]"
+          python -m pip install --no-deps python-jobspy
+          python -c "import jobspy"
           divapply --version
           divapply selfcheck
 

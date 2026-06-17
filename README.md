@@ -28,6 +28,7 @@ Recommended CLI install with `pip`:
 python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
+python -m pip install --no-deps python-jobspy
 python -m playwright install chromium firefox
 divapply init
 divapply edit
@@ -42,6 +43,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
+python -m pip install --no-deps python-jobspy
 python -m playwright install chromium firefox
 divapply init
 divapply edit
@@ -53,9 +55,10 @@ Install directly from GitHub before a PyPI release is available:
 ```powershell
 python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
+python -m pip install --no-deps python-jobspy
 ```
 
-Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy runtime dependencies, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins a vulnerable `markdownify` range, the repo installer installs `python-jobspy` separately with `--no-deps` after installing DivApply's secure dependency floor. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
+Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy runtime dependencies, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins a vulnerable `markdownify` range, install DivApply's secure dependency floor first, then install `python-jobspy` separately with `--no-deps`. If JobSpy is missing, run `python -m pip install "divapply[full]" && python -m pip install --no-deps python-jobspy`. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
 
 Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code.
 
@@ -74,6 +77,7 @@ Update an existing clone:
 ```powershell
 git pull
 python -m pip install --upgrade -e ".[full]"
+python -m pip install --no-deps python-jobspy
 ```
 
 ## First Run

@@ -66,6 +66,8 @@ python -m venv .venv-install-smoke
 . .venv-install-smoke/bin/activate
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
+python -m pip install --no-deps python-jobspy
+python -c "import jobspy"
 divapply --version
 divapply selfcheck
 ```

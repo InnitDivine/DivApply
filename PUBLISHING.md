@@ -57,18 +57,21 @@ The `Release` workflow will lint, test, verify the tagged commit is reachable fr
 
 ```bash
 pip install "divapply[full]"
+python -m pip install --no-deps python-jobspy
 ```
 
 Before the next PyPI release, users can install the latest `main` directly from GitHub:
 
 ```bash
 pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
+python -m pip install --no-deps python-jobspy
 ```
 
 ## Verify
 
 ```bash
 python -m pip install --upgrade "divapply[full]"
+python -m pip install --no-deps python-jobspy
 divapply --version
 divapply doctor
 ```

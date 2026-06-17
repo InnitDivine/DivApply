@@ -7,23 +7,23 @@ queries:
     tier: 1
   - query: "campus recreation"
     tier: 1
-  - query: "front desk part time"
+  - query: "front desk"
     tier: 1
 
   # Tier 2: strong adjacent matches.
-  - query: "office assistant part time"
+  - query: "office assistant"
     tier: 2
-  - query: "receptionist part time"
+  - query: "receptionist"
     tier: 2
-  - query: "patient access part time"
+  - query: "patient access"
     tier: 2
 
   # Tier 3: broad fallback searches.
   - query: "customer service"
     tier: 3
-  - query: "cashier"
+  - query: "guest services"
     tier: 3
-  - query: "retail associate"
+  - query: "data entry"
     tier: 3
 
 locations:
