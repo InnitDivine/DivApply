@@ -750,7 +750,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
         <h2>Must Match Titles</h2>
         <label for="include_titles">Optional strict title filter</label>
         <textarea class="tall" id="include_titles" name="include_titles">{_esc(values['include_titles'])}</textarea>
-        <p class="hint">Leave blank for ApplyPilot-style broad search. Add terms only when you want strict filtering.</p>
+        <p class="hint">Leave blank for broad search. Add terms only when you want strict filtering.</p>
       </section>
 
       <section>

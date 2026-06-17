@@ -89,7 +89,7 @@ def test_render_editor_shows_simple_setup_controls() -> None:
     assert "Search for these jobs" in html
     assert "front desk | 1" in html
     assert "indeed" in html
-    assert "Leave blank for ApplyPilot-style broad search" in html
+    assert "Leave blank for broad search" in html
     assert "Projected" not in html
     assert "Weekly" not in html
     assert "Save Settings" in html

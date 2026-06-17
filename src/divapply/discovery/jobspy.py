@@ -159,7 +159,7 @@ def _load_title_excludes(search_cfg: dict) -> list[str]:
 
 
 def _load_filter_rules(search_cfg: dict) -> dict:
-    """Load optional AIHawk-style filters from search config."""
+    """Load optional pre-scoring discovery filters from search config."""
     filters = search_cfg.get("filters", {}) or {}
     def _list(name: str) -> list[str]:
         return [
