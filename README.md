@@ -157,8 +157,6 @@ location:
     - "Logan"
     - "Cache Valley"
     - "Remote"
-  reject_patterns:
-    - "Salt Lake City"
 country: "USA"
 boards:
   - indeed
@@ -172,7 +170,7 @@ exclude_titles:
   - "clearance required"
 ```
 
-Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches.
+Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries` and places in `locations` / `location.accept_patterns`. `reject_patterns` is optional and only needed when a board repeatedly returns a specific wrong location despite the configured search locations.
 
 ## Resume Rules
 

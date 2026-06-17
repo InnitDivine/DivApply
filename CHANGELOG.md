@@ -7,6 +7,7 @@ All notable changes to DivApply will be documented here.
 - Documented the required `python-jobspy` no-deps install step for pip-based setup and release smoke tests.
 - Kept shipped search examples focused on role/title queries while locations and part-time constraints stay in separate fields.
 - Switched default auto-apply browser setup from Firefox to Playwright Chromium.
+- Simplified default search configuration to use accept-location filtering without default reject patterns.
 
 ## 0.4.7
 
