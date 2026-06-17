@@ -44,6 +44,20 @@ def test_search_config_supports_legacy_and_new_filter_names() -> None:
         assert rules[key] == value
 
 
+def test_search_config_derives_accept_terms_from_locations() -> None:
+    cfg = {
+        "locations": [
+            {"location": "Logan, UT", "remote": False},
+            {"location": "Remote", "remote": True},
+        ]
+    }
+
+    assert _load_location_config(cfg) == (
+        ["Logan, UT", "Logan", "remote", "anywhere", "united states", "usa"],
+        [],
+    )
+
+
 def test_job_row_passes_filters_rejects_blacklist_and_missing_required_keyword() -> None:
     rules = {
         "company_blacklist": ["badco"],

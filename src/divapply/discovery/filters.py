@@ -21,13 +21,49 @@ def term_in_text(text: str | None, term: str | None) -> bool:
 
 
 def load_location_filter(search_cfg: dict | None = None) -> tuple[list[str], list[str]]:
-    """Extract accept/reject location lists from current or legacy config names."""
+    """Extract location filters, deriving default accepts from configured locations."""
     if search_cfg is None:
         search_cfg = config.load_search_config()
     location_cfg = search_cfg.get("location", {}) or {}
-    accept = search_cfg.get("location_accept") or location_cfg.get("accept_patterns") or []
+    accept = (
+        search_cfg.get("location_accept")
+        or location_cfg.get("accept_patterns")
+        or _accept_terms_from_locations(search_cfg.get("locations", []) or [])
+    )
     reject = search_cfg.get("location_reject_non_remote") or location_cfg.get("reject_patterns") or []
     return accept, reject
+
+
+def _accept_terms_from_locations(locations: list[dict] | list[str]) -> list[str]:
+    """Build practical location-match terms from the configured search locations."""
+    terms: list[str] = []
+
+    def add(value: str | None) -> None:
+        text = str(value or "").strip()
+        if text and text.casefold() not in {item.casefold() for item in terms}:
+            terms.append(text)
+
+    for item in locations:
+        if isinstance(item, dict):
+            location = str(item.get("location") or item.get("label") or "").strip()
+            label = str(item.get("label") or "").strip()
+            is_remote = bool(item.get("remote")) or location.casefold() == "remote"
+        else:
+            location = str(item or "").strip()
+            label = ""
+            is_remote = location.casefold() == "remote"
+
+        if is_remote:
+            for term in ("remote", "anywhere", "united states", "usa"):
+                add(term)
+            continue
+
+        add(location)
+        add(label)
+        if "," in location:
+            add(location.split(",", 1)[0])
+
+    return terms
 
 
 def load_title_excludes(search_cfg: dict | None = None, *, include_filter_blacklist: bool = False) -> list[str]:

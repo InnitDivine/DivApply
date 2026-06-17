@@ -42,12 +42,12 @@ def test_normalize_search_config_accepts_simple_user_keys() -> None:
     assert cfg["customer_service_max_hours_per_week"] == 15
 
 
-def test_shipped_search_example_uses_accept_locations_without_default_rejects() -> None:
+def test_shipped_search_example_uses_locations_without_default_manual_filters() -> None:
     example_path = config.CONFIG_DIR / "searches.example.yaml"
     cfg = yaml.safe_load(example_path.read_text(encoding="utf-8"))
 
-    assert cfg["location"]["accept_patterns"]
-    assert "reject_patterns" not in cfg["location"]
+    assert cfg["locations"]
+    assert "location" not in cfg
 
 
 def test_normalize_profile_accepts_flat_skills_without_job_search_aliases() -> None:

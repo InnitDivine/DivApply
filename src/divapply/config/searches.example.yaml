@@ -32,16 +32,6 @@ locations:
   - location: "Remote"
     remote: true
 
-location:
-  accept_patterns:
-    - "logan"
-    - "cache valley"
-    - "cache county"
-    - "remote"
-    - "anywhere"
-    - "united states"
-    - "usa"
-
 country: "USA"
 
 boards:

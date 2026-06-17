@@ -8,6 +8,7 @@ All notable changes to DivApply will be documented here.
 - Kept shipped search examples focused on role/title queries while locations and part-time constraints stay in separate fields.
 - Switched default auto-apply browser setup from Firefox to Playwright Chromium.
 - Simplified default search configuration to use accept-location filtering without default reject patterns.
+- Made configured `locations` the default source for discovery location filtering, so normal configs do not need `accept_patterns`.
 
 ## 0.4.7
 

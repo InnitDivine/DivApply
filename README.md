@@ -152,11 +152,6 @@ locations:
     remote: false
   - location: "Remote"
     remote: true
-location:
-  accept_patterns:
-    - "Logan"
-    - "Cache Valley"
-    - "Remote"
 country: "USA"
 boards:
   - indeed
@@ -170,7 +165,7 @@ exclude_titles:
   - "clearance required"
 ```
 
-Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries` and places in `locations` / `location.accept_patterns`. `reject_patterns` is optional and only needed when a board repeatedly returns a specific wrong location despite the configured search locations.
+Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries` and places in `locations`. DivApply derives normal location filtering from `locations`; `location.accept_patterns` and `reject_patterns` are optional escape hatches only when a board repeatedly returns locations that need manual cleanup.
 
 ## Resume Rules
 
