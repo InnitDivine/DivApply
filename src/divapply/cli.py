@@ -165,6 +165,48 @@ def backup(
     )
 
 
+@app.command()
+def cleanup(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Delete cleanup candidates instead of only previewing them."),
+    include_backups: bool = typer.Option(
+        False,
+        "--include-backups",
+        help="Also include old divapply-backup-*.zip archives under the backups folder.",
+    ),
+) -> None:
+    """Preview or delete stale local dashboard benchmark and backup artifacts."""
+    from divapply.maintenance import cleanup_artifacts
+
+    result = cleanup_artifacts(dry_run=not yes, include_backups=include_backups)
+    action = "Would remove" if result.dry_run else "Removed"
+
+    if not result.candidates:
+        console.print("[green]No cleanup candidates found.[/green]")
+        return
+
+    table = Table(title="DivApply cleanup")
+    table.add_column("Action")
+    table.add_column("Path")
+    deleted = set(result.deleted)
+    skipped = set(result.skipped)
+    for path in result.candidates:
+        if path in skipped:
+            status = "Skipped"
+        elif result.dry_run:
+            status = "Would remove"
+        elif path in deleted:
+            status = "Removed"
+        else:
+            status = action
+        table.add_row(status, str(path))
+    console.print(table)
+
+    if result.dry_run:
+        console.print("[dim]Run `divapply cleanup --yes` to delete these files.[/dim]")
+    elif result.skipped:
+        console.print(f"[yellow]Skipped {len(result.skipped)} file(s) that could not be removed safely.[/yellow]")
+
+
 @app.command("import-coursework")
 def import_coursework(
     path: Path = typer.Argument(..., exists=True, readable=True, resolve_path=True, help="Transcript or coursework file to import."),

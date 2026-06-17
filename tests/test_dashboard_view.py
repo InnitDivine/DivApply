@@ -77,6 +77,8 @@ def test_generate_dashboard_includes_accessible_controls(tmp_path, monkeypatch):
     assert 'target="_blank" rel="noopener noreferrer"' in html
     assert 'role="list"' in html
     assert 'role="listitem"' in html
+    assert 'data-min-score="3"' in html
+    assert "3+ Review" in html
     assert 'data-min-score="7"' in html
     assert 'data-search="software engineer rbc logan, ut $100k python, accessibility strong local fit.' in html
     assert "card.dataset.search || ''" in html
@@ -224,6 +226,11 @@ def test_interactive_dashboard_uses_lazy_description_url(tmp_path, monkeypatch):
     assert "data-description-url=" in html
     assert "/description?token=test-token" in html
     assert "Open to load description." in html
+
+
+def test_lazy_description_script_is_empty_when_interactive_descriptions_disabled() -> None:
+    assert view._lazy_description_script(enabled=False) == ""
+    assert "fetch(details.dataset.descriptionUrl" in view._lazy_description_script(enabled=True)
 
 
 def test_dashboard_description_text_returns_full_description(monkeypatch):

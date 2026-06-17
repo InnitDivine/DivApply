@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from typer.testing import CliRunner
+
+from divapply import config
+from divapply.cli import app
+from divapply.maintenance import cleanup_artifacts
+
+
+runner = CliRunner()
+
+
+def _patch_cleanup_paths(monkeypatch, tmp_path: Path) -> Path:
+    app_dir = tmp_path / "app"
+    monkeypatch.setattr(config, "APP_DIR", app_dir)
+    monkeypatch.setattr(config, "USER_CONFIG_DIR", app_dir / "config")
+    app_dir.mkdir(parents=True)
+    (app_dir / "config").mkdir()
+    return app_dir
+
+
+def test_cleanup_artifacts_previews_generated_dashboard_and_backup_files(tmp_path, monkeypatch) -> None:
+    app_dir = _patch_cleanup_paths(monkeypatch, tmp_path)
+    stale_files = {
+        app_dir / "dashboard.perf-before.html",
+        app_dir / "dashboard-bench-repeat.html",
+        app_dir / "profile.json.bak-simplify-20260610T233316",
+        app_dir / "config" / "sites.yaml.bak-20260608T220818",
+    }
+    for path in stale_files:
+        path.write_text("stale", encoding="utf-8")
+    (app_dir / "dashboard.html").write_text("current", encoding="utf-8")
+    backup = app_dir / "backups" / "divapply-backup-20260606T073702Z.zip"
+    backup.parent.mkdir()
+    backup.write_text("backup", encoding="utf-8")
+
+    result = cleanup_artifacts(dry_run=True, include_backups=True)
+
+    assert set(result.candidates) == stale_files | {backup}
+    assert result.deleted == ()
+    assert all(path.exists() for path in result.candidates)
+    assert (app_dir / "dashboard.html").exists()
+
+
+def test_cleanup_artifacts_deletes_only_selected_files_and_requires_backup_flag(tmp_path, monkeypatch) -> None:
+    app_dir = _patch_cleanup_paths(monkeypatch, tmp_path)
+    stale_dashboard = app_dir / "dashboard-bench-final.html"
+    stale_dashboard.write_text("stale", encoding="utf-8")
+    backup = app_dir / "backups" / "divapply-backup-20260606T073702Z.zip"
+    backup.parent.mkdir()
+    backup.write_text("backup", encoding="utf-8")
+
+    result = cleanup_artifacts(dry_run=False, include_backups=False)
+
+    assert result.deleted == (stale_dashboard,)
+    assert not stale_dashboard.exists()
+    assert backup.exists()
+
+    result = cleanup_artifacts(dry_run=False, include_backups=True)
+
+    assert result.deleted == (backup,)
+    assert not backup.exists()
+    assert not backup.parent.exists()
+
+
+def test_cleanup_command_is_preview_by_default(tmp_path, monkeypatch) -> None:
+    app_dir = _patch_cleanup_paths(monkeypatch, tmp_path)
+    stale_file = app_dir / "dashboard.perf-after.html"
+    stale_file.write_text("stale", encoding="utf-8")
+
+    result = runner.invoke(app, ["cleanup"])
+
+    assert result.exit_code == 0
+    assert "Would remove" in result.output
+    assert "cleanup --yes" in result.output
+    assert stale_file.exists()
+
+
+def test_cleanup_command_deletes_with_yes(tmp_path, monkeypatch) -> None:
+    app_dir = _patch_cleanup_paths(monkeypatch, tmp_path)
+    stale_file = app_dir / "dashboard-bench-after.html"
+    stale_file.write_text("stale", encoding="utf-8")
+
+    result = runner.invoke(app, ["cleanup", "--yes"])
+
+    assert result.exit_code == 0
+    assert "Removed" in result.output
+    assert not stale_file.exists()

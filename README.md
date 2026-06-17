@@ -22,19 +22,19 @@ discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 
 Use Python 3.12 for the smoothest setup. The maintained Windows setup for this project currently uses Python 3.12.13. Python 3.14 may be installed on the same PC, but JobSpy-backed discovery is still expected to run from the Python 3.12 environment because of upstream dependency pins.
 
-Recommended CLI install with `pipx`:
+Recommended CLI install with `pip`:
 
 ```powershell
-python -m pip install --user pipx
-python -m pipx ensurepath
-pipx install "divapply[full]"
-pipx run --spec playwright playwright install chromium firefox
+python --version  # expected on the maintained Windows setup: Python 3.12.13
+python -m pip install --upgrade pip
+python -m pip install "divapply[full]"
+python -m playwright install chromium firefox
 divapply init
 divapply edit
 divapply doctor
 ```
 
-Virtualenv install:
+Virtualenv install, if you want the dependencies isolated:
 
 ```powershell
 python --version  # expected on the maintained Windows setup: Python 3.12.13
@@ -257,12 +257,15 @@ divapply dashboard
 divapply explain JOB_URL
 divapply export jobs --out jobs.csv
 divapply backup
+divapply cleanup
 divapply apply --dry-run
 divapply apply --yes
 divapply migrate
 ```
 
 `divapply dashboard` opens an interactive local dashboard. Applied jobs include an Archive button so you can hide submitted applications without deleting their history. Archiving also removes generated resume and cover-letter files for that job. Use `divapply dashboard --static` when you only want to write a standalone HTML file.
+
+`divapply cleanup` previews stale local dashboard benchmark/perf HTML files and backup-style `.bak` files. Run `divapply cleanup --yes` to delete the previewed files, or add `--include-backups` when you also want old `divapply-backup-*.zip` archives removed from the local backups folder.
 
 ## Development
 

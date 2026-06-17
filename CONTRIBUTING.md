@@ -7,8 +7,9 @@ Thanks for helping improve DivApply. This project is a Windows-first, AI-assiste
 ```bash
 git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
-pip install -e ".[dev]"
+python -m pip install -e ".[dev]"
 divapply --version
+python -m pytest -q
 ```
 
 ## Repo Layout

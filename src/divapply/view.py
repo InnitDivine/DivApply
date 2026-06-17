@@ -84,6 +84,30 @@ def _truncate(value: str, limit: int) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
+def _lazy_description_script(*, enabled: bool) -> str:
+    """Return dashboard JavaScript for optional same-origin description loading."""
+    if not enabled:
+        return ""
+    return """
+document.querySelectorAll('.full-desc-details[data-description-url]').forEach(details => {
+  details.addEventListener('toggle', async () => {
+    if (!details.open) return;
+    const container = details.querySelector('.full-desc');
+    if (!container || container.dataset.loaded === 'true') return;
+    container.textContent = 'Loading description...';
+    try {
+      const response = await fetch(details.dataset.descriptionUrl, { credentials: 'same-origin' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      container.textContent = await response.text();
+      container.dataset.loaded = 'true';
+    } catch (error) {
+      container.textContent = 'Could not load the description. Open the job posting link instead.';
+    }
+  });
+});
+"""
+
+
 def generate_dashboard(
     output_path: str | None = None,
     *,
@@ -265,26 +289,7 @@ def generate_dashboard(
         <div class="empty-state" role="status">
           No active scored jobs match the dashboard criteria.
         </div>"""
-    lazy_description_js = ""
-    if description_endpoint and archive_token:
-        lazy_description_js = """
-document.querySelectorAll('.full-desc-details[data-description-url]').forEach(details => {
-  details.addEventListener('toggle', async () => {
-    if (!details.open) return;
-    const container = details.querySelector('.full-desc');
-    if (!container || container.dataset.loaded === 'true') return;
-    container.textContent = 'Loading description...';
-    try {
-      const response = await fetch(details.dataset.descriptionUrl, { credentials: 'same-origin' });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      container.textContent = await response.text();
-      container.dataset.loaded = 'true';
-    } catch (error) {
-      container.textContent = 'Could not load the description. Open the job posting link instead.';
-    }
-  });
-});
-"""
+    lazy_description_js = _lazy_description_script(enabled=bool(description_endpoint and archive_token))
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -438,6 +443,7 @@ document.querySelectorAll('.full-desc-details[data-description-url]').forEach(de
 <section class="filters" aria-label="Job filters">
   <span class="filter-label" id="score-filter-label">Score:</span>
   <button type="button" class="filter-btn active" data-min-score="0" aria-pressed="true" aria-describedby="score-filter-label">All 5+</button>
+  <button type="button" class="filter-btn" data-min-score="3" aria-pressed="false" aria-describedby="score-filter-label">3+ Review</button>
   <button type="button" class="filter-btn" data-min-score="7" aria-pressed="false" aria-describedby="score-filter-label">7+ Strong</button>
   <button type="button" class="filter-btn" data-min-score="8" aria-pressed="false" aria-describedby="score-filter-label">8+ Excellent</button>
   <button type="button" class="filter-btn" data-min-score="9" aria-pressed="false" aria-describedby="score-filter-label">9+ Perfect</button>
