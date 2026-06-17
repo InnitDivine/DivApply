@@ -370,11 +370,12 @@ def _process_one(
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
+    employer_location_filter = location_filter and not bool(emp.get("relocation_ok"))
 
     try:
         jobs = search_employer(
             employer_key, emp, search_text,
-            location_filter=location_filter,
+            location_filter=employer_location_filter,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
         )

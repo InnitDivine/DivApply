@@ -12,6 +12,7 @@ employers: {}
 #     tenant: "sutterhealth"
 #     site_id: "SH"
 #     base_url: "https://wd1.myworkdaysite.com"
+#     relocation_ok: true
 #
 #   uc_davis_health:
 #     name: "UC Davis Health"

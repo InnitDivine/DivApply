@@ -156,6 +156,36 @@ def test_workday_title_include_filter_keeps_target_roles(monkeypatch) -> None:
     assert captured["titles"] == ["Patient Service Representative"]
 
 
+def test_process_one_allows_relocation_employer_to_bypass_location_filter(monkeypatch) -> None:
+    employers = {
+        "sutter_health": {
+            "name": "Sutter Health",
+            "relocation_ok": True,
+        }
+    }
+    captured = {}
+
+    def fake_search(_key, _emp, _text, **kwargs):
+        captured["location_filter"] = kwargs["location_filter"]
+        return [{"title": "IT Support", "location": "Sacramento, CA", "external_path": "/job"}]
+
+    monkeypatch.setattr(workday, "search_employer", fake_search)
+    monkeypatch.setattr(workday, "fetch_details", lambda _emp, selected: selected)
+    monkeypatch.setattr(workday, "store_results", lambda _conn, selected, _employers: (len(selected), 0))
+
+    result = workday._process_one(
+        "sutter_health",
+        employers,
+        "IT support",
+        True,
+        ["logan"],
+        [],
+    )
+
+    assert captured["location_filter"] is False
+    assert result["new"] == 1
+
+
 def test_scrape_employers_continues_when_parallel_worker_crashes(monkeypatch) -> None:
     events: list[tuple[str, dict | None]] = []
     employers = {
