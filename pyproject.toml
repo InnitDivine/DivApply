@@ -1,6 +1,6 @@
 [project]
 name = "divapply"
-version = "0.4.7"
+version = "0.4.8"
 description = "DivApply: AI-assisted end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -29,7 +29,7 @@ dependencies = [
     ]
 
 [project.optional-dependencies]
-coursework = ["pypdf>=4.0"]
+coursework = ["pypdf>=6.13.0"]
 jobspy-runtime = [
     "numpy==1.26.3; python_version < '3.13'",
     "pydantic>=2.0",
@@ -45,7 +45,7 @@ full = [
     "tls-client>=1.0",
     "regex>=2024.0",
     "markdownify>=0.14.1",
-    "pypdf>=4.0",
+    "pypdf>=6.13.0",
 ]
 dev = ["pytest>=7.0", "ruff>=0.1", "pip-audit>=2.10"]
 

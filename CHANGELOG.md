@@ -4,6 +4,8 @@ All notable changes to DivApply will be documented here.
 
 ## Unreleased
 
+## 0.4.8
+
 - Documented the required `python-jobspy` no-deps install step for pip-based setup and release smoke tests.
 - Kept shipped search examples focused on role/title queries while locations and part-time constraints stay in separate fields.
 - Switched default auto-apply browser setup from Firefox to Playwright Chromium.
@@ -12,6 +14,10 @@ All notable changes to DivApply will be documented here.
 - Removed default title exclusion filters from shipped search config and made optional title excludes use safer term matching.
 - Removed default excluded keyword filters from shipped search config so scoring and pruning decide fit by default.
 - Stopped the editor and shipped defaults from emitting customer-service-specific schedule filters and duplicate search aliases.
+- Added cleanup support for stale local dashboard benchmark files and backup archives.
+- Added employer-specific relocation searches so selected Workday employers can bypass the normal location filter.
+- Removed bundled applicant-specific coursework seed data from fresh installs.
+- Kept profile search policy separate from applicant facts so scoring follows the active search config.
 
 ## 0.4.7
 
