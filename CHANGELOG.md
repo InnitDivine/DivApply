@@ -9,6 +9,7 @@ All notable changes to DivApply will be documented here.
 - Switched default auto-apply browser setup from Firefox to Playwright Chromium.
 - Simplified default search configuration to use accept-location filtering without default reject patterns.
 - Made configured `locations` the default source for discovery location filtering, so normal configs do not need `accept_patterns`.
+- Removed default title exclusion filters from shipped search config and made optional title excludes use safer term matching.
 
 ## 0.4.7
 

@@ -48,6 +48,7 @@ def test_shipped_search_example_uses_locations_without_default_manual_filters() 
 
     assert cfg["locations"]
     assert "location" not in cfg
+    assert "exclude_titles" not in cfg
 
 
 def test_normalize_profile_accepts_flat_skills_without_job_search_aliases() -> None:

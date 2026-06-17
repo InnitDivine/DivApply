@@ -45,16 +45,6 @@ defaults:
   prune_score: 3
   country_indeed: usa
 
-exclude_titles:
-  - "senior"
-  - "lead"
-  - "director"
-  - "manager"
-  - "supervisor"
-  - "intern"
-  - "internship"
-  - "clearance required"
-
 excluded_keywords:
   - "active top secret"
   - "top secret clearance"

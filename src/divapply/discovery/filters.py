@@ -83,8 +83,7 @@ def title_ok(title: str | None, excludes: list[str]) -> bool:
     """Return False if title matches any exclude pattern."""
     if not title or not excludes:
         return True
-    lowered = title.lower()
-    return not any(exclude in lowered for exclude in excludes)
+    return not any(term_in_text(title, exclude) for exclude in excludes)
 
 
 def location_ok(
