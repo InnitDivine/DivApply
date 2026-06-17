@@ -878,15 +878,18 @@ def save_editor_settings(form: dict[str, str]) -> None:
     locations = _text_to_locations(form.get("locations"))
     if locations:
         search_cfg["locations"] = locations
-        search_cfg["search_city"] = locations[0]["location"]
 
     boards = _text_to_list(form.get("boards"))
     if boards:
         search_cfg["boards"] = boards
-        search_cfg["sites"] = boards
 
     search_cfg["queries"] = _text_to_queries(form.get("queries"))
-    search_cfg["exclude_titles"] = _text_to_list(form.get("exclude_titles"))
+    exclude_titles = _text_to_list(form.get("exclude_titles"))
+    if exclude_titles:
+        search_cfg["exclude_titles"] = exclude_titles
+    else:
+        search_cfg.pop("exclude_titles", None)
+        search_cfg.pop("avoid_titles", None)
 
     include_titles = _text_to_list(form.get("include_titles"))
     if include_titles:
@@ -895,10 +898,22 @@ def save_editor_settings(form: dict[str, str]) -> None:
         search_cfg.pop("include_titles", None)
         search_cfg.pop("target_titles", None)
 
-    location_cfg = dict(search_cfg.get("location", {}) or {})
-    location_cfg["accept_patterns"] = _text_to_list(form.get("accept_patterns"))
-    location_cfg["reject_patterns"] = _text_to_list(form.get("reject_patterns"))
-    search_cfg["location"] = location_cfg
+    accept_patterns = _text_to_list(form.get("accept_patterns"))
+    reject_patterns = _text_to_list(form.get("reject_patterns"))
+    if accept_patterns or reject_patterns:
+        location_cfg = dict(search_cfg.get("location", {}) or {})
+        if accept_patterns:
+            location_cfg["accept_patterns"] = accept_patterns
+        else:
+            location_cfg.pop("accept_patterns", None)
+        if reject_patterns:
+            location_cfg["reject_patterns"] = reject_patterns
+        else:
+            location_cfg.pop("reject_patterns", None)
+        if location_cfg:
+            search_cfg["location"] = location_cfg
+    else:
+        search_cfg.pop("location", None)
 
     defaults = dict(search_cfg.get("defaults", {}) or {})
     defaults["results_per_site"] = max(1, _to_int(form.get("results_per_site"), 50))
@@ -906,12 +921,14 @@ def save_editor_settings(form: dict[str, str]) -> None:
     search_cfg["defaults"] = defaults
 
     search_cfg["require_part_time"] = schedule_type == "part_time"
-    search_cfg["customer_service_require_part_time"] = schedule_type == "part_time"
-    search_cfg["customer_service_max_hours_per_week"] = 20 if schedule_type == "part_time" else 0
     search_cfg.pop("search_terms", None)
     search_cfg.pop("nearby_locations", None)
     search_cfg.pop("reject_locations", None)
-    search_cfg.pop("avoid_titles", None)
+    search_cfg.pop("search_city", None)
+    search_cfg.pop("sites", None)
+    search_cfg.pop("customer_service_title_terms", None)
+    search_cfg.pop("customer_service_require_part_time", None)
+    search_cfg.pop("customer_service_max_hours_per_week", None)
 
     write_private_text(PROFILE_PATH, json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
     write_private_text(SEARCH_CONFIG_PATH, yaml.safe_dump(search_cfg, sort_keys=False, allow_unicode=True))

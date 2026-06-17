@@ -161,7 +161,7 @@ defaults:
   hours_old: 168
 ```
 
-Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries` and places in `locations`. DivApply derives normal location filtering from `locations`; manual filters such as `location.accept_patterns`, `reject_patterns`, `exclude_titles`, and `excluded_keywords` are optional escape hatches only when a board repeatedly returns results that need cleanup before scoring.
+Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries`, places in `locations`, schedule intent in `require_part_time`, and boards in `boards`. DivApply derives normal location filtering from `locations`; manual filters such as `location.accept_patterns`, `reject_patterns`, `exclude_titles`, `excluded_keywords`, and customer-service-specific hour filters are optional escape hatches only when a board repeatedly returns results that need cleanup before scoring.
 
 ## Resume Rules
 

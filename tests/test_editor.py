@@ -248,7 +248,7 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
     assert profile["resume_facts"]["preserved_school"] == "Example College"
     assert profile["resume_facts"]["preserved_projects"] == ["Home lab", "Portfolio website"]
     assert profile["resume_facts"]["real_metrics"] == ["45 WPM", "3.2 GPA"]
-    assert search["search_city"] == "Logan, UT"
+    assert "search_city" not in search
     assert search["locations"] == [
         {"location": "Logan, UT", "remote": False},
         {"location": "Remote", "remote": True},
@@ -260,14 +260,14 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
         {"query": "cashier", "tier": 2},
     ]
     assert search["boards"] == ["indeed", "linkedin"]
-    assert search["sites"] == ["indeed", "linkedin"]
+    assert "sites" not in search
     assert search["exclude_titles"] == ["manager", "supervisor"]
     assert "include_titles" not in search
     assert search["defaults"]["results_per_site"] == 75
     assert search["defaults"]["hours_old"] == 120
     assert search["require_part_time"] is True
-    assert search["customer_service_require_part_time"] is True
-    assert search["customer_service_max_hours_per_week"] == 20
+    assert "customer_service_require_part_time" not in search
+    assert "customer_service_max_hours_per_week" not in search
 
 
 def test_save_editor_settings_preserves_extra_profile_record_fields(tmp_path, monkeypatch) -> None:

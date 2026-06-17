@@ -45,13 +45,5 @@ defaults:
   prune_score: 3
   country_indeed: usa
 
-customer_service_title_terms:
-  - "customer service"
-  - "front desk"
-  - "receptionist"
-  - "office assistant"
-  - "cashier"
-
-customer_service_require_part_time: true
-customer_service_max_hours_per_week: 20
 allow_unknown_location: false
+require_part_time: true

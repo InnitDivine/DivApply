@@ -38,6 +38,8 @@ def test_normalize_search_config_accepts_simple_user_keys() -> None:
     assert cfg["location"]["reject_patterns"] == ["ogden", "salt lake city"]
     assert cfg["include_titles"] == ["front desk"]
     assert cfg["exclude_titles"] == ["manager"]
+    # Legacy aliases still normalize, but new configs/editor saves do not need
+    # these customer-service-specific keys.
     assert cfg["customer_service_require_part_time"] is True
     assert cfg["customer_service_max_hours_per_week"] == 15
 
@@ -50,6 +52,9 @@ def test_shipped_search_example_uses_locations_without_default_manual_filters() 
     assert "location" not in cfg
     assert "exclude_titles" not in cfg
     assert "excluded_keywords" not in cfg
+    assert "customer_service_title_terms" not in cfg
+    assert "customer_service_require_part_time" not in cfg
+    assert "customer_service_max_hours_per_week" not in cfg
 
 
 def test_normalize_profile_accepts_flat_skills_without_job_search_aliases() -> None:
