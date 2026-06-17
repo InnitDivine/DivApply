@@ -39,11 +39,25 @@ def test_coursework_summary_excludes_raw_text(tmp_path: Path) -> None:
     assert "private transcript text must not appear" not in str(summary)
 
 
+def test_fresh_database_does_not_seed_coursework(tmp_path: Path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    summary = get_coursework_summary(conn)
+    close_connection(db_path)
+
+    assert summary == {
+        "row_count": 0,
+        "schools": [],
+        "subject_areas": [],
+        "inferred_skills": [],
+        "import_sources": [],
+    }
+
+
 def test_append_coursework_keeps_prior_rows(tmp_path: Path) -> None:
     db_path = tmp_path / "divapply.db"
     conn = init_db(db_path)
-    # Wipe the bundled seed rows so the assertions only see what this test adds.
-    replace_coursework([], conn=conn)
 
     replace_coursework(
         [
@@ -102,4 +116,3 @@ def test_append_coursework_skips_exact_duplicates(tmp_path: Path) -> None:
     # tuple after normalization, so nothing new should land in the table.
     assert second == {"inserted": 0, "skipped": 2}
     assert summary["row_count"] == 1
-

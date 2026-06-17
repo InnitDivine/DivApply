@@ -197,9 +197,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     """)
     conn.commit()
 
-    # Create auxiliary knowledge tables used by the profile layer.
+    # Create auxiliary knowledge tables used by the profile layer. Coursework
+    # starts empty and is populated only from explicit user imports.
     ensure_coursework_table(conn)
-    seed_coursework_if_empty(conn)
 
     # Run schema-versioned migrations, then the additive column safety net.
     run_migrations(conn)
@@ -698,41 +698,6 @@ def _normalize_coursework_entry(entry: dict, now: str) -> dict:
         normalized["skills"] = json.dumps(normalized["skills"], ensure_ascii=True)
 
     return normalized
-
-
-def _seed_coursework_path() -> Path:
-    return Path(__file__).parent / "config" / "coursework.seed.json"
-
-
-def load_coursework_seed() -> list[dict]:
-    """Load bundled coursework seed data from the package config directory."""
-    path = _seed_coursework_path()
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return []
-    if isinstance(data, dict):
-        data = data.get("coursework") or data.get("courses") or []
-    return [row for row in data if isinstance(row, dict)]
-
-
-def seed_coursework_if_empty(conn: sqlite3.Connection | None = None) -> int:
-    """Populate coursework knowledge from the bundled seed file if empty."""
-    if conn is None:
-        conn = get_connection()
-
-    ensure_coursework_table(conn)
-    count = conn.execute("SELECT COUNT(*) FROM coursework").fetchone()[0]
-    if count:
-        return 0
-
-    seed_rows = load_coursework_seed()
-    if not seed_rows:
-        return 0
-
-    return replace_coursework(seed_rows, conn=conn)
 
 
 def replace_coursework(entries: list[dict], conn: sqlite3.Connection | None = None) -> int:

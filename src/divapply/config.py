@@ -120,12 +120,12 @@ def load_profile() -> dict:
 
     # Hidden coursework knowledge is stored in SQLite so it can inform
     # scoring/tailoring without being exposed in the generated resume text.
+    # New installs do not ship with applicant-specific coursework; users add
+    # their own data through `divapply import-coursework`.
     try:
-        from divapply.database import get_coursework, load_coursework_seed
+        from divapply.database import get_coursework
 
         coursework = get_coursework()
-        if not coursework:
-            coursework = load_coursework_seed()
     except Exception:
         coursework = []
 
