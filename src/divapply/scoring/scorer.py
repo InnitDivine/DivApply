@@ -69,7 +69,7 @@ QUALIFICATION MISMATCH:
 IMPORTANT NOTES:
 - Judge based on the actual job description minimum qualifications, not job title alone.
 - Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family unless the verified profile facts identify it as a current target.
-- Do not artificially boost or suppress roles based on a presumed career path; use the profile's stated current target instead.
+- Do not artificially boost or suppress roles based on a presumed career path; use active search queries and filters instead.
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
 - Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
 - For entry-level part-time roles with no hard credential/license gap, no schedule conflict, and an APPLY recommendation, avoid scoring below 6 solely because the candidate lacks exact same-title experience.
@@ -141,8 +141,6 @@ def _build_profile_evidence_context(profile: dict) -> str:
 
     exp = profile.get("experience", {})
     for key in (
-        "target_role",
-        "years_of_experience_total",
         "years_of_experience_it",
         "years_of_experience_government",
         "education_level",
@@ -150,9 +148,6 @@ def _build_profile_evidence_context(profile: dict) -> str:
     ):
         if exp.get(key):
             lines.append(f"{key.replace('_', ' ').title()}: {exp[key]}")
-    target_roles = exp.get("target_roles")
-    if isinstance(target_roles, dict):
-        lines.append("Target roles: " + "; ".join(str(v) for v in target_roles.values() if v))
 
     if profile.get("professional_narrative"):
         lines.append(f"Professional narrative: {profile['professional_narrative']}")

@@ -106,6 +106,8 @@ Use `divapply edit` as the normal setup screen after initialization. It opens a 
 
 The editor saves applicant facts to `profile.json` and job-search intent to `searches.yaml`, so most users do not need to hand-edit JSON or YAML.
 
+Keep `profile.json` factual: identity, work authorization, pay answers, work history, education, verified skills, references, and reusable application answers. Do not put preferred job titles, employers, locations, reject lists, or search strategy in the profile; put those in `searches.yaml` so scoring is driven by the current search instead of stale profile prose.
+
 ## Daily Workflow
 
 ```powershell

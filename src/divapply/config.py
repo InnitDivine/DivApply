@@ -136,7 +136,7 @@ def load_profile() -> dict:
 
 
 def _normalize_profile(profile: dict) -> dict:
-    """Expand simple user-facing profile keys into legacy internal aliases."""
+    """Normalize applicant facts and discard legacy search-policy fields."""
     profile = dict(profile or {})
     profile.pop("job_search", None)
     profile.pop("availability", None)
@@ -145,6 +145,8 @@ def _normalize_profile(profile: dict) -> dict:
     exp = profile.get("experience")
     if isinstance(exp, dict):
         exp = dict(exp)
+        # Job-search intent belongs in searches.yaml. Keeping it out of the
+        # profile prevents stale role policy from biasing scoring or applying.
         for key in ("target_role", "target_roles", "years_of_experience_total"):
             exp.pop(key, None)
         profile["experience"] = exp

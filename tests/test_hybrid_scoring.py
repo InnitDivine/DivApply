@@ -230,6 +230,8 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
         },
         "experience": {
             "target_role": "IT Support Analyst",
+            "target_roles": {"tier1": "help desk"},
+            "years_of_experience_total": "99",
             "years_of_experience_it": "3",
             "education_level": "Bachelor's Degree (in progress)",
         },
@@ -250,7 +252,9 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
     context = _build_profile_evidence_context(profile)
 
     assert "Location: Logan, UT" in context
-    assert "IT Support Analyst" in context
+    assert "IT Support Analyst" not in context
+    assert "help desk" not in context
+    assert "Years Of Experience Total" not in context
     assert "Oracle Cloud Infrastructure" in context
     assert "Use each job title and task summary" in context
     assert "Do not invent credentials" in context
