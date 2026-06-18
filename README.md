@@ -135,6 +135,8 @@ divapply apply --yes
 
 Auto-apply launches a dedicated Chromium browser session for each worker, navigates to application pages, fills supported form fields from your profile and resume facts, uploads generated documents when available, answers screening questions through the selected agent backend, and shows progress in the live terminal dashboard.
 
+Cost-safe defaults are intentionally conservative: real auto-apply runs default to one job and one worker, and higher limits, multiple workers, unlimited continuous polling, or unbounded runs require `--allow-expensive`. Start with `divapply apply --dry-run --limit 1`, then use `divapply apply --yes --limit 1` for the lowest-cost real run.
+
 ## Search Config
 
 `searches.yaml` controls what DivApply looks for.

@@ -43,11 +43,39 @@ log = logging.getLogger(__name__)
 
 # Valid pipeline stages (in execution order)
 VALID_STAGES = ("discover", "enrich", "score", "tailor", "cover", "pdf")
+SAFE_APPLY_WORKERS = 1
+SAFE_APPLY_LIMIT = 5
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _apply_cost_guard_message(
+    *,
+    dry_run: bool,
+    allow_expensive: bool,
+    continuous: bool,
+    workers: int,
+    effective_limit: int,
+) -> str | None:
+    """Return a cost guard error message, or None when the run is allowed."""
+    if workers < 1:
+        return "--workers must be at least 1."
+    if effective_limit < 0:
+        return "--limit cannot be negative."
+    if dry_run or allow_expensive:
+        return None
+    if continuous or workers > SAFE_APPLY_WORKERS or effective_limit == 0 or effective_limit > SAFE_APPLY_LIMIT:
+        return (
+            "Cost guard blocked this real auto-apply run.\n"
+            f"Default cost-safe mode allows up to {SAFE_APPLY_LIMIT} queued application(s) "
+            f"with {SAFE_APPLY_WORKERS} worker. Use --dry-run first, lower "
+            "the limit/workers, or add --allow-expensive when you intentionally "
+            "want a higher-cost run."
+        )
+    return None
+
 
 def _bootstrap() -> None:
     """Common setup: load env, create dirs, init DB."""
@@ -424,6 +452,11 @@ def apply(
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm real browser submission mode."),
+    allow_expensive: bool = typer.Option(
+        False,
+        "--allow-expensive",
+        help="Allow real auto-apply runs with multiple workers, high limits, or continuous polling.",
+    ),
 ) -> None:
     """Launch auto-apply to submit job applications."""
     _bootstrap()
@@ -531,6 +564,16 @@ def apply(
     from divapply.apply.launcher import main as apply_main
 
     effective_limit = limit if limit is not None else (0 if continuous else 1)
+    cost_guard_message = _apply_cost_guard_message(
+        dry_run=dry_run,
+        allow_expensive=allow_expensive,
+        continuous=continuous,
+        workers=workers,
+        effective_limit=effective_limit,
+    )
+    if cost_guard_message:
+        console.print(f"[red]{cost_guard_message}[/red]")
+        raise typer.Exit(code=1)
 
     console.print("\n[bold blue]Launching Auto-Apply[/bold blue]")
     console.print(f"  Limit:    {'unlimited' if continuous else effective_limit}")
@@ -540,6 +583,14 @@ def apply(
     console.print(f"  Model:    {resolved_model}")
     console.print(f"  Headless: {headless}")
     console.print(f"  Dry run:  {dry_run}")
+    console.print(
+        "  Cost:     "
+        + (
+            "unbounded (explicitly allowed)"
+            if allow_expensive and not dry_run
+            else f"guarded: <= {SAFE_APPLY_LIMIT} real queued application(s), {SAFE_APPLY_WORKERS} worker"
+        )
+    )
     if url:
         console.print(f"  Target:   {url}")
     console.print()
