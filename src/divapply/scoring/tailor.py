@@ -14,6 +14,7 @@ import logging
 import re
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 
 from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile, profile_skills
 from divapply.database import get_connection, get_jobs_by_stage
@@ -36,6 +37,16 @@ PROJECT_BULLET_MAX_WORDS = 20
 SKILLS_MAX_ITEMS = 5
 EXPERIENCE_MAX_ENTRIES = 4
 PROJECTS_MAX_ENTRIES = 1
+
+
+def _delete_temp_artifacts(*paths: Path) -> None:
+    """Delete intermediate generated files after durable PDFs are available."""
+    for path in paths:
+        try:
+            if path.exists() or path.is_symlink():
+                path.unlink()
+        except OSError:
+            log.warning("Could not delete temporary generated artifact: %s", path)
 
 
 # â”€â”€ Prompt Builders (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -753,12 +764,15 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
                 try:
                     from divapply.scoring.pdf import convert_to_pdf
                     pdf_path = str(convert_to_pdf(txt_path))
+                    _delete_temp_artifacts(txt_path, job_path, report_path)
                 except Exception:
                     log.debug("PDF generation failed for %s", txt_path, exc_info=True)
+            else:
+                _delete_temp_artifacts(txt_path, job_path, report_path)
 
             result = {
                 "url": job["url"],
-                "path": str(txt_path),
+                "path": pdf_path,
                 "pdf_path": pdf_path,
                 "title": job["title"],
                 "site": job["site"],
@@ -790,7 +804,7 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
     now = datetime.now(timezone.utc).isoformat()
     _success_statuses = {"approved", "approved_with_judge_warning"}
     for r in results:
-        if r["status"] in _success_statuses:
+        if r["status"] in _success_statuses and r.get("path"):
             conn.execute(
                 "UPDATE jobs SET tailored_resume_path=?, tailored_at=?, "
                 "tailor_attempts=COALESCE(tailor_attempts,0)+1 WHERE url=?",

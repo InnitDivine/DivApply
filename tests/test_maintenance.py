@@ -23,14 +23,26 @@ def _patch_cleanup_paths(monkeypatch, tmp_path: Path) -> Path:
 
 def test_cleanup_artifacts_previews_generated_dashboard_and_backup_files(tmp_path, monkeypatch) -> None:
     app_dir = _patch_cleanup_paths(monkeypatch, tmp_path)
+    tailored_dir = app_dir / "tailored_resumes"
+    cover_dir = app_dir / "cover_letters"
+    tailored_dir.mkdir()
+    cover_dir.mkdir()
+    monkeypatch.setattr(config, "TAILORED_DIR", tailored_dir)
+    monkeypatch.setattr(config, "COVER_LETTER_DIR", cover_dir)
     stale_files = {
         app_dir / "dashboard.perf-before.html",
         app_dir / "dashboard-bench-repeat.html",
         app_dir / "profile.json.bak-simplify-20260610T233316",
         app_dir / "config" / "sites.yaml.bak-20260608T220818",
+        tailored_dir / "Indeed_Support.txt",
+        tailored_dir / "Indeed_Support_JOB.txt",
+        tailored_dir / "Indeed_Support_REPORT.json",
+        cover_dir / "Indeed_Support_CL.txt",
     }
     for path in stale_files:
         path.write_text("stale", encoding="utf-8")
+    keep_pdf = tailored_dir / "Indeed_Support.pdf"
+    keep_pdf.write_text("pdf", encoding="utf-8")
     (app_dir / "dashboard.html").write_text("current", encoding="utf-8")
     backup = app_dir / "backups" / "divapply-backup-20260606T073702Z.zip"
     backup.parent.mkdir()
@@ -42,6 +54,7 @@ def test_cleanup_artifacts_previews_generated_dashboard_and_backup_files(tmp_pat
     assert result.deleted == ()
     assert all(path.exists() for path in result.candidates)
     assert (app_dir / "dashboard.html").exists()
+    assert keep_pdf.exists()
 
 
 def test_cleanup_artifacts_deletes_only_selected_files_and_requires_backup_flag(tmp_path, monkeypatch) -> None:

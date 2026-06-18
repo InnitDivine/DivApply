@@ -276,6 +276,55 @@ def test_archive_job_deletes_generated_artifacts(tmp_path, monkeypatch) -> None:
     close_connection(db_path)
 
 
+def test_archive_job_deletes_generated_artifacts_when_db_points_to_pdfs(tmp_path, monkeypatch) -> None:
+    import divapply.config as config
+
+    tailored_dir = tmp_path / "tailored_resumes"
+    cover_dir = tmp_path / "cover_letters"
+    tailored_dir.mkdir()
+    cover_dir.mkdir()
+    monkeypatch.setattr(config, "TAILORED_DIR", tailored_dir)
+    monkeypatch.setattr(config, "COVER_LETTER_DIR", cover_dir)
+
+    resume = tailored_dir / "Indeed_Support.txt"
+    resume_pdf = tailored_dir / "Indeed_Support.pdf"
+    job_trace = tailored_dir / "Indeed_Support_JOB.txt"
+    report = tailored_dir / "Indeed_Support_REPORT.json"
+    cover = cover_dir / "Indeed_Support_CL.txt"
+    cover_pdf = cover_dir / "Indeed_Support_CL.pdf"
+    for path in (resume, resume_pdf, job_trace, report, cover, cover_pdf):
+        path.write_text("generated", encoding="utf-8")
+
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, fit_score, full_description, tailored_resume_path,
+            cover_letter_path, application_url, discovered_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://example.com/archive-pdf-artifacts",
+            "Archive PDF Artifacts",
+            8,
+            "Description",
+            str(resume_pdf),
+            str(cover_pdf),
+            "https://example.com/apply",
+            "2026-01-01",
+        ),
+    )
+    conn.commit()
+
+    assert archive_job("https://example.com/archive-pdf-artifacts", conn=conn) is True
+
+    for path in (resume, resume_pdf, job_trace, report, cover, cover_pdf):
+        assert not path.exists()
+    close_connection(db_path)
+
+
 def test_archive_job_does_not_delete_paths_outside_generated_dirs(tmp_path, monkeypatch) -> None:
     import divapply.config as config
 

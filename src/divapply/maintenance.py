@@ -78,7 +78,16 @@ def _cleanup_candidates(*, include_backups: bool) -> list[Path]:
         if not root.exists():
             continue
         for pattern in patterns:
-            candidates.update(path for path in root.glob(pattern) if path.is_file() or path.is_symlink())
+                candidates.update(path for path in root.glob(pattern) if path.is_file() or path.is_symlink())
+
+    for output_dir in (config.TAILORED_DIR, config.COVER_LETTER_DIR):
+        if not output_dir.exists():
+            continue
+        candidates.update(
+            path
+            for path in output_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in {".txt", ".json", ".html"}
+        )
 
     if include_backups:
         backups_dir = config.APP_DIR / "backups"

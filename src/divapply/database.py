@@ -1018,11 +1018,12 @@ def _artifact_siblings(path: Path) -> set[Path]:
     """Return known generated files associated with a tailored/cover text file."""
     siblings = {path}
     siblings.add(path.with_suffix(".pdf"))
+    siblings.add(path.with_suffix(".txt"))
     siblings.add(path.with_suffix(".html"))
     name = path.name
-    if name.endswith("_CL.txt"):
+    if name.endswith("_CL.txt") or name.endswith("_CL.pdf"):
         return siblings
-    if path.suffix == ".txt" and not name.endswith(("_JOB.txt", "_REPORT.txt")):
+    if path.suffix in {".txt", ".pdf"} and not name.endswith(("_JOB.txt", "_REPORT.txt")):
         siblings.add(path.with_name(f"{path.stem}_JOB.txt"))
         siblings.add(path.with_name(f"{path.stem}_REPORT.json"))
     return siblings

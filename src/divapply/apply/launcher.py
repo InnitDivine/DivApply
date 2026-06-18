@@ -556,9 +556,23 @@ def _build_agent_command(
 def _read_tailored_resume_text(job: dict) -> str:
     """Read the tailored resume text for a claimed job, if present."""
     resume_path = job.get("tailored_resume_path")
-    txt_path = Path(resume_path).with_suffix(".txt") if resume_path else None
-    if txt_path and txt_path.exists():
+    if not resume_path:
+        return ""
+    path = Path(resume_path)
+    txt_path = path.with_suffix(".txt")
+    if txt_path.exists():
         return txt_path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".txt" and path.exists():
+        return path.read_text(encoding="utf-8")
+    pdf_path = path if path.suffix.lower() == ".pdf" else path.with_suffix(".pdf")
+    if pdf_path.exists():
+        try:
+            from pypdf import PdfReader
+
+            reader = PdfReader(str(pdf_path))
+            return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+        except Exception:
+            logger.debug("Could not extract tailored resume text from %s", pdf_path, exc_info=True)
     return ""
 
 

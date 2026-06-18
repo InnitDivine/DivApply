@@ -16,6 +16,18 @@ from divapply import config
 logger = logging.getLogger(__name__)
 
 
+def _read_pdf_text(path: Path) -> str:
+    """Extract plain text from a generated PDF for prompt context."""
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(path))
+        return "\n".join(page.extract_text() or "" for page in reader.pages).strip()
+    except Exception:
+        logger.debug("Could not extract text from PDF: %s", path, exc_info=True)
+        return ""
+
+
 def _build_profile_summary(profile: dict) -> str:
     """Format the applicant profile section of the prompt.
 
@@ -727,7 +739,8 @@ def build_prompt(job: dict, tailored_resume: str,
     if not resume_path:
         raise ValueError(f"No tailored resume for job: {job.get('title', 'unknown')}")
 
-    src_pdf = Path(resume_path).with_suffix(".pdf").resolve()
+    resume_src = Path(resume_path)
+    src_pdf = (resume_src if resume_src.suffix.lower() == ".pdf" else resume_src.with_suffix(".pdf")).resolve()
     if not src_pdf.exists():
         raise ValueError(f"Resume PDF not found: {src_pdf}")
 
@@ -744,16 +757,23 @@ def build_prompt(job: dict, tailored_resume: str,
     cover_letter_text = cover_letter or ""
     cl_upload_path = ""
     cl_path = job.get("cover_letter_path")
-    if cl_path and Path(cl_path).exists():
+    if cl_path:
         cl_src = Path(cl_path)
+        cl_txt = cl_src if cl_src.suffix.lower() == ".txt" else cl_src.with_suffix(".txt")
+        cl_pdf_src = cl_src if cl_src.suffix.lower() == ".pdf" else cl_src.with_suffix(".pdf")
+        if not (cl_src.exists() or cl_txt.exists() or cl_pdf_src.exists()):
+            cl_src = None
+    else:
+        cl_src = None
+    if cl_src:
         # Read text from .txt sibling (PDF is binary)
-        cl_txt = cl_src.with_suffix(".txt")
         if cl_txt.exists():
             cover_letter_text = cl_txt.read_text(encoding="utf-8")
-        elif cl_src.suffix == ".txt":
+        elif cl_src.suffix == ".txt" and cl_src.exists():
             cover_letter_text = cl_src.read_text(encoding="utf-8")
+        elif cl_pdf_src.exists():
+            cover_letter_text = _read_pdf_text(cl_pdf_src)
         # Upload must be PDF
-        cl_pdf_src = cl_src.with_suffix(".pdf")
         if cl_pdf_src.exists():
             cl_upload = dest_dir / f"{name_slug}_Cover_Letter.pdf"
             shutil.copy(str(cl_pdf_src), str(cl_upload))

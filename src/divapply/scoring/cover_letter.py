@@ -27,6 +27,15 @@ log = logging.getLogger(__name__)
 MAX_ATTEMPTS = 5  # max cross-run retries before giving up
 
 
+def _delete_temp_artifact(path) -> None:
+    """Delete an intermediate generated text file after PDF creation."""
+    try:
+        if path.exists() or path.is_symlink():
+            path.unlink()
+    except OSError:
+        log.warning("Could not delete temporary generated artifact: %s", path)
+
+
 # â”€â”€ Prompt Builder (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def _build_cover_letter_prompt(profile: dict) -> str:
@@ -276,12 +285,13 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
             try:
                 from divapply.scoring.pdf import convert_to_pdf
                 pdf_path = str(convert_to_pdf(cl_path))
+                _delete_temp_artifact(cl_path)
             except Exception:
                 log.debug("PDF generation failed for %s", cl_path, exc_info=True)
 
             result = {
                 "url": job["url"],
-                "path": str(cl_path),
+                "path": pdf_path,
                 "pdf_path": pdf_path,
                 "title": job["title"],
                 "site": job["site"],

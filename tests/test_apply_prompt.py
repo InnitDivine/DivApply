@@ -49,6 +49,52 @@ def test_apply_prompt_keeps_company_and_source_separate(tmp_path, monkeypatch) -
     assert "Company: Indeed" not in prompt
 
 
+def test_apply_prompt_uploads_cover_pdf_when_text_intermediate_was_removed(tmp_path, monkeypatch) -> None:
+    resume_pdf = tmp_path / "tailored.pdf"
+    cover_pdf = tmp_path / "cover_CL.pdf"
+    resume_pdf.write_bytes(b"%PDF-1.4\n")
+    cover_pdf.write_bytes(b"%PDF-1.4\n")
+
+    profile = {
+        "personal": {
+            "full_name": "Example Person",
+            "email": "person@example.com",
+            "phone": "555-0100",
+            "city": "Logan",
+        }
+    }
+
+    monkeypatch.setattr(prompt_mod.config, "APPLY_WORKER_DIR", tmp_path / "workers")
+    monkeypatch.setattr(prompt_mod.config, "load_profile", lambda: profile)
+    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(prompt_mod.config, "load_blocked_sso", lambda: [])
+    monkeypatch.setattr(prompt_mod.config, "load_credentials", lambda: {})
+    monkeypatch.setattr(prompt_mod, "_build_profile_summary", lambda profile: "profile summary")
+    monkeypatch.setattr(prompt_mod, "_build_location_check", lambda profile, search_config: "location check")
+    monkeypatch.setattr(prompt_mod, "_build_salary_section", lambda profile, search_config=None: "salary section")
+    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile, search_config=None: "screening section")
+    monkeypatch.setattr(prompt_mod, "_build_hard_rules", lambda profile: "hard rules")
+    monkeypatch.setattr(prompt_mod, "_read_pdf_text", lambda path: "cover pdf text")
+    monkeypatch.setattr(answers, "render_answer_bank_for_prompt", lambda: "answer bank")
+
+    prompt = prompt_mod.build_prompt(
+        job={
+            "url": "https://example.com/job",
+            "application_url": "https://example.com/apply",
+            "title": "Support Analyst",
+            "company": "Real Employer",
+            "site": "Indeed",
+            "fit_score": 8,
+            "tailored_resume_path": str(resume_pdf),
+            "cover_letter_path": str(cover_pdf.with_suffix(".txt")),
+        },
+        tailored_resume="resume text",
+    )
+
+    assert "cover pdf text" in prompt
+    assert (tmp_path / "workers" / "current" / "Example_Person_Cover_Letter.pdf").exists()
+
+
 def test_apply_prompt_ignores_credentials_saved_in_profile(tmp_path, monkeypatch) -> None:
     resume_txt = tmp_path / "tailored.txt"
     resume_pdf = tmp_path / "tailored.pdf"
