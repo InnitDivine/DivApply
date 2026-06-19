@@ -509,13 +509,19 @@ def _build_agent_command(
     raw_config = json.loads(mcp_config_path.read_text(encoding="utf-8"))
     servers = raw_config.get("mcpServers", {})
     # Codex receives MCP server settings through config overrides.
+    codex_executable = config.get_apply_backend_executable("codex") or "codex"
     codex_args = [
-        "codex",
+        codex_executable,
         "exec",
         "--model",
         model,
-        "--full-auto",
+        "--dangerously-bypass-approvals-and-sandbox",
         "--skip-git-repo-check",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--ephemeral",
+        "--color",
+        "never",
     ]
 
     if (

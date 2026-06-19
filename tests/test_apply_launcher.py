@@ -43,6 +43,7 @@ def test_extract_result_promotes_known_failure_reason(monkeypatch) -> None:
 
 def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("DIVAPPLY_CODEX_CMD", raising=False)
+    monkeypatch.setattr(launcher.config, "get_apply_backend_executable", lambda backend: "C:/Codex/codex.exe")
     mcp_path = tmp_path / "mcp.json"
     prompt_path = tmp_path / "prompt.txt"
     mcp_path.write_text(
@@ -60,8 +61,10 @@ def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
 
     cmd = launcher._build_agent_command("codex", "gpt-5.4-mini", mcp_path, prompt_path)
 
-    assert cmd[:4] == ["codex", "exec", "--model", "gpt-5.4-mini"]
-    assert "--full-auto" in cmd
+    assert cmd[:4] == ["C:/Codex/codex.exe", "exec", "--model", "gpt-5.4-mini"]
+    assert "--dangerously-bypass-approvals-and-sandbox" in cmd
+    assert "--ignore-user-config" in cmd
+    assert "--ephemeral" in cmd
     assert "mcp_servers.playwright.required=true" in cmd
 
 

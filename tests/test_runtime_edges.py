@@ -15,6 +15,16 @@ def test_get_apply_backend_rejects_unavailable_requested_backend(monkeypatch) ->
     assert runtime.get_apply_backend("claude") is None
 
 
+def test_get_apply_backend_executable_prefers_codex_env_path(tmp_path, monkeypatch) -> None:
+    codex = tmp_path / "codex.exe"
+    codex.write_text("", encoding="utf-8")
+    monkeypatch.setenv("DIVAPPLY_CODEX_PATH", str(codex))
+    monkeypatch.setenv("CODEX_CLI_PATH", str(tmp_path / "other-codex.exe"))
+    monkeypatch.setattr(runtime.shutil, "which", lambda name: None)
+
+    assert runtime.get_apply_backend_executable("codex") == str(codex)
+
+
 def test_get_chrome_path_prefers_existing_env_path(tmp_path, monkeypatch) -> None:
     chrome = tmp_path / "chrome.exe"
     chrome.write_text("", encoding="utf-8")

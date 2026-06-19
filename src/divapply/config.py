@@ -499,6 +499,7 @@ TIER_COMMANDS = _runtime.TIER_COMMANDS
 TIER_LABELS = _runtime.TIER_LABELS
 check_tier = _runtime.check_tier
 get_apply_backend = _runtime.get_apply_backend
+get_apply_backend_executable = _runtime.get_apply_backend_executable
 get_apply_backend_label = _runtime.get_apply_backend_label
 get_apply_browser = _runtime.get_apply_browser
 get_apply_browser_label = _runtime.get_apply_browser_label

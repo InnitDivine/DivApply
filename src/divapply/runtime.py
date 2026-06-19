@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import shutil
+import tomllib
 from pathlib import Path
 
 
@@ -32,6 +33,53 @@ APPLY_BROWSER_LABELS = {
     "msedge": "Microsoft Edge",
     "webkit": "WebKit",
 }
+
+
+def _existing_file(path: str | None) -> str | None:
+    if not path:
+        return None
+    candidate = Path(path).expanduser()
+    return str(candidate) if candidate.is_file() else None
+
+
+def _codex_cli_from_config() -> str | None:
+    config_path = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")) / "config.toml"
+    if not config_path.is_file():
+        return None
+    try:
+        data = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, tomllib.TOMLDecodeError):
+        return None
+
+    servers = data.get("mcp_servers", {})
+    if not isinstance(servers, dict):
+        return None
+    node_repl = servers.get("node_repl", {})
+    if not isinstance(node_repl, dict):
+        return None
+    env = node_repl.get("env", {})
+    if not isinstance(env, dict):
+        return None
+    return _existing_file(env.get("CODEX_CLI_PATH"))
+
+
+def get_apply_backend_executable(backend: str) -> str | None:
+    """Return the executable path used to launch an apply backend."""
+    normalized = backend.strip().lower()
+    if normalized == "codex":
+        for value in (
+            os.environ.get("DIVAPPLY_CODEX_PATH"),
+            os.environ.get("CODEX_CLI_PATH"),
+            _codex_cli_from_config(),
+            shutil.which("codex"),
+        ):
+            resolved = _existing_file(value)
+            if resolved:
+                return resolved
+        return None
+    if normalized == "claude":
+        return shutil.which("claude")
+    return None
 
 
 def get_chrome_path() -> str:
@@ -90,8 +138,8 @@ def get_chrome_user_data() -> Path:
 def get_available_apply_backends() -> dict[str, str]:
     """Return detected auto-apply agent CLIs keyed by backend name."""
     backends: dict[str, str] = {}
-    for name, binary in (("codex", "codex"), ("claude", "claude")):
-        resolved = shutil.which(binary)
+    for name in ("codex", "claude"):
+        resolved = get_apply_backend_executable(name)
         if resolved:
             backends[name] = resolved
     return backends
