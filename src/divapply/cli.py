@@ -434,6 +434,89 @@ def run(
         raise typer.Exit(code=1)
 
 
+@app.command("credentials")
+def credentials_cmd(
+    site: Optional[str] = typer.Option(
+        None,
+        "--site",
+        "-s",
+        help="Domain for a site-specific login, for example workdayjobs.com. Omit for the default login.",
+    ),
+    username: Optional[str] = typer.Option(None, "--username", "-u", help="Login username or email."),
+    password: Optional[str] = typer.Option(
+        None,
+        "--password",
+        help="Login password. Prefer omitting this so DivApply prompts without echoing it.",
+    ),
+    show: bool = typer.Option(False, "--show", help="Show saved usernames and domains, never passwords."),
+) -> None:
+    """Manage local-only job site login credentials."""
+    _bootstrap()
+
+    import getpass
+    import yaml
+
+    from divapply import config
+    from divapply.security import protect_file
+
+    path = config.CREDENTIALS_PATH
+    data = config.load_credentials(path)
+    data = data if isinstance(data, dict) else {}
+
+    if show or (site is None and username is None and password is None):
+        console.print(f"[bold]Credentials file:[/bold] {path}")
+        default = data.get("default", {}) if isinstance(data.get("default"), dict) else {}
+        if default:
+            console.print(
+                f"Default login: username={default.get('username', '') or '(missing)'} "
+                f"password={'saved' if default.get('password') else 'missing'}"
+            )
+        sites = data.get("sites", {}) if isinstance(data.get("sites"), dict) else {}
+        for domain, creds in sites.items():
+            if isinstance(creds, dict):
+                console.print(
+                    f"{domain}: username={creds.get('username', '') or '(default)'} "
+                    f"password={'saved' if creds.get('password') else 'missing'}"
+                )
+        if not data:
+            console.print("No credentials saved yet.")
+            console.print("Run: divapply credentials --username you@example.com")
+        return
+
+    if password is None:
+        password = getpass.getpass("Job site password: ")
+    if not password:
+        console.print("[red]Password cannot be empty.[/red]")
+        raise typer.Exit(code=1)
+
+    if not username:
+        try:
+            profile = config.load_profile()
+            username = profile.get("personal", {}).get("email", "")
+        except Exception:
+            username = ""
+    if not username:
+        console.print("[red]Username is required when profile email is unavailable.[/red]")
+        raise typer.Exit(code=1)
+
+    if site:
+        sites = data.setdefault("sites", {})
+        if not isinstance(sites, dict):
+            sites = {}
+            data["sites"] = sites
+        sites[site.strip().lower()] = {"username": username, "password": password}
+        label = site.strip().lower()
+    else:
+        data["default"] = {"username": username, "password": password}
+        label = "default"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    protect_file(path)
+    console.print(f"[green]Saved {label} login to local credentials file.[/green]")
+    console.print("[dim]Passwords are not stored in profile.json and are excluded from normal backups.[/dim]")
+
+
 @app.command()
 def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit."),

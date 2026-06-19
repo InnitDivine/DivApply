@@ -94,3 +94,32 @@ def test_apply_cost_guard_allows_dry_run_and_explicit_override() -> None:
         workers=4,
         effective_limit=0,
     ) is None
+
+
+def test_credentials_command_writes_local_credentials(tmp_path, monkeypatch) -> None:
+    credentials_path = tmp_path / "credentials.yaml"
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(config, "CREDENTIALS_PATH", credentials_path)
+    monkeypatch.setattr(config, "load_credentials", lambda path=None: {})
+
+    result = runner.invoke(
+        app,
+        [
+            "credentials",
+            "--site",
+            "workdayjobs.com",
+            "--username",
+            "person@example.com",
+            "--password",
+            "site-password",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Saved workdayjobs.com login" in result.output
+    assert "site-password" not in result.output
+    saved = credentials_path.read_text(encoding="utf-8")
+    assert "workdayjobs.com" in saved
+    assert "person@example.com" in saved
+    assert "site-password" in saved

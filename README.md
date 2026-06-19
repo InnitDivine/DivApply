@@ -137,6 +137,23 @@ Auto-apply launches a dedicated Chromium browser session for each worker, naviga
 
 Cost-safe defaults are intentionally conservative: real auto-apply runs default to one job and one worker, and higher limits, multiple workers, unlimited continuous polling, or unbounded runs require `--allow-expensive`. Start with `divapply apply --dry-run --limit 1`, then use `divapply apply --yes --limit 1` for the lowest-cost real run.
 
+Saved job-site logins are local-only and belong in `~/.divapply/credentials.yaml`, not `profile.json` or Git:
+
+```powershell
+divapply credentials --username you@example.com
+divapply credentials --site workdayjobs.com --username you@example.com
+divapply credentials --show
+```
+
+Omit `--password` and DivApply prompts for it without echoing it. Use site-specific entries for employers that need a different login.
+
+If an apply attempt is moving too slowly, lower the per-job timeout for that session:
+
+```powershell
+$env:DIVAPPLY_APPLY_TIMEOUT="180"
+divapply apply --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
+```
+
 ## Search Config
 
 `searches.yaml` controls what DivApply looks for.

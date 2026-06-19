@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import platform
+import queue
 import re
 import shlex
 import signal
@@ -729,9 +730,32 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             proc.stdin.write(agent_prompt)
             proc.stdin.close()
 
+        output_queue: queue.Queue[str | None] = queue.Queue()
+
+        def _read_stdout() -> None:
+            try:
+                for raw in proc.stdout or []:
+                    output_queue.put(raw)
+            finally:
+                output_queue.put(None)
+
+        reader = threading.Thread(target=_read_stdout, daemon=True)
+        reader.start()
+        timeout_seconds = config.get_apply_timeout()
+        deadline = start + timeout_seconds
+
         with open(worker_log, "a", encoding="utf-8") as lf:
             lf.write(log_header)
-            for raw_line in proc.stdout or []:
+            while True:
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, timeout_seconds)
+                try:
+                    raw_line = output_queue.get(timeout=min(0.5, remaining))
+                except queue.Empty:
+                    continue
+                if raw_line is None:
+                    break
                 line = raw_line.strip()
                 if not line:
                     continue
@@ -774,8 +798,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 redacted_line = redact_known_secrets(line, known_secrets)
                 lf.write(redacted_line + "\n")
                 update_state(worker_id, last_action=redacted_line[:35])
-
-        proc.wait(timeout=config.DEFAULTS["apply_timeout"])
+        proc.wait(timeout=1)
         returncode = proc.returncode
         proc = None
 

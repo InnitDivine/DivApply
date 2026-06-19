@@ -438,6 +438,17 @@ def load_credentials(path: Path | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def get_apply_timeout() -> int:
+    """Return the per-job apply timeout in seconds."""
+    value = os.environ.get("DIVAPPLY_APPLY_TIMEOUT") or os.environ.get("APPLYPILOT_APPLY_TIMEOUT")
+    if value:
+        try:
+            return max(30, int(value))
+        except ValueError:
+            return int(DEFAULTS["apply_timeout"])
+    return int(DEFAULTS["apply_timeout"])
+
+
 def is_manual_ats(url: str | None) -> bool:
     """Check if a URL routes through an ATS that requires manual application."""
     if not url:
