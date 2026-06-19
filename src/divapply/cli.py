@@ -517,6 +517,60 @@ def credentials_cmd(
     console.print("[dim]Passwords are not stored in profile.json and are excluded from normal backups.[/dim]")
 
 
+@app.command("browser-login")
+def browser_login(
+    url: str = typer.Option(
+        "https://www.myworkday.com/",
+        "--url",
+        help="Login page to open in the persistent apply browser profile.",
+    ),
+    browser: str = typer.Option(
+        "chromium",
+        "--browser",
+        help="Browser profile to prepare: chromium, chrome, msedge, firefox, or webkit.",
+    ),
+    worker: int = typer.Option(0, "--worker", "-w", help="Apply worker profile number to reuse."),
+) -> None:
+    """Open the persistent apply browser profile so logins/cookies can be saved."""
+    _bootstrap()
+
+    import subprocess
+    import sys
+
+    from divapply.config import get_apply_browser
+    from divapply.apply.chrome import setup_worker_profile
+
+    resolved_browser = get_apply_browser(browser)
+    profile_dir = setup_worker_profile(worker, resolved_browser)
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    cmd = [
+        sys.executable,
+        "-m",
+        "playwright",
+        "open",
+        "--user-data-dir",
+        str(profile_dir),
+        "--viewport-size",
+        "1280,900",
+    ]
+    if resolved_browser == "chrome":
+        cmd.extend(["--browser", "chromium", "--channel", "chrome"])
+    elif resolved_browser == "msedge":
+        cmd.extend(["--browser", "chromium", "--channel", "msedge"])
+    else:
+        cmd.extend(["--browser", resolved_browser])
+    cmd.append(url)
+
+    console.print(f"[green]Opening persistent {resolved_browser} worker-{worker} profile.[/green]")
+    console.print("[dim]Sign in, finish any 2FA, then close the browser window to save cookies.[/dim]")
+    console.print(f"[dim]Profile: {profile_dir}[/dim]")
+    result = subprocess.run(cmd)
+    if result.returncode:
+        raise typer.Exit(code=result.returncode)
+    console.print("[green]Browser closed. Saved cookies will be reused by matching apply runs.[/green]")
+
+
 @app.command()
 def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit."),

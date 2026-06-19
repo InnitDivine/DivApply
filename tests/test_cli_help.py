@@ -123,3 +123,33 @@ def test_credentials_command_writes_local_credentials(tmp_path, monkeypatch) -> 
     assert "workdayjobs.com" in saved
     assert "person@example.com" in saved
     assert "site-password" in saved
+
+
+def test_browser_login_uses_persistent_worker_profile(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    from divapply.apply import chrome
+
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(config, "get_apply_browser", lambda browser: browser)
+    monkeypatch.setattr(chrome, "setup_worker_profile", lambda worker, browser: tmp_path / f"{browser}-{worker}")
+
+    class Result:
+        returncode = 0
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = runner.invoke(app, ["browser-login", "--url", "https://example.com/login", "--worker", "2"])
+
+    assert result.exit_code == 0
+    cmd = calls[0]
+    assert "playwright" in cmd
+    assert "--user-data-dir" in cmd
+    assert str(tmp_path / "chromium-2") in cmd
+    assert "https://example.com/login" in cmd

@@ -147,6 +147,15 @@ divapply credentials --show
 
 Omit `--password` and DivApply prompts for it without echoing it. Use site-specific entries for employers that need a different login.
 
+To avoid signing in repeatedly, open the same persistent browser profile used by auto-apply, sign in once, complete any two-factor challenge, then close the browser:
+
+```powershell
+divapply browser-login --url https://www.myworkday.com/
+divapply browser-login --url https://imh.wd108.myworkdayjobs.com/IntermountainCareers
+```
+
+Future `divapply apply --browser chromium --workers 1` runs reuse the worker-0 profile cookies. Use the same `--browser` and `--worker` values for login and apply.
+
 If an apply attempt is moving too slowly, lower the per-job timeout for that session:
 
 ```powershell
