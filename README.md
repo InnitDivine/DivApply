@@ -163,10 +163,10 @@ divapply browser-login --browser chrome --url https://www.myworkday.com/
 divapply apply --browser chrome --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
 ```
 
-If an apply attempt is moving too slowly, lower the per-job timeout for that session:
+Auto-apply has no hard per-job timeout by default because multi-step ATS flows such as Workday can take several minutes. For fail-fast testing, set a temporary timeout for that session:
 
 ```powershell
-$env:DIVAPPLY_APPLY_TIMEOUT="180"
+$env:DIVAPPLY_APPLY_TIMEOUT="900"
 divapply apply --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
 ```
 

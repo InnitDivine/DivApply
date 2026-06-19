@@ -438,15 +438,18 @@ def load_credentials(path: Path | None = None) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def get_apply_timeout() -> int:
-    """Return the per-job apply timeout in seconds."""
+def get_apply_timeout() -> int | None:
+    """Return the per-job apply timeout in seconds, or None for no timeout."""
     value = os.environ.get("DIVAPPLY_APPLY_TIMEOUT") or os.environ.get("APPLYPILOT_APPLY_TIMEOUT")
     if value:
+        if value.strip().lower() in {"0", "none", "off", "false", "no"}:
+            return None
         try:
             return max(30, int(value))
         except ValueError:
-            return int(DEFAULTS["apply_timeout"])
-    return int(DEFAULTS["apply_timeout"])
+            return None
+    default = int(DEFAULTS["apply_timeout"])
+    return default if default > 0 else None
 
 
 def is_manual_ats(url: str | None) -> bool:
@@ -485,7 +488,7 @@ DEFAULTS = {
     "max_apply_attempts": 3,
     "max_tailor_attempts": 5,
     "poll_interval": 60,
-    "apply_timeout": 300,
+    "apply_timeout": 0,
     "apply_lock_timeout": 3600,
     "viewport": "1280x900",
 }

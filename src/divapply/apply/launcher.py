@@ -742,16 +742,16 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         reader = threading.Thread(target=_read_stdout, daemon=True)
         reader.start()
         timeout_seconds = config.get_apply_timeout()
-        deadline = start + timeout_seconds
+        deadline = start + timeout_seconds if timeout_seconds is not None else None
 
         with open(worker_log, "a", encoding="utf-8") as lf:
             lf.write(log_header)
             while True:
-                remaining = deadline - time.time()
-                if remaining <= 0:
+                remaining = None if deadline is None else deadline - time.time()
+                if remaining is not None and remaining <= 0:
                     raise subprocess.TimeoutExpired(cmd, timeout_seconds)
                 try:
-                    raw_line = output_queue.get(timeout=min(0.5, remaining))
+                    raw_line = output_queue.get(timeout=0.5 if remaining is None else min(0.5, remaining))
                 except queue.Empty:
                     continue
                 if raw_line is None:
