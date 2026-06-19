@@ -153,3 +153,37 @@ def test_browser_login_uses_persistent_worker_profile(tmp_path, monkeypatch) -> 
     assert "--user-data-dir" in cmd
     assert str(tmp_path / "chromium-2") in cmd
     assert "https://example.com/login" in cmd
+
+
+def test_browser_login_with_chrome_uses_direct_chrome_not_playwright(tmp_path, monkeypatch) -> None:
+    import subprocess
+
+    from divapply.apply import chrome
+
+    calls: list[list[str]] = []
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(config, "get_apply_browser", lambda browser: browser)
+    monkeypatch.setattr(config, "get_chrome_path", lambda: "C:/Program Files/Google/Chrome/Application/chrome.exe")
+    monkeypatch.setattr(chrome, "setup_worker_profile", lambda worker, browser: tmp_path / f"{browser}-{worker}")
+
+    class Result:
+        returncode = 0
+
+    def fake_run(cmd):
+        calls.append(cmd)
+        return Result()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    result = runner.invoke(
+        app,
+        ["browser-login", "--browser", "chrome", "--url", "https://accounts.google.com/", "--worker", "0"],
+    )
+
+    assert result.exit_code == 0
+    cmd = calls[0]
+    assert cmd[0].endswith("chrome.exe")
+    assert "playwright" not in cmd
+    assert f"--user-data-dir={tmp_path / 'chrome-0'}" in cmd
+    assert "https://accounts.google.com/" in cmd

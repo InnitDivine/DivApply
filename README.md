@@ -156,6 +156,13 @@ divapply browser-login --url https://imh.wd108.myworkdayjobs.com/IntermountainCa
 
 Future `divapply apply --browser chromium --workers 1` runs reuse the worker-0 profile cookies. Use the same `--browser` and `--worker` values for login and apply.
 
+If Google says "This browser or app may not be secure", use real Chrome for both login and apply:
+
+```powershell
+divapply browser-login --browser chrome --url https://www.myworkday.com/
+divapply apply --browser chrome --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
+```
+
 If an apply attempt is moving too slowly, lower the per-job timeout for that session:
 
 ```powershell

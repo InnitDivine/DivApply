@@ -537,30 +537,38 @@ def browser_login(
     import subprocess
     import sys
 
-    from divapply.config import get_apply_browser
+    from divapply.config import get_apply_browser, get_chrome_path
     from divapply.apply.chrome import setup_worker_profile
 
     resolved_browser = get_apply_browser(browser)
     profile_dir = setup_worker_profile(worker, resolved_browser)
     profile_dir.mkdir(parents=True, exist_ok=True)
 
-    cmd = [
-        sys.executable,
-        "-m",
-        "playwright",
-        "open",
-        "--user-data-dir",
-        str(profile_dir),
-        "--viewport-size",
-        "1280,900",
-    ]
     if resolved_browser == "chrome":
-        cmd.extend(["--browser", "chromium", "--channel", "chrome"])
-    elif resolved_browser == "msedge":
-        cmd.extend(["--browser", "chromium", "--channel", "msedge"])
+        cmd = [
+            get_chrome_path(),
+            f"--user-data-dir={profile_dir}",
+            "--profile-directory=Default",
+            "--no-first-run",
+            "--no-default-browser-check",
+            url,
+        ]
     else:
-        cmd.extend(["--browser", resolved_browser])
-    cmd.append(url)
+        cmd = [
+            sys.executable,
+            "-m",
+            "playwright",
+            "open",
+            "--user-data-dir",
+            str(profile_dir),
+            "--viewport-size",
+            "1280,900",
+        ]
+        if resolved_browser == "msedge":
+            cmd.extend(["--browser", "chromium", "--channel", "msedge"])
+        else:
+            cmd.extend(["--browser", resolved_browser])
+        cmd.append(url)
 
     console.print(f"[green]Opening persistent {resolved_browser} worker-{worker} profile.[/green]")
     console.print("[dim]Sign in, finish any 2FA, then close the browser window to save cookies.[/dim]")
