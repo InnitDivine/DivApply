@@ -4,8 +4,6 @@ from datetime import datetime, timedelta, timezone
 import sqlite3
 import json
 
-import pytest
-
 from divapply.apply import launcher
 
 
@@ -39,6 +37,52 @@ def test_extract_result_promotes_known_failure_reason(monkeypatch) -> None:
     )
 
     assert status == "captcha"
+
+
+def test_extract_result_uses_final_agent_result_not_prompt_contract(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "\n".join([
+            "user",
+            "RESULT:APPLIED -- prompt contract example",
+            "RESULT:LOGIN_ISSUE -- prompt contract example",
+            "codex",
+            "I could not continue because the form requires sensitive data.",
+            "RESULT:FAILED:reason requires SSN last 4 digits, which I cannot enter",
+        ]),
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:reason requires SSN last 4 digits, which I cannot enter"
+
+
+def test_extract_result_ignores_prompt_result_codes_without_agent_result(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "\n".join([
+            "user",
+            "RESULT:APPLIED -- prompt contract example",
+            "RESULT:LOGIN_ISSUE -- prompt contract example",
+            "codex",
+            "I am still working through the form.",
+        ]),
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:no_result_line"
+
+
+def test_ssn_failure_is_permanent() -> None:
+    assert launcher._is_permanent_failure("failed:reason requires SSN last 4 digits")
+    assert launcher._is_permanent_failure("failed:requires social security number")
 
 
 def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
@@ -358,7 +402,7 @@ def test_mark_result_rolls_back_when_event_insert_fails(monkeypatch) -> None:
     assert row["agent_id"] == "worker-1"
 
 
-def test_mark_result_rolls_back_when_existing_event_schema_is_invalid(monkeypatch) -> None:
+def test_mark_result_repairs_existing_event_schema(monkeypatch) -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute("""
@@ -389,17 +433,78 @@ def test_mark_result_rolls_back_when_existing_event_schema_is_invalid(monkeypatc
 
     monkeypatch.setattr(launcher, "get_connection", lambda: conn)
 
-    with pytest.raises(sqlite3.OperationalError):
-        launcher.mark_result("https://jobs.example/schema-rollback", "applied", duration_ms=100)
+    launcher.mark_result("https://jobs.example/schema-rollback", "applied", duration_ms=100)
 
     row = conn.execute(
         "SELECT apply_status, applied_at, apply_attempts, agent_id FROM jobs WHERE url = ?",
         ("https://jobs.example/schema-rollback",),
     ).fetchone()
-    assert row["apply_status"] == "in_progress"
-    assert row["applied_at"] is None
+    event = conn.execute(
+        "SELECT event_type, notes, follow_up_at, created_at FROM application_events WHERE job_url = ?",
+        ("https://jobs.example/schema-rollback",),
+    ).fetchone()
+    assert row["apply_status"] == "applied"
+    assert row["applied_at"] is not None
     assert row["apply_attempts"] == 0
-    assert row["agent_id"] == "worker-1"
+    assert row["agent_id"] is None
+    assert event["event_type"] == "applied"
+    assert event["notes"] == "Auto-apply submitted"
+    assert event["follow_up_at"] is None
+    assert event["created_at"] is not None
+
+
+def test_mark_result_failed_clears_prior_applied_at(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            applied_at TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            apply_duration_ms INTEGER,
+            apply_task_id TEXT
+        )
+    """)
+    conn.execute(
+        """
+        CREATE TABLE application_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_url TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            notes TEXT,
+            ts TEXT NOT NULL,
+            source TEXT,
+            metadata_json TEXT
+        )
+        """
+    )
+    conn.execute(
+        "INSERT INTO jobs (url, apply_status, applied_at, apply_attempts) VALUES (?, ?, ?, ?)",
+        ("https://jobs.example/corrected", "applied", "2026-06-20T00:00:00+00:00", 0),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+
+    launcher.mark_result(
+        "https://jobs.example/corrected",
+        "failed",
+        "expired",
+        permanent=True,
+        duration_ms=100,
+    )
+
+    row = conn.execute(
+        "SELECT apply_status, applied_at, apply_error, apply_attempts FROM jobs WHERE url = ?",
+        ("https://jobs.example/corrected",),
+    ).fetchone()
+    assert row["apply_status"] == "failed"
+    assert row["applied_at"] is None
+    assert row["apply_error"] == "expired"
+    assert row["apply_attempts"] == 99
 
 
 def test_mark_dry_run_does_not_mark_job_applied(monkeypatch) -> None:

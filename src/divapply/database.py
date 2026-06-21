@@ -357,6 +357,13 @@ def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> N
             FOREIGN KEY(job_url) REFERENCES jobs(url)
         )
     """)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(application_events)")}
+    if "notes" not in existing:
+        conn.execute("ALTER TABLE application_events ADD COLUMN notes TEXT")
+    if "follow_up_at" not in existing:
+        conn.execute("ALTER TABLE application_events ADD COLUMN follow_up_at TEXT")
+    if "created_at" not in existing:
+        conn.execute("ALTER TABLE application_events ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_job_url ON application_events(job_url)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_follow_up ON application_events(follow_up_at)")
     if should_commit:

@@ -267,6 +267,7 @@ def mark_result(url: str, status: str, error: str | None = None,
             if permanent:
                 conn.execute("""
                     UPDATE jobs SET apply_status = ?, apply_error = ?,
+                                   applied_at = NULL,
                                    apply_attempts = 99, agent_id = NULL,
                                    apply_duration_ms = ?, apply_task_id = ?
                     WHERE url = ?
@@ -275,7 +276,7 @@ def mark_result(url: str, status: str, error: str | None = None,
                 conn.execute("""
                     UPDATE jobs SET apply_status = ?, apply_error = ?,
                                    apply_attempts = COALESCE(apply_attempts, 0) + 1,
-                                   agent_id = NULL,
+                                   applied_at = NULL, agent_id = NULL,
                                    apply_duration_ms = ?, apply_task_id = ?
                     WHERE url = ?
                 """, (status, error or "unknown", duration_ms, task_id, url))
@@ -399,15 +400,48 @@ PERMANENT_PREFIXES: tuple[str, ...] = ("site_blocked", "cloudflare", "blocked_by
 def _is_permanent_failure(result: str) -> bool:
     """Determine if a failure should never be retried."""
     reason = result.split(":", 1)[-1] if ":" in result else result
+    reason_lower = reason.lower()
     return (
         result in PERMANENT_FAILURES
         or reason in PERMANENT_FAILURES
         or any(reason.startswith(p) for p in PERMANENT_PREFIXES)
+        or "ssn" in reason_lower
+        or "social security" in reason_lower
+        or "unsafe verification" in reason_lower
     )
 
 
 def _clean_result_reason(text: str) -> str:
     return re.sub(r'[*`"]+$', "", text).strip()
+
+
+RESULT_LINE_RE = re.compile(
+    r"^\s*RESULT:(APPLIED|EXPIRED|CAPTCHA|LOGIN_ISSUE|FAILED(?::[^\r\n]+)?)\s*$",
+    re.IGNORECASE,
+)
+
+
+def _agent_output_region(output: str) -> str:
+    """Drop echoed prompt/config text before parsing the final agent result."""
+    lines = output.splitlines()
+    marker_idx = -1
+    for idx, line in enumerate(lines):
+        if line.strip().lower() in {"codex", "claude"}:
+            marker_idx = idx
+    if marker_idx >= 0:
+        return "\n".join(lines[marker_idx + 1:])
+    return output
+
+
+def _last_explicit_result(output: str) -> str | None:
+    """Return the last standalone RESULT line from agent output."""
+    region = _agent_output_region(output)
+    result: str | None = None
+    for line in region.splitlines():
+        match = RESULT_LINE_RE.match(line)
+        if match:
+            result = match.group(1)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -419,14 +453,29 @@ def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) ->
     elapsed = max(1, duration_ms // 1000)
 
     # Preferred path: the agent follows the prompt contract and emits RESULT:*.
-    for result_status in ["APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"]:
-        if f"RESULT:{result_status}" in output:
+    explicit_result = _last_explicit_result(output)
+    if explicit_result:
+        if explicit_result.upper().startswith("FAILED"):
+            parts = explicit_result.split(":", 1)
+            reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
+            reason = _clean_result_reason(reason)
+            if reason in {"captcha", "expired", "login_issue"}:
+                add_event(f"[W{worker_id}] {reason.upper()} ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status=reason, last_action=f"{reason.upper()} ({elapsed}s)")
+                return reason, duration_ms
+            add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason[:30]}")
+            update_state(worker_id, status="failed", last_action=f"FAILED: {reason[:25]}")
+            return f"failed:{reason}", duration_ms
+
+        result_status = explicit_result.upper()
+        if result_status in {"APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"}:
             add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {job['title'][:30]}")
             update_state(worker_id, status=result_status.lower(),
                          last_action=f"{result_status} ({elapsed}s)")
             return result_status.lower(), duration_ms
 
-    output_lower = output.lower()
+    agent_region = _agent_output_region(output)
+    output_lower = agent_region.lower()
 
     # Fallback path: accept strong success wording only when no failure context
     # appears. This covers older prompts and partial agent transcripts.
@@ -447,10 +496,10 @@ def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) ->
         update_state(worker_id, status="applied", last_action=f"APPLIED-fuzzy ({elapsed}s)")
         return "applied", duration_ms
 
-    if "RESULT:FAILED" in output:
+    if "RESULT:FAILED" in agent_region:
         # Preserve structured failure reasons so retry logic can distinguish
         # transient failures from permanent blocks such as CAPTCHA or login.
-        for out_line in output.splitlines():
+        for out_line in agent_region.splitlines():
             if "RESULT:FAILED" not in out_line:
                 continue
             parts = out_line.split("RESULT:FAILED:", 1)
