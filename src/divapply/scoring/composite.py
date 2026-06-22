@@ -54,6 +54,27 @@ _PREFERRED_ONLY_TERMS = {
 }
 _APPLY_RECOMMENDATION_TERMS = ("apply", "strong match", "good match")
 _NEGATIVE_APPLY_TERMS = ("do not apply", "skip", "only if", "unless", "not eligible")
+_SCHEDULE_MISMATCH_TERMS = (
+    "40 hours",
+    "full time",
+    "full-time",
+    "hours conflict",
+    "not part-time",
+    "part time required",
+    "part-time required",
+    "schedule conflict",
+    "schedule mismatch",
+)
+_REFERRAL_EXCEPTION_TERMS = (
+    "employee referral",
+    "employer priority",
+    "priority employer",
+    "priority-employer",
+    "referral",
+    "referred",
+    "schedule exception",
+)
+_PRIORITY_EMPLOYER_TERMS = ("sutter health",)
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -92,6 +113,34 @@ def _has_positive_apply_signal(llm_result: dict) -> bool:
     return any(term in evidence for term in _APPLY_RECOMMENDATION_TERMS)
 
 
+def _has_schedule_only_mismatch(llm_result: dict) -> bool:
+    """Return True when the stated concern is schedule, not qualifications."""
+    if _has_hard_mismatch(llm_result):
+        return False
+    evidence = " ".join(
+        str(llm_result.get(key, ""))
+        for key in ("risk_flags", "missing_skills", "apply_or_skip_reason", "reasoning")
+    ).casefold()
+    if not any(term in evidence for term in _SCHEDULE_MISMATCH_TERMS):
+        return False
+    return not any(term in evidence for term in _REQUIRED_GAP_TERMS)
+
+
+def _has_referral_or_priority_exception(*, job_description: str, resume_text: str, llm_result: dict) -> bool:
+    """Return True when search context or LLM evidence marks a referral exception."""
+    llm_evidence = " ".join(
+        str(llm_result.get(key, ""))
+        for key in ("risk_flags", "missing_skills", "apply_or_skip_reason", "reasoning")
+    )
+    evidence = f"{job_description} {resume_text} {llm_evidence}".casefold()
+    has_exception = any(term in evidence for term in _REFERRAL_EXCEPTION_TERMS)
+    if not has_exception:
+        return False
+    if any(term in evidence for term in _PRIORITY_EMPLOYER_TERMS):
+        return True
+    return "priority employer" in evidence or "employer priority" in evidence
+
+
 def composite_score(
     *,
     job_description: str,
@@ -127,6 +176,18 @@ def composite_score(
     if positive_apply_floor:
         composite_float = max(composite_float, float(min(llm_score, 7)))
 
+    referral_schedule_exception = (
+        not hard_mismatch_cap
+        and _has_schedule_only_mismatch(llm_result)
+        and _has_referral_or_priority_exception(
+            job_description=job_description,
+            resume_text=resume_text,
+            llm_result=llm_result,
+        )
+    )
+    if referral_schedule_exception:
+        composite_float = max(composite_float, 6.0)
+
     fit_score = int(round(composite_float))
 
     keyword_hits = keyword["hits"]
@@ -150,6 +211,7 @@ def composite_score(
         "composite": composite_float,
         "hard_mismatch_cap": hard_mismatch_cap,
         "positive_apply_floor": positive_apply_floor,
+        "referral_schedule_exception": referral_schedule_exception,
         "skill_gaps": keyword_misses[:12],
     }
 

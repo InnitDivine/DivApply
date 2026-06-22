@@ -21,8 +21,9 @@ log = logging.getLogger(__name__)
 EXPERIENCE_INFERENCE_GUIDANCE = (
     "Use each job title and task summary to infer common, truthful duties normally tied to that work. "
     "For example, haul truck driving can imply safety procedures, equipment checks, radio communication, "
-    "and site rules. Do not invent credentials, licenses, exact tools, employers, dates, metrics, "
-    "or completed certifications."
+    "and site rules. Equivalent-experience language may be satisfied by verified duties from different "
+    "titles when the work maps cleanly. Do not invent credentials, licenses, exact tools, employers, "
+    "dates, metrics, or completed certifications."
 )
 
 
@@ -36,9 +37,12 @@ CORE POLICY:
 - Do not reward or penalize any job family, industry, employer type, or schedule type unless active search filters or verified profile facts make it relevant.
 - Use general role sense only to interpret common requirements, not to invent unstated requirements.
 - Transferable experience counts when duties, tools, domain knowledge, education, or coursework reasonably map to the job's work.
+- When a posting says equivalent experience is accepted, evaluate verified duties and task summaries, not just exact titles.
 - For entry-level, low-hour, student, customer service, cashier, front desk, office assistant, data entry, library, recreation, retail, or food service roles, do not require the same prior job title or exact industry/tool when the candidate has verified transferable public-facing service, records, payments, scheduling, data entry, or administrative experience.
 - Non-substitutable requirements such as licenses, clearances, legal credentials, completed degrees, or certifications must be treated as hard gaps when the posting requires them.
 - Preferred/nice-to-have certifications, tools, degrees, or licenses are not hard gaps. Treat them as small tie-breakers after required qualifications.
+- Coursework and in-progress education can support skills, exposure, and student eligibility. They do not prove completed degrees, completed certificates, licensure, employment history, or professional years of experience.
+- If search filters require part-time but verified search context marks a referral or priority-employer exception, do not penalize a full-time posting solely for schedule. Still penalize real conflicts and missing required qualifications.
 
 SCORING CRITERIA:
 - 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
@@ -73,6 +77,7 @@ IMPORTANT NOTES:
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
 - Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
 - For entry-level part-time roles with no hard credential/license gap, no schedule conflict, and an APPLY recommendation, avoid scoring below 6 solely because the candidate lacks exact same-title experience.
+- For referral or priority-employer exceptions, score full-time roles on qualifications and location unless the profile states a hard availability conflict.
 - Use only evidence from the resume, verified profile facts, profile-safe coursework summary, and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
@@ -245,6 +250,33 @@ def _build_search_evidence_context(search_config: dict) -> str:
         loc_terms = [str(item.get("location") or "").strip() for item in locations if isinstance(item, dict)]
         if loc_terms:
             lines.append("Search locations: " + "; ".join(loc_terms))
+    exception_terms: list[str] = []
+    for key in (
+        "schedule_exception_employers",
+        "referral_employers",
+        "priority_employers",
+        "employer_priority",
+    ):
+        value = search_config.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    text = str(item.get("name") or item.get("employer") or "").strip()
+                else:
+                    text = str(item).strip()
+                if text:
+                    exception_terms.append(text)
+        elif isinstance(value, dict):
+            exception_terms.extend(str(item.get("name") or name).strip() for name, item in value.items())
+        elif isinstance(value, str) and value.strip():
+            exception_terms.append(value.strip())
+    if exception_terms:
+        unique = list(dict.fromkeys(exception_terms))
+        lines.append(
+            "Referral/priority employer schedule exception: "
+            + "; ".join(unique[:20])
+            + " may be scored without the part-time-only penalty."
+        )
     return "\n".join(lines)
 
 

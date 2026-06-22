@@ -38,6 +38,10 @@ _PREFERRED_MARKERS = {
 }
 _SKILL_HINTS = {
     "aws", "azure", "gcp", "linux", "windows", "python", "sql", "excel",
+    "access", "administrative", "answering", "appointments", "billing", "cash",
+    "cashier", "clerical", "confidentiality", "data entry", "front desk",
+    "insurance", "microsoft", "office", "patient", "payments", "phone",
+    "phones", "records", "registration", "typing",
     "powerpoint", "word", "javascript", "typescript", "react", "node",
     "kubernetes", "docker", "terraform", "salesforce", "workday",
     "greenhouse", "lever", "customer", "support", "accounting", "finance",
@@ -77,6 +81,16 @@ def _clean_phrase(phrase: str) -> str:
     return " ".join(parts).strip()
 
 
+def _strip_marker_prefix(line: str) -> str:
+    return re.sub(
+        r"^(required|requirements|required skills|required qualifications|minimum qualifications|"
+        r"preferred|preferred qualifications|preferred skills|nice to have|nice-to-have|bonus|plus)"
+        r"\s*[:\-]\s*",
+        "",
+        line,
+    ).strip()
+
+
 def _candidate_phrases(text: str, *, bucket: str = "required") -> list[str]:
     lowered = text.casefold()
     phrases: list[str] = []
@@ -91,9 +105,14 @@ def _candidate_phrases(text: str, *, bucket: str = "required") -> list[str]:
         if current_bucket != bucket:
             continue
         bucket_lines.append(line)
+        markerless = _strip_marker_prefix(line)
+        if markerless and markerless != line:
+            phrases.extend(chunk.strip() for chunk in re.split(r"[,;/]| and | or ", markerless))
         if any(mark in line for mark in _REQUIRED_MARKERS | _PREFERRED_MARKERS):
             chunks = re.split(r"[,;/]| and | or ", line)
             phrases.extend(chunk.strip() for chunk in chunks)
+        elif 1 <= len(markerless.split()) <= 6:
+            phrases.append(markerless)
 
     bucket_text = "\n".join(bucket_lines)
     if bucket == "required" and not bucket_text:

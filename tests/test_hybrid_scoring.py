@@ -5,7 +5,7 @@ import json
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
 from divapply.scoring.embedding import embedding_score
-from divapply.scoring.keywords import KeywordScoringPolicy, keyword_present, score_keywords
+from divapply.scoring.keywords import KeywordScoringPolicy, extract_requirement_keywords, keyword_present, score_keywords
 from divapply.scoring import scorer
 from divapply.scoring.scorer import _build_profile_evidence_context, _build_search_evidence_context
 
@@ -67,6 +67,28 @@ def test_keyword_score_keeps_preferred_qualifications_out_of_required_bucket() -
 
     assert any("aws" in keyword for keyword in result["preferred_keywords"])
     assert not any("aws" in keyword for keyword in result["required_keywords"])
+
+
+def test_keyword_extraction_captures_admin_service_bullets_without_marker_repetition() -> None:
+    jd = "\n".join([
+        "Required Qualifications:",
+        "- Cash handling",
+        "- Phone etiquette",
+        "- Patient registration",
+        "- Microsoft Office",
+        "Preferred Qualifications:",
+        "- Medical terminology",
+    ])
+
+    keywords = extract_requirement_keywords(jd)
+    preferred = score_keywords(jd, "cash handling phone etiquette patient registration microsoft office")
+
+    assert "cash handling" in keywords
+    assert "phone etiquette" in keywords
+    assert "patient registration" in keywords
+    assert "microsoft office" in keywords
+    assert "medical terminology" in preferred["preferred_misses"]
+    assert preferred["score"] >= 0.75
 
 
 def test_embedding_score_is_bounded() -> None:
@@ -174,6 +196,50 @@ def test_composite_score_preserves_positive_llm_apply_signal() -> None:
     assert result["score"] > 2
 
 
+def test_composite_score_lifts_schedule_only_sutter_referral_exception() -> None:
+    result = composite_score(
+        job_description=(
+            "TITLE: Patient Access Representative\n"
+            "COMPANY: Sutter Health\n"
+            "DESCRIPTION:\nFull-time role. Required: customer service, patient registration, scheduling."
+        ),
+        resume_text=(
+            "Customer service, scheduling, records, payments.\n"
+            "Referral/priority employer schedule exception: Sutter Health may be scored without the part-time-only penalty."
+        ),
+        llm_result={
+            "score": 4,
+            "risk_flags": "full-time schedule mismatch",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply because this is a Sutter Health referral exception.",
+            "reasoning": "Only concern is full-time schedule against a part-time search filter.",
+        },
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 6
+    assert breakdown["referral_schedule_exception"] is True
+
+
+def test_composite_score_keeps_hard_gap_cap_for_sutter_referral_exception() -> None:
+    result = composite_score(
+        job_description="COMPANY: Sutter Health\nDESCRIPTION:\nRequired: RN license and patient care.",
+        resume_text="Referral/priority employer schedule exception: Sutter Health.",
+        llm_result={
+            "score": 1,
+            "risk_flags": "required license gap",
+            "missing_skills": "required RN license",
+            "apply_or_skip_reason": "Skip; not eligible without RN license.",
+            "reasoning": "Referral does not substitute for the required RN license.",
+        },
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] == 1
+    assert breakdown["hard_mismatch_cap"] is True
+    assert breakdown["referral_schedule_exception"] is False
+
+
 def test_score_job_prompt_uses_company_separate_from_source(monkeypatch) -> None:
     captured: dict = {}
 
@@ -219,6 +285,9 @@ def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     assert "Do not penalize legitimate remote" in prompt
     assert "Preferred/nice-to-have certifications" in prompt
     assert "required/minimum/must have" in prompt
+    assert "equivalent experience is accepted" in prompt
+    assert "Coursework and in-progress education can support skills" in prompt
+    assert "referral or priority-employer exceptions" in prompt
 
 
 def test_profile_evidence_context_includes_verified_facts_without_secrets() -> None:
@@ -263,6 +332,25 @@ def test_profile_evidence_context_includes_verified_facts_without_secrets() -> N
     assert "Password should not appear" not in context
 
 
+def test_profile_evidence_context_marks_in_progress_education_without_completion() -> None:
+    profile = {
+        "education_schools": [
+            {
+                "school": "Example College",
+                "degree": "AAS",
+                "major": "Information Technology",
+                "end_year": "Present",
+                "notes": "Networking and help desk coursework.",
+            }
+        ]
+    }
+
+    context = _build_profile_evidence_context(profile)
+
+    assert "Example College | AAS | Information Technology | in progress" in context
+    assert "Example College | AAS | Information Technology | completed" not in context
+
+
 def test_search_evidence_context_includes_schedule_filters() -> None:
     context = _build_search_evidence_context(
         {
@@ -277,3 +365,16 @@ def test_search_evidence_context_includes_schedule_filters() -> None:
     assert "Search max hours per week: 20" in context
     assert "front desk part time" in context
     assert "Logan, UT" in context
+
+
+def test_search_evidence_context_includes_referral_priority_schedule_exceptions() -> None:
+    context = _build_search_evidence_context(
+        {
+            "require_part_time": True,
+            "referral_employers": ["Sutter Health"],
+            "priority_employers": [{"name": "Cache Employer"}],
+        }
+    )
+
+    assert "Search schedule filter: part-time roles required" in context
+    assert "Referral/priority employer schedule exception: Sutter Health; Cache Employer" in context
