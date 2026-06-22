@@ -556,8 +556,13 @@ def format_strategy_briefing(intel: dict) -> str:
 
     # JSON-LD
     if intel["json_ld"]:
-        job_postings = [j for j in intel["json_ld"] if isinstance(j, dict) and j.get("@type") == "JobPosting"]
-        other = [j for j in intel["json_ld"] if not (isinstance(j, dict) and j.get("@type") == "JobPosting")]
+        json_ld_nodes = [
+            node
+            for item in intel["json_ld"]
+            for node in flatten_json_ld_items(item)
+        ]
+        job_postings = [j for j in json_ld_nodes if json_ld_type_matches(j, "JobPosting")]
+        other = [j for j in json_ld_nodes if not json_ld_type_matches(j, "JobPosting")]
         if job_postings:
             sections.append(f"\nJSON-LD: {len(job_postings)} JobPosting entries found (usable!)")
             sections.append(f"First JobPosting:\n{json.dumps(job_postings[0], indent=2)[:3000]}")

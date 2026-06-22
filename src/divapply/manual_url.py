@@ -60,9 +60,28 @@ def job_location_text(value: object) -> str:
     return "; ".join(parts)
 
 
+def clean_job_description(text: str) -> str:
+    """Convert HTML-ish job description text into readable plain text."""
+    if not text:
+        return ""
+    if "<" in text and ">" in text:
+        soup = BeautifulSoup(text, "html.parser")
+        for br in soup.find_all("br"):
+            br.replace_with("\n")
+        for tag in soup.find_all(["p", "div", "h1", "h2", "h3", "h4", "li", "tr"]):
+            tag.insert_before("\n")
+            tag.insert_after("\n")
+        for li in soup.find_all("li"):
+            li.insert_before("- ")
+        text = soup.get_text()
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines).strip()
+
+
 def extract_job_posting_schema(soup: BeautifulSoup) -> dict[str, str]:
     """Extract the strongest job metadata from JSON-LD JobPosting blocks."""
-    result: dict[str, str] = {}
+    best_result: dict[str, str] = {}
+    best_description_length = 0
     for tag in soup.find_all("script", attrs={"type": "application/ld+json"}):
         raw = tag.string or tag.get_text("", strip=False)
         if not raw:
@@ -74,9 +93,10 @@ def extract_job_posting_schema(soup: BeautifulSoup) -> dict[str, str]:
         for node in flatten_json_ld_items(parsed):
             if not json_ld_type_matches(node, "JobPosting"):
                 continue
+            result: dict[str, str] = {}
             description = node.get("description")
             if description:
-                result["description"] = html.unescape(str(description))
+                result["description"] = clean_job_description(html.unescape(str(description)))
             title = node.get("title")
             if title:
                 result["title"] = str(title)
@@ -94,8 +114,43 @@ def extract_job_posting_schema(soup: BeautifulSoup) -> dict[str, str]:
                 result["date_posted"] = str(node["datePosted"])
             if node.get("validThrough"):
                 result["valid_through"] = str(node["validThrough"])
-            return result
-    return result
+            description_length = len(result.get("description", ""))
+            if result and description_length >= best_description_length:
+                best_result = result
+                best_description_length = description_length
+    return best_result
+
+
+def visible_body_description(soup: BeautifulSoup) -> str:
+    """Return the best visible job-description block from a pasted URL page."""
+    selectors = [
+        "#job-description",
+        "#job_description",
+        "#jobDescriptionText",
+        ".job-description",
+        ".job_description",
+        "[class*='job-description']",
+        "[class*='jobDescription']",
+        "[data-testid*='description']",
+        "[data-testid='job-description']",
+        "[class*='job-detail']",
+        "[class*='jobDetail']",
+        "[class*='job-content']",
+        "[class*='job-body']",
+        "main article",
+        "article[class*='job']",
+        "main",
+        "[role='main']",
+    ]
+    best = ""
+    for selector in selectors:
+        for node in soup.select(selector):
+            text = clean_job_description(node.get_text("\n", strip=True))
+            if len(text) > len(best):
+                best = text
+    if best:
+        return best
+    return "\n".join(line for line in soup.get_text("\n", strip=True).splitlines() if line)[:6000]
 
 
 def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
@@ -119,7 +174,11 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
     soup = BeautifulSoup(response.text, "html.parser")
     schema_job = extract_job_posting_schema(soup)
     live_job_evidence = bool(schema_job)
-    for hidden in soup.select('[class*="d-none"], [hidden], [aria-hidden="true"]'):
+    for hidden in soup.select(
+        "[class*='d-none'], [class*='hidden'], [class*='sr-only'], "
+        "[hidden], [aria-hidden='true'], [style*='display:none'], [style*='display: none'], "
+        "[style*='visibility:hidden'], [style*='visibility: hidden']"
+    ):
         hidden.decompose()
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
@@ -142,7 +201,7 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
     )
     meta_description = meta_value("description", "og:description", "twitter:description")
     text = soup.get_text("\n", strip=True)
-    visible_description = "\n".join(line for line in text.splitlines() if line)[:6000]
+    visible_description = visible_body_description(soup)
     description = schema_job.get("description") or visible_description or meta_description
 
     lower_text = text.lower()

@@ -310,55 +310,73 @@ def collect_detail_intelligence(page) -> dict:
 
 # -- Tier 1: JSON-LD extraction -----------------------------------------------
 
+def _flatten_json_ld_items(value: object) -> list[dict]:
+    """Return every dict-like JSON-LD node from nested graph structures."""
+    items: list[dict] = []
+    if isinstance(value, dict):
+        items.append(value)
+        for graph_key in ("@graph", "graph", "itemListElement"):
+            if graph_key in value:
+                items.extend(_flatten_json_ld_items(value[graph_key]))
+    elif isinstance(value, list):
+        for item in value:
+            items.extend(_flatten_json_ld_items(item))
+    return items
+
+
+def _json_ld_type_matches(node: dict, expected: str) -> bool:
+    raw_type = node.get("@type") or node.get("type")
+    if isinstance(raw_type, str):
+        return raw_type.lower() == expected.lower()
+    if isinstance(raw_type, list):
+        return any(str(item).lower() == expected.lower() for item in raw_type)
+    return False
+
+
+def _safe_external_url(value: object, *, field: str) -> str | None:
+    if not value:
+        return None
+    try:
+        return sanitize_external_url(str(value), field=field)
+    except Exception:
+        return None
+
+
 def extract_from_json_ld(intel: dict) -> dict | None:
     """Extract description and apply URL from JSON-LD JobPosting.
     Returns {"full_description": str, "application_url": str|None} or None."""
 
-    def find_job_posting(data):
-        if isinstance(data, dict):
-            if data.get("@type") == "JobPosting":
-                return data
-            if "@graph" in data and isinstance(data["@graph"], list):
-                for item in data["@graph"]:
-                    result = find_job_posting(item)
-                    if result:
-                        return result
-        elif isinstance(data, list):
-            for item in data:
-                result = find_job_posting(item)
-                if result:
-                    return result
-        return None
-
+    best: dict | None = None
+    best_desc = ""
     for ld in intel.get("json_ld", []):
-        posting = find_job_posting(ld)
-        if not posting:
-            continue
+        for posting in _flatten_json_ld_items(ld):
+            if not _json_ld_type_matches(posting, "JobPosting"):
+                continue
 
-        desc = posting.get("description", "")
-        if not desc:
-            continue
+            desc = posting.get("description", "")
+            if not desc:
+                continue
 
-        desc_clean = clean_description(desc)
-        if len(desc_clean) < 50:
-            continue
+            desc_clean = clean_description(str(desc))
+            if len(desc_clean) < 50 or len(desc_clean) <= len(best_desc):
+                continue
 
-        apply_url = None
-        if posting.get("directApply"):
-            apply_url = posting.get("url")
-        if not apply_url:
-            contact = posting.get("applicationContact")
-            if isinstance(contact, dict):
-                apply_url = contact.get("url")
-        if not apply_url:
-            apply_url = posting.get("url")
+            apply_url = None
+            if posting.get("directApply"):
+                apply_url = posting.get("url")
+            if not apply_url:
+                contact = posting.get("applicationContact")
+                if isinstance(contact, dict):
+                    apply_url = contact.get("url")
+            if not apply_url:
+                apply_url = posting.get("url")
+            best_desc = desc_clean
+            best = {
+                "full_description": desc_clean,
+                "application_url": _safe_external_url(apply_url, field="apply url"),
+            }
 
-        return {
-            "full_description": desc_clean,
-            "application_url": sanitize_external_url(apply_url, field="apply url"),
-        }
-
-    return None
+    return best
 
 
 # -- Tier 2: Deterministic pattern matching ----------------------------------
@@ -416,7 +434,7 @@ def extract_apply_url_deterministic(page) -> str | None:
     for sel in APPLY_SELECTORS:
         try:
             el = page.query_selector(sel)
-            if el:
+            if el and _element_is_visible(el):
                 href = el.get_attribute("href")
                 cleaned = clean_href(href)
                 if cleaned:
@@ -434,6 +452,8 @@ def extract_apply_url_deterministic(page) -> str | None:
     try:
         links = page.query_selector_all("a")
         for link in links:
+            if not _element_is_visible(link):
+                continue
             text = link.inner_text().strip().lower()
             if "apply" in text and len(text) < 50:
                 href = link.get_attribute("href")
@@ -446,19 +466,31 @@ def extract_apply_url_deterministic(page) -> str | None:
     return None
 
 
+def _element_is_visible(el) -> bool:
+    try:
+        return bool(el.evaluate(
+            "el => !!(el.offsetWidth || el.offsetHeight || el.getClientRects().length) "
+            "&& getComputedStyle(el).visibility !== 'hidden'"
+        ))
+    except Exception:
+        return True
+
+
 def extract_description_deterministic(page) -> str | None:
     """Try known CSS patterns for the job description block."""
+    best: str | None = None
     for sel in DESCRIPTION_SELECTORS:
         try:
             el = page.query_selector(sel)
-            if el:
+            if el and _element_is_visible(el):
                 text = el.inner_text().strip()
-                if len(text) >= 100:
-                    return clean_description(text)
+                cleaned = clean_description(text)
+                if len(cleaned) >= 100 and (best is None or len(cleaned) > len(best)):
+                    best = cleaned
         except Exception:
             continue
 
-    return None
+    return best
 
 
 # -- Tier 3: LLM extraction -------------------------------------------------
@@ -491,7 +523,7 @@ def extract_main_content(page) -> str:
     for sel in ["main", "article", '[role="main"]', "#content", ".content"]:
         try:
             el = page.query_selector(sel)
-            if el:
+            if el and _element_is_visible(el):
                 text_len = len(el.inner_text().strip())
                 if text_len > 200:
                     html = el.inner_html()
@@ -517,7 +549,13 @@ def clean_content_html(html: str) -> str:
     """Clean detail page HTML for LLM consumption."""
     soup = BeautifulSoup(html, "html.parser")
 
-    for tag in soup.select("script, style, noscript, svg, iframe, nav, header, footer"):
+    hidden_selectors = (
+        "script, style, noscript, svg, iframe, nav, header, footer, "
+        "[hidden], [aria-hidden='true'], [style*='display:none'], [style*='display: none'], "
+        "[style*='visibility:hidden'], [style*='visibility: hidden'], "
+        "[class*='d-none'], [class*='hidden'], [class*='sr-only']"
+    )
+    for tag in soup.select(hidden_selectors):
         tag.decompose()
 
     for tag in soup.find_all(True):

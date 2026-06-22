@@ -90,6 +90,59 @@ def test_execute_api_response_uses_fallback_applicantpro_url(tmp_path, monkeypat
     ]
 
 
+def test_execute_json_ld_handles_nested_graph_and_multiple_jobpostings() -> None:
+    intel = {
+        "json_ld": [
+            {
+                "@graph": [
+                    {"@type": "Organization", "name": "Example Health"},
+                    {
+                        "@type": ["Thing", "JobPosting"],
+                        "title": "Expired duplicate",
+                        "description": "This job is inactive.",
+                        "url": "https://example.com/jobs/expired",
+                    },
+                    {
+                        "@type": "JobPosting",
+                        "title": "Desktop Support Technician",
+                        "description": "Full responsibilities include endpoint support, imaging, and ticket triage.",
+                        "jobLocation": {"address": {"addressLocality": "Logan", "addressRegion": "UT"}},
+                        "url": "https://example.com/jobs/live",
+                    },
+                ]
+            }
+        ]
+    }
+    plan = {
+        "extraction": {
+            "title": "title",
+            "salary": None,
+            "description": "description",
+            "location": "jobLocation.address",
+            "url": "url",
+        }
+    }
+
+    jobs = smartextract.execute_json_ld(intel, plan)
+
+    assert jobs == [
+        {
+            "title": "Expired duplicate",
+            "salary": None,
+            "description": "This job is inactive.",
+            "location": None,
+            "url": "https://example.com/jobs/expired",
+        },
+        {
+            "title": "Desktop Support Technician",
+            "salary": None,
+            "description": "Full responsibilities include endpoint support, imaging, and ticket triage.",
+            "location": "Logan",
+            "url": "https://example.com/jobs/live",
+        },
+    ]
+
+
 def test_normalize_job_url_rejects_scheme_relative_host_override(monkeypatch) -> None:
     monkeypatch.setattr(config, "load_base_urls", lambda: {"Cache Site": "https://jobs.example.com/careers/"})
 

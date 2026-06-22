@@ -53,10 +53,99 @@ def test_extract_from_json_ld_finds_nested_graph_jobposting() -> None:
     }
 
 
+def test_extract_from_json_ld_prefers_longest_jobposting_in_nested_graph() -> None:
+    short_description = "This job is inactive."
+    full_description = """
+    <section>
+      <h2>Position Overview</h2>
+      <p>Support endpoints, ticket queues, network troubleshooting, asset imaging, and onboarding.</p>
+      <h2>Requirements</h2>
+      <ul><li>Windows support</li><li>Active Directory</li><li>Mobile device support</li></ul>
+    </section>
+    """
+    intel = {
+        "json_ld": [
+            "{bad json is ignored by collection before this point}",
+            {
+                "@graph": [
+                    {
+                        "@type": ["Thing", "JobPosting"],
+                        "title": "Hidden inactive duplicate",
+                        "description": short_description,
+                        "url": "https://example.com/expired",
+                    },
+                    {
+                        "@type": "JobPosting",
+                        "title": "Device Support Technician",
+                        "description": full_description,
+                    },
+                ]
+            },
+        ]
+    }
+
+    result = detail.extract_from_json_ld(intel)
+
+    assert result is not None
+    assert "Support endpoints" in result["full_description"]
+    assert "Active Directory" in result["full_description"]
+    assert "This job is inactive" not in result["full_description"]
+    assert result["application_url"] is None
+
+
 def test_extract_from_json_ld_ignores_too_short_descriptions() -> None:
     intel = {"json_ld": [{"@type": "JobPosting", "description": "Short", "url": "https://example.com/apply"}]}
 
     assert detail.extract_from_json_ld(intel) is None
+
+
+def test_extract_from_json_ld_handles_missing_apply_url() -> None:
+    description = "<p>Maintain laptops, document support work, and troubleshoot account access.</p>" * 3
+    intel = {"json_ld": [{"@type": "JobPosting", "description": description}]}
+
+    result = detail.extract_from_json_ld(intel)
+
+    assert result is not None
+    assert "Maintain laptops" in result["full_description"]
+    assert result["application_url"] is None
+
+
+def test_extract_description_deterministic_skips_hidden_inactive_block() -> None:
+    class FakeElement:
+        def __init__(self, text: str, visible: bool = True) -> None:
+            self.text = text
+            self.visible = visible
+
+        def evaluate(self, _script: str) -> bool:
+            return self.visible
+
+        def inner_text(self) -> str:
+            return self.text
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.matches = {
+                "#job-description": FakeElement(
+                    "This job is inactive. This opportunity has passed. The posting has expired.",
+                    visible=False,
+                ),
+                ".job-description": FakeElement(
+                    "Position Overview\n"
+                    "Troubleshoot hardware, software, account access, and mobile devices.\n"
+                    "Requirements\n"
+                    "Document tickets, support Windows, and communicate with users.",
+                    visible=True,
+                ),
+            }
+
+        def query_selector(self, selector: str):
+            return self.matches.get(selector)
+
+    result = detail.extract_description_deterministic(FakePage())
+
+    assert result is not None
+    assert "Troubleshoot hardware" in result
+    assert "This job is inactive" not in result
 
 
 def test_title_prefilter_allows_it_senior_specialist_but_rejects_public_safety() -> None:

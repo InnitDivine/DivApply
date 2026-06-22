@@ -254,3 +254,53 @@ def test_add_url_metadata_prefers_jobposting_schema_over_hidden_inactive(monkeyp
     assert metadata["location"] == "West Valley, UT, USA"
     assert "Active Directory" in str(metadata["description"])
     assert "This opportunity has passed" not in str(metadata["description"])
+
+
+def test_add_url_metadata_prefers_full_body_over_meta_summary(monkeypatch) -> None:
+    html = """
+    <html>
+      <head>
+        <title>IT Support Technician</title>
+        <meta name="description" content="Short summary for sharing.">
+      </head>
+      <body>
+        <main>
+          <h1>IT Support Technician</h1>
+          <section class="job-description">
+            <h2>Responsibilities</h2>
+            <p>Troubleshoot laptops, user accounts, printers, phones, and network access.</p>
+            <h2>Requirements</h2>
+            <p>Experience with Windows, Active Directory, ticket documentation, and customer support.</p>
+          </section>
+        </main>
+      </body>
+    </html>
+    """
+
+    class Response:
+        text = html
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("httpx.Client", Client)
+
+    metadata = cli._extract_manual_job_metadata("https://careers.example.com/jobs/it-support-technician")
+
+    assert metadata["inactive"] is False
+    assert "Troubleshoot laptops" in str(metadata["description"])
+    assert "Active Directory" in str(metadata["description"])
+    assert metadata["description"] != "Short summary for sharing."
