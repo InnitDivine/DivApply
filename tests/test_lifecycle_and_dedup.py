@@ -89,6 +89,45 @@ def test_store_jobs_soft_dedups_by_canonical_key(tmp_path) -> None:
     close_connection(db_path)
 
 
+def test_canonical_job_key_requires_title_and_company_to_avoid_sparse_false_matches() -> None:
+    assert canonical_job_key("Support Analyst", None, "Reno, NV") is None
+    assert canonical_job_key(None, "Acme", "Reno, NV") is None
+    assert canonical_job_key("Support Analyst", "Acme", None) is not None
+
+
+def test_store_jobs_keeps_sparse_jobs_that_lack_company(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    jobs = [
+        {"url": "https://example.com/one", "title": "Support Analyst", "location": "Remote"},
+        {"url": "https://example.com/two", "title": "Support Analyst", "location": "Remote"},
+    ]
+
+    new, existing = store_jobs(conn, jobs, site="test", strategy="unit")
+
+    assert new == 2
+    assert existing == 0
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 2
+    close_connection(db_path)
+
+
+def test_store_jobs_rolls_back_batch_when_unexpected_insert_error_occurs(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    jobs = [
+        {"url": "https://example.com/good", "title": "Good", "company": "Acme"},
+        {"url": "https://example.com/bad", "title": "Bad", "company": "Acme", "salary": object()},
+    ]
+
+    with pytest.raises(Exception):
+        store_jobs(conn, jobs, site="test", strategy="unit")
+
+    assert conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] == 0
+    close_connection(db_path)
+
+
 def test_get_jobs_by_stage_applies_min_score_to_scored_stage(tmp_path) -> None:
     db_path = tmp_path / "divapply.db"
     conn = init_db(db_path)
@@ -500,6 +539,35 @@ def test_add_application_event_rolls_back_invalid_event_type(tmp_path) -> None:
 
     assert count == 0
     assert status is None
+    close_connection(db_path)
+
+
+def test_add_application_event_applied_sets_timestamp_and_failed_clears_stale_timestamp(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO jobs (url, title, discovered_at) VALUES (?, ?, ?)",
+        ("https://example.com/job", "Analyst", "2026-01-01"),
+    )
+    conn.commit()
+
+    add_application_event("https://example.com/job", "applied", ts="2026-01-02T00:00:00+00:00", conn=conn)
+    applied = conn.execute(
+        "SELECT apply_status, applied_at FROM jobs WHERE url = ?",
+        ("https://example.com/job",),
+    ).fetchone()
+
+    assert applied["apply_status"] == "applied"
+    assert applied["applied_at"] == "2026-01-02T00:00:00+00:00"
+
+    add_application_event("https://example.com/job", "failed", ts="2026-01-03T00:00:00+00:00", conn=conn)
+    failed = conn.execute(
+        "SELECT apply_status, applied_at FROM jobs WHERE url = ?",
+        ("https://example.com/job",),
+    ).fetchone()
+
+    assert failed["apply_status"] == "failed"
+    assert failed["applied_at"] is None
     close_connection(db_path)
 
 

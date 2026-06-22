@@ -197,11 +197,16 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     """)
     conn.commit()
 
+    # Add missing columns before versioned migrations so old partial schemas can
+    # run migrations that create indexes on newer columns.
+    ensure_columns(conn)
+
     # Create auxiliary knowledge tables used by the profile layer. Coursework
     # starts empty and is populated only from explicit user imports.
     ensure_coursework_table(conn)
 
-    # Run schema-versioned migrations, then the additive column safety net.
+    # Run schema-versioned migrations, then repeat the additive safety net in
+    # case a migration introduced columns outside the registry order.
     run_migrations(conn)
     ensure_columns(conn)
     ensure_job_indexes(conn)
@@ -505,6 +510,8 @@ def add_application_event(
         }
         if event in status_map:
             applied_at_sql = ", applied_at = COALESCE(applied_at, ?)" if event == "applied" else ""
+            if event == "failed":
+                applied_at_sql = ", applied_at = NULL"
             params: tuple
             if event == "applied":
                 params = (status_map[event], now, job_url)
@@ -620,6 +627,7 @@ def ensure_coursework_table(conn: sqlite3.Connection | None = None) -> None:
     if conn is None:
         conn = get_connection()
 
+    should_commit = not conn.in_transaction
     conn.execute("""
         CREATE TABLE IF NOT EXISTS coursework (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -638,7 +646,8 @@ def ensure_coursework_table(conn: sqlite3.Connection | None = None) -> None:
             created_at      TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    conn.commit()
+    if should_commit:
+        conn.commit()
 
 
 def _infer_course_skills(entry: dict) -> list[str]:
@@ -1020,9 +1029,12 @@ def _normalize_key_part(value: str | None) -> str:
 
 def canonical_job_key(title: str | None, company: str | None, location: str | None) -> str | None:
     """Return a stable soft-dedup key for the same role across boards."""
-    parts = [_normalize_key_part(title), _normalize_key_part(company), _normalize_key_part(location)]
-    if not any(parts):
+    normalized_title = _normalize_key_part(title)
+    normalized_company = _normalize_key_part(company)
+    normalized_location = _normalize_key_part(location)
+    if not normalized_title or not normalized_company:
         return None
+    parts = [normalized_title, normalized_company, normalized_location]
     raw = "|".join(parts)
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
 
@@ -1076,13 +1088,13 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
         canonical_key = canonical_job_key(title, company, location)
         prepared.append((job, url, title, company, location, canonical_key))
 
-    existing_keys = get_existing_canonical_keys(
-        conn,
-        {canonical_key for *_rest, canonical_key in prepared if canonical_key},
-    )
     seen_keys: set[str] = set()
 
     with _transaction(conn):
+        existing_keys = get_existing_canonical_keys(
+            conn,
+            {canonical_key for *_rest, canonical_key in prepared if canonical_key},
+        )
         for job, url, title, company, location, canonical_key in prepared:
             if canonical_key and (canonical_key in existing_keys or canonical_key in seen_keys):
                 existing += 1
