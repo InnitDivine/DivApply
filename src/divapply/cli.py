@@ -403,7 +403,7 @@ def _extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
         description = "\n".join(line for line in text.splitlines() if line)[:6000]
 
     lower_text = text.lower()
-    inactive = any(
+    inactive_text_present = any(
         phrase in lower_text
         for phrase in (
             "this job is inactive",
@@ -413,6 +413,19 @@ def _extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
             "position has been filled",
         )
     )
+    live_job_evidence = any(
+        phrase in lower_text
+        for phrase in (
+            '"dateposted"',
+            '"validthrough"',
+            '"employmenttype"',
+            "pay range is",
+            "job description:",
+            "position overview:",
+            "schedule:",
+        )
+    )
+    inactive = inactive_text_present and not live_job_evidence
 
     return {
         "title": title[:180],
