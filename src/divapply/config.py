@@ -439,7 +439,7 @@ def load_credentials(path: Path | None = None) -> dict:
 
 
 def get_apply_timeout() -> int | None:
-    """Return the per-job apply timeout in seconds, or None for no timeout."""
+    """Return the per-job apply timeout in seconds, or None when explicitly disabled."""
     value = os.environ.get("DIVAPPLY_APPLY_TIMEOUT") or os.environ.get("APPLYPILOT_APPLY_TIMEOUT")
     if value:
         if value.strip().lower() in {"0", "none", "off", "false", "no"}:
@@ -488,7 +488,7 @@ DEFAULTS = {
     "max_apply_attempts": 3,
     "max_tailor_attempts": 5,
     "poll_interval": 60,
-    "apply_timeout": 0,
+    "apply_timeout": 2700,
     "apply_lock_timeout": 3600,
     "viewport": "1280x900",
 }

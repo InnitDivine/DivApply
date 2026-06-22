@@ -89,11 +89,11 @@ def test_normalize_profile_accepts_flat_skills_without_job_search_aliases() -> N
     assert profile["compensation"]["part_time_hourly_expectation"] == "Use posted hourly range."
 
 
-def test_get_apply_timeout_defaults_to_no_timeout(monkeypatch) -> None:
+def test_get_apply_timeout_defaults_to_bounded_timeout(monkeypatch) -> None:
     monkeypatch.delenv("DIVAPPLY_APPLY_TIMEOUT", raising=False)
     monkeypatch.delenv("APPLYPILOT_APPLY_TIMEOUT", raising=False)
 
-    assert config.get_apply_timeout() is None
+    assert config.get_apply_timeout() == 2700
 
 
 def test_get_apply_timeout_uses_env_with_floor(monkeypatch) -> None:

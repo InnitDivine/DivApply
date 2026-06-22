@@ -235,8 +235,7 @@ def recover_stale_apply_locks(
             apply_attempts = COALESCE(apply_attempts, 0) + 1,
             agent_id = NULL
         WHERE apply_status = 'in_progress'
-          AND last_attempted_at IS NOT NULL
-          AND last_attempted_at < ?
+          AND (last_attempted_at IS NULL OR last_attempted_at < ?)
         """,
         (cutoff,),
     )
@@ -388,26 +387,35 @@ def reset_failed() -> int:
 PERMANENT_FAILURES: set[str] = {
     "expired", "captcha", "login_issue",
     "not_eligible_location", "not_eligible_salary",
+    "not_eligible_work_auth",
     "already_applied", "account_required",
     "not_a_job_application", "unsafe_permissions",
     "unsafe_verification", "sso_required",
     "site_blocked", "cloudflare_blocked", "blocked_by_cloudflare",
+    "scam",
 }
 
 PERMANENT_PREFIXES: tuple[str, ...] = ("site_blocked", "cloudflare", "blocked_by")
 
 
+def _normalize_result_reason(text: str) -> str:
+    """Normalize compact RESULT reasons for retry/permanent decisions."""
+    reason = _clean_result_reason(text)
+    reason = re.sub(r"^[\s:.-]+|[\s:.,;!-]+$", "", reason)
+    return reason.strip().lower().replace(" ", "_")
+
+
 def _is_permanent_failure(result: str) -> bool:
     """Determine if a failure should never be retried."""
-    reason = result.split(":", 1)[-1] if ":" in result else result
-    reason_lower = reason.lower()
+    reason = _normalize_result_reason(result.split(":", 1)[-1] if ":" in result else result)
+    result_lower = result.lower()
     return (
-        result in PERMANENT_FAILURES
+        result_lower in PERMANENT_FAILURES
         or reason in PERMANENT_FAILURES
         or any(reason.startswith(p) for p in PERMANENT_PREFIXES)
-        or "ssn" in reason_lower
-        or "social security" in reason_lower
-        or "unsafe verification" in reason_lower
+        or "ssn" in reason
+        or "social_security" in reason
+        or "unsafe_verification" in reason
     )
 
 
@@ -457,12 +465,13 @@ def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) ->
     if explicit_result:
         if explicit_result.upper().startswith("FAILED"):
             parts = explicit_result.split(":", 1)
-            reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
-            reason = _clean_result_reason(reason)
-            if reason in {"captcha", "expired", "login_issue"}:
-                add_event(f"[W{worker_id}] {reason.upper()} ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status=reason, last_action=f"{reason.upper()} ({elapsed}s)")
-                return reason, duration_ms
+            raw_reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
+            reason = _clean_result_reason(raw_reason)
+            normalized_reason = _normalize_result_reason(reason)
+            if normalized_reason in {"captcha", "expired", "login_issue"}:
+                add_event(f"[W{worker_id}] {normalized_reason.upper()} ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status=normalized_reason, last_action=f"{normalized_reason.upper()} ({elapsed}s)")
+                return normalized_reason, duration_ms
             add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason[:30]}")
             update_state(worker_id, status="failed", last_action=f"FAILED: {reason[:25]}")
             return f"failed:{reason}", duration_ms
@@ -475,40 +484,20 @@ def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) ->
             return result_status.lower(), duration_ms
 
     agent_region = _agent_output_region(output)
-    output_lower = agent_region.lower()
-
-    # Fallback path: accept strong success wording only when no failure context
-    # appears. This covers older prompts and partial agent transcripts.
-    fuzzy_success = any(phrase in output_lower for phrase in [
-        "application submitted", "successfully submitted", "application has been submitted",
-        "your application was submitted", "application was received",
-        "application is submitted", "submitted successfully",
-        "application number", "reference number",
-    ])
-    fuzzy_fail_context = any(phrase in output_lower for phrase in [
-        "result:failed", "not_eligible", "login_issue", "captcha",
-        "could not submit", "unable to submit", "failed to submit",
-        "was not submitted", "not able to submit", "cannot submit",
-        "i was unable", "i could not",
-    ])
-    if fuzzy_success and not fuzzy_fail_context:
-        add_event(f"[W{worker_id}] APPLIED (fuzzy) ({elapsed}s): {job['title'][:30]}")
-        update_state(worker_id, status="applied", last_action=f"APPLIED-fuzzy ({elapsed}s)")
-        return "applied", duration_ms
-
-    if "RESULT:FAILED" in agent_region:
+    if "result:failed" in agent_region.lower():
         # Preserve structured failure reasons so retry logic can distinguish
         # transient failures from permanent blocks such as CAPTCHA or login.
         for out_line in agent_region.splitlines():
-            if "RESULT:FAILED" not in out_line:
+            if "result:failed" not in out_line.lower():
                 continue
-            parts = out_line.split("RESULT:FAILED:", 1)
-            reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
-            reason = _clean_result_reason(reason)
-            if reason in {"captcha", "expired", "login_issue"}:
-                add_event(f"[W{worker_id}] {reason.upper()} ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status=reason, last_action=f"{reason.upper()} ({elapsed}s)")
-                return reason, duration_ms
+            parts = re.split(r"RESULT:FAILED:", out_line, maxsplit=1, flags=re.IGNORECASE)
+            raw_reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
+            reason = _clean_result_reason(raw_reason)
+            normalized_reason = _normalize_result_reason(reason)
+            if normalized_reason in {"captcha", "expired", "login_issue"}:
+                add_event(f"[W{worker_id}] {normalized_reason.upper()} ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status=normalized_reason, last_action=f"{normalized_reason.upper()} ({elapsed}s)")
+                return normalized_reason, duration_ms
             add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason[:30]}")
             update_state(worker_id, status="failed", last_action=f"FAILED: {reason[:25]}")
             return f"failed:{reason}", duration_ms
@@ -1005,6 +994,12 @@ def main(limit: int = 1, target_url: str | None = None,
          poll_interval: int = 60, workers: int = 1) -> None:
     """Launch the apply pipeline."""
     global POLL_INTERVAL
+    if workers < 1:
+        raise ValueError("workers must be at least 1")
+    if limit < 0:
+        raise ValueError("limit cannot be negative")
+    if poll_interval < 1:
+        raise ValueError("poll_interval must be at least 1")
     POLL_INTERVAL = poll_interval
     _stop_event.clear()
 

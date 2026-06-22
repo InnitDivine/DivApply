@@ -80,9 +80,59 @@ def test_extract_result_ignores_prompt_result_codes_without_agent_result(monkeyp
     assert status == "failed:no_result_line"
 
 
+def test_extract_result_requires_explicit_applied_result(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "The page says your application was submitted and shows a reference number.",
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:no_result_line"
+
+
+def test_extract_result_normalizes_failure_reason_for_retry_logic(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "RESULT:FAILED: CAPTCHA.",
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "captcha"
+
+
 def test_ssn_failure_is_permanent() -> None:
     assert launcher._is_permanent_failure("failed:reason requires SSN last 4 digits")
     assert launcher._is_permanent_failure("failed:requires social security number")
+
+
+def test_prompt_permanent_failures_are_not_retried() -> None:
+    for result in [
+        "expired",
+        "captcha",
+        "login_issue",
+        "failed:not_eligible_location",
+        "failed:not_eligible_work_auth",
+        "failed:unsafe_permissions",
+        "failed:unsafe_verification",
+        "failed:sso_required",
+        "failed:not_a_job_application",
+        "failed:scam",
+        "failed:blocked_by_cloudflare",
+    ]:
+        assert launcher._is_permanent_failure(result), result
+
+
+def test_transient_failures_remain_retryable() -> None:
+    for result in ["failed:timeout", "failed:stuck", "failed:page_error", "failed:no_result_line"]:
+        assert not launcher._is_permanent_failure(result), result
 
 
 def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
@@ -358,6 +408,38 @@ def test_recover_stale_apply_locks_marks_abandoned_jobs_failed() -> None:
     assert fresh_row["apply_status"] == "in_progress"
     assert fresh_row["apply_attempts"] == 0
     assert fresh_row["agent_id"] == "worker-2"
+
+
+def test_recover_stale_apply_locks_recovers_missing_timestamp() -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            last_attempted_at TEXT
+        )
+    """)
+    conn.execute(
+        "INSERT INTO jobs (url, apply_status, apply_attempts, agent_id, last_attempted_at) VALUES (?, ?, ?, ?, ?)",
+        ("https://jobs.example/missing-ts", "in_progress", 0, "worker-9", None),
+    )
+    conn.commit()
+
+    recovered = launcher.recover_stale_apply_locks(conn=conn, timeout_seconds=3600)
+
+    row = conn.execute(
+        "SELECT apply_status, apply_error, apply_attempts, agent_id FROM jobs WHERE url = ?",
+        ("https://jobs.example/missing-ts",),
+    ).fetchone()
+    assert recovered == 1
+    assert row["apply_status"] == "failed"
+    assert row["apply_error"] == "stale in_progress lock recovered"
+    assert row["apply_attempts"] == 1
+    assert row["agent_id"] is None
 
 
 def test_mark_result_rolls_back_when_event_insert_fails(monkeypatch) -> None:
@@ -722,3 +804,17 @@ def test_main_records_parallel_worker_crashes(monkeypatch) -> None:
     launcher.main(limit=2, workers=2)
 
     assert events == [("apply_worker_crashed", {"worker_id": 0, "error": "worker exploded"})]
+
+
+def test_main_rejects_unsafe_worker_and_limit_values() -> None:
+    for kwargs in [
+        {"workers": 0},
+        {"limit": -1},
+        {"poll_interval": 0},
+    ]:
+        try:
+            launcher.main(**kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"main should reject {kwargs}")

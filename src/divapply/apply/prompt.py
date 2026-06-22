@@ -820,28 +820,33 @@ def build_prompt(job: dict, tailored_resume: str,
         or os.environ.get("APPLYPILOT_LOGIN_USERNAME")
         or personal["email"]
     )
-    default_password = (
+    default_password_present = bool(
         default_creds.get("password")
         or os.environ.get("DIVAPPLY_LOGIN_PASSWORD")
         or os.environ.get("APPLYPILOT_LOGIN_PASSWORD")
-        or ""
     )
     site_creds = credentials.get("sites", {}) if isinstance(credentials.get("sites", {}), dict) else {}
     site_creds_lines = []
     for domain, creds in site_creds.items():
         if not isinstance(creds, dict):
             continue
+        username = creds.get("username", default_username)
+        password_state = "saved locally" if creds.get("password") else "not saved"
         site_creds_lines.append(
-            f"  - {domain}: username={creds.get('username', default_username)}  password={creds.get('password', '')}"
+            f"  - {domain}: username={username}  password={password_state}; do not print or reveal the password"
         )
     site_creds_block = (
-        "SITE-SPECIFIC LOGINS (loaded from credentials.yaml, use these for matching domains):\n"
+        "SITE-SPECIFIC LOGINS (credentials.yaml metadata only; passwords are never embedded in this prompt):\n"
         + "\n".join(site_creds_lines)
         if site_creds_lines else ""
     )
     default_login_line = (
-        f"Default saved login: username={default_username}  password={default_password}"
-        if default_password
+        (
+            f"Default saved login metadata: username={default_username}; password is saved locally but is "
+            "not embedded in this prompt. Use the existing signed-in browser session when possible; "
+            "if a password field blocks progress, output RESULT:FAILED:login_issue."
+        )
+        if default_password_present
         else (
             "No saved default password is available. Use the existing signed-in browser session when possible. "
             "If a password is required and no site-specific login is listed, output RESULT:FAILED:login_issue."
@@ -871,7 +876,7 @@ def build_prompt(job: dict, tailored_resume: str,
   5. Only after ALL fields are filled and all required items are answered: click Submit/Apply.
   6. Verify all data matches the APPLICANT PROFILE and TAILORED RESUME -- name, email, phone, location, work auth, resume uploaded, cover letter if applicable."""
 
-    prompt = f"""You are an autonomous job application agent running in HIGH EFFORT mode. Your ONE mission: submit a complete, accurate application and get this candidate an interview. You have all the information and tools needed. Never give up on solvable obstacles â€” CAPTCHAs get solved via API, supplemental questions get answered from profile data, login walls get bypassed with provided credentials. Think strategically. Act decisively. Use every tool available. The only acceptable reason to stop early is a hard blocker explicitly listed in RESULT CODES (expired job, permanent auth wall, unsafe site). Everything else: push through and submit.
+    prompt = f"""You are an autonomous job application agent running in HIGH EFFORT mode. Your ONE mission: submit a complete, accurate application and get this candidate an interview. You have all the information and tools needed. Never give up on solvable obstacles â€” CAPTCHAs get solved via API, supplemental questions get answered from profile data, and existing signed-in browser sessions may bypass login walls. Think strategically. Act decisively. Use every tool available. The only acceptable reason to stop early is a hard blocker explicitly listed in RESULT CODES (expired job, permanent auth wall, unsafe site). Everything else: push through and submit.
 
 == BROWSER TOOLS â€” CRITICAL ==
 You control a dedicated browser via the Playwright MCP. Use ONLY these tool prefixes:
@@ -965,10 +970,10 @@ Before filling any form, spend 2 actions verifying this is a legitimate employer
    5b. Check for popups. Run browser_tabs action "list". If a new tab/window appeared (login popup), switch to it with browser_tabs action "select". Check the URL there too -- if it's accounts.google.com, select the existing Google account ({personal['email']}) and click Continue. If it's {', '.join(blocked_sso)} -> RESULT:FAILED:sso_required.
    5c. Regular login form (employer's own site)?
        {site_creds_block}
-       Check the current URL domain. If it matches a domain in SITE-SPECIFIC LOGINS above, use those credentials.
+       Check the current URL domain. If it matches a domain in SITE-SPECIFIC LOGINS above, use the listed username and any existing signed-in browser session; do not print, reveal, or guess saved passwords.
        Otherwise: {default_login_line}
    5d. After clicking Login/Sign-in: run CAPTCHA DETECT. Login pages frequently have invisible CAPTCHAs that silently block form submissions. If found, solve it then retry login.
-   5e. Sign in failed and a saved password is available? Try sign up with the same email/password. If no saved password is available, output RESULT:FAILED:login_issue.
+   5e. Sign in failed or a password field blocks progress? Output RESULT:FAILED:login_issue. Never expose, echo, or invent a password.
    5f. Need email verification? Use search_emails + read_email to get the code.
    5g. After login, run browser_tabs action "list" again. Switch back to the application tab if needed.
    5h. All failed? Output RESULT:FAILED:login_issue. Do not loop.
@@ -991,6 +996,8 @@ RESULT:LOGIN_ISSUE -- could not sign in or create account
 RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote option
 RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
 RESULT:FAILED:reason -- any other failure (brief reason)
+
+APPLIED is only allowed after a real final submission confirmation: a thank-you page, application received message, confirmation email sent by the ATS, application/reference number, or an equivalent employer confirmation. If you filled a form but did not submit it, hit a validation error, reached a review page, or are unsure, output RESULT:FAILED:reason instead. If the site asks for SSN/SIN, bank/payment details, biometric verification, unsafe permissions, unsupported SSO, or a login you cannot complete, fail with the specific blocker; never output APPLIED for a blocked or partial application.
 
 == BROWSER EFFICIENCY â€” MINIMIZE ACTIONS AND TOKENS ==
 GOLDEN RULES â€” every action costs tokens, every screenshot costs tokens:
