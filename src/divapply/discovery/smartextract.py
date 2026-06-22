@@ -37,6 +37,7 @@ from divapply.discovery.filters import (
     title_ok,
 )
 from divapply.llm import get_client
+from divapply.manual_url import flatten_json_ld_items, json_ld_type_matches
 from divapply.security import UnsafeUrlError, sanitize_external_url, validate_external_url, validate_navigation_url
 
 log = logging.getLogger(__name__)
@@ -851,6 +852,8 @@ def resolve_json_path(data, path: str):
         if isinstance(current, (str, int, float)):
             return str(current) if not isinstance(current, str) else current
         elif isinstance(current, dict):
+            if current.get("addressLocality"):
+                return str(current["addressLocality"])
             return current.get("name", current.get("text", str(current)[:100]))
         elif isinstance(current, list):
             if current and isinstance(current[0], dict):
@@ -868,16 +871,17 @@ def execute_json_ld(intel: dict, plan: dict) -> list[dict]:
     ext = plan["extraction"]
     jobs: list[dict] = []
     for entry in intel["json_ld"]:
-        if not isinstance(entry, dict) or entry.get("@type") != "JobPosting":
-            continue
-        job: dict = {}
-        for field in ["title", "salary", "description", "location", "url"]:
-            path = ext.get(field)
-            if not path or path == "null":
-                job[field] = None
+        for node in flatten_json_ld_items(entry):
+            if not json_ld_type_matches(node, "JobPosting"):
                 continue
-            job[field] = resolve_json_path(entry, path)
-        jobs.append(job)
+            job: dict = {}
+            for field in ["title", "salary", "description", "location", "url"]:
+                path = ext.get(field)
+                if not path or path == "null":
+                    job[field] = None
+                    continue
+                job[field] = resolve_json_path(node, path)
+            jobs.append(job)
     return jobs
 
 

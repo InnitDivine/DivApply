@@ -140,10 +140,10 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
         or (page_title.get_text(" ", strip=True) if page_title else "")
         or title_fallback
     )
-    description = schema_job.get("description") or meta_value("description", "og:description", "twitter:description")
+    meta_description = meta_value("description", "og:description", "twitter:description")
     text = soup.get_text("\n", strip=True)
-    if not description:
-        description = "\n".join(line for line in text.splitlines() if line)[:6000]
+    visible_description = "\n".join(line for line in text.splitlines() if line)[:6000]
+    description = schema_job.get("description") or visible_description or meta_description
 
     lower_text = text.lower()
     inactive_text_present = any(
