@@ -46,7 +46,12 @@ def test_validate_external_url_rejects_non_http_and_embedded_credentials() -> No
 
 
 def test_validate_external_url_rejects_private_and_metadata_addresses() -> None:
-    for value in ("http://10.0.0.5/jobs", "http://169.254.169.254/latest/meta-data"):
+    for value in (
+        "http://10.0.0.5/jobs",
+        "http://[::1]:8080/jobs",
+        "http://169.254.169.254/latest/meta-data",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    ):
         with pytest.raises(UnsafeUrlError):
             validate_external_url(value)
 
@@ -100,11 +105,31 @@ def test_local_form_length_rejects_invalid_or_large_bodies() -> None:
 
 
 def test_local_same_origin_accepts_local_origin_and_rejects_cross_site() -> None:
-    assert local_request_is_same_origin({"Origin": "http://127.0.0.1:8765"}, "127.0.0.1", 8765)
-    assert local_request_is_same_origin({"Referer": "http://localhost:8765/?saved=1"}, "127.0.0.1", 8765)
+    assert local_request_is_same_origin(
+        {"Host": "127.0.0.1:8765", "Origin": "http://127.0.0.1:8765"},
+        "127.0.0.1",
+        8765,
+    )
+    assert local_request_is_same_origin(
+        {"Host": "localhost:8765", "Referer": "http://localhost:8765/?saved=1"},
+        "127.0.0.1",
+        8765,
+    )
 
     assert not local_request_is_same_origin({"Origin": "https://evil.example"}, "127.0.0.1", 8765)
     assert not local_request_is_same_origin({"Referer": "https://evil.example/form"}, "127.0.0.1", 8765)
+
+
+def test_local_same_origin_rejects_host_header_mismatch() -> None:
+    assert not local_request_is_same_origin(
+        {
+            "Host": "evil.example:8765",
+            "Origin": "http://127.0.0.1:8765",
+        },
+        "127.0.0.1",
+        8765,
+    )
+    assert not local_request_is_same_origin({"Host": "127.0.0.1:9999"}, "127.0.0.1", 8765)
 
 
 def test_write_private_text_writes_content(tmp_path) -> None:

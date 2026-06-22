@@ -145,6 +145,10 @@ def parse_local_form_length(raw_length: str | None, *, max_bytes: int = MAX_LOCA
 
 def local_request_is_same_origin(headers: object, host: str, port: int) -> bool:
     """Return False for browser cross-origin writes to local-only HTTP tools."""
+    allowed_hosts = {host}
+    if host in {"127.0.0.1", "::1"}:
+        allowed_hosts.add("localhost")
+
     allowed = {
         f"http://{host}:{port}",
         f"http://localhost:{port}" if host in {"127.0.0.1", "::1"} else f"http://{host}:{port}",
@@ -155,6 +159,17 @@ def local_request_is_same_origin(headers: object, host: str, port: int) -> bool:
         if getter is None:
             return ""
         return str(getter(name, "") or "").strip()
+
+    host_header = _get("Host")
+    if host_header:
+        parsed_host = urlparse(f"//{host_header}")
+        request_host = (parsed_host.hostname or "").strip("[]").casefold()
+        try:
+            request_port = parsed_host.port or 80
+        except ValueError:
+            return False
+        if request_host not in {item.strip("[]").casefold() for item in allowed_hosts} or request_port != port:
+            return False
 
     origin = _get("Origin")
     if origin and origin.rstrip("/") not in allowed:

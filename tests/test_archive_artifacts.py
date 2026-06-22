@@ -41,3 +41,26 @@ def test_delete_job_artifacts_only_deletes_under_generated_roots(tmp_path, monke
     assert not generated.exists()
     assert outside.exists()
     assert not is_safe_generated_path(outside, [tailored_dir, cover_dir])
+
+
+def test_delete_job_artifacts_rejects_parent_traversal_out_of_generated_roots(tmp_path, monkeypatch) -> None:
+    import divapply.config as config
+
+    tailored_dir = tmp_path / "tailored"
+    cover_dir = tmp_path / "cover"
+    outside_dir = tmp_path / "outside"
+    tailored_dir.mkdir()
+    cover_dir.mkdir()
+    outside_dir.mkdir()
+    monkeypatch.setattr(config, "TAILORED_DIR", tailored_dir)
+    monkeypatch.setattr(config, "COVER_LETTER_DIR", cover_dir)
+
+    outside = outside_dir / "Generated.txt"
+    outside.write_text("keep", encoding="utf-8")
+    traversal = tailored_dir / ".." / "outside" / "Generated.txt"
+
+    deleted = delete_job_artifacts({"tailored_resume_path": str(traversal)})
+
+    assert deleted == []
+    assert outside.exists()
+    assert outside.read_text(encoding="utf-8") == "keep"
