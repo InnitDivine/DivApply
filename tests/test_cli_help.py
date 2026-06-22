@@ -187,3 +187,70 @@ def test_browser_login_with_chrome_uses_direct_chrome_not_playwright(tmp_path, m
     assert "playwright" not in cmd
     assert f"--user-data-dir={tmp_path / 'chrome-0'}" in cmd
     assert "https://accounts.google.com/" in cmd
+
+
+def test_add_url_metadata_prefers_jobposting_schema_over_hidden_inactive(monkeypatch) -> None:
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@context": "https://schema.org",
+          "@type": "JobPosting",
+          "title": "Device Support Technician I",
+          "datePosted": "2026-06-21",
+          "employmentType": "FULL_TIME",
+          "description": "<p>Position Overview</p><p>Assists with ticket resolution, configurations, testing, installation, LANs, mobile devices, Windows, Apple OS/iOS, Active Directory, and network troubleshooting.</p><p>Pay Range is $25.89 to $37.55 / hour</p>",
+          "hiringOrganization": {"@type": "Organization", "name": "Sutter Health"},
+          "jobLocation": {
+            "@type": "Place",
+            "address": {
+              "@type": "PostalAddress",
+              "addressLocality": "West Valley",
+              "addressRegion": "UT",
+              "addressCountry": "USA"
+            }
+          }
+        }
+        </script>
+      </head>
+      <body>
+        <section class="phw-d-none">
+          <h2>We're Sorry, This Job Is Inactive</h2>
+          <p>This opportunity has passed.</p>
+        </section>
+      </body>
+    </html>
+    """
+
+    class Response:
+        text = html
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("httpx.Client", Client)
+
+    metadata = cli._extract_manual_job_metadata(
+        "https://jobs.sutterhealth.org/us/en/job/R-133284/Device-Support-Technician-I"
+    )
+
+    assert metadata["inactive"] is False
+    assert metadata["title"] == "Device Support Technician I"
+    assert metadata["company"] == "Sutter Health"
+    assert metadata["location"] == "West Valley, UT, USA"
+    assert "Active Directory" in str(metadata["description"])
+    assert "This opportunity has passed" not in str(metadata["description"])
