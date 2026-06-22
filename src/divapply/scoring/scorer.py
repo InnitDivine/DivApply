@@ -319,13 +319,19 @@ def score_job(
         }
 
 
-def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> dict:
+def run_scoring(
+    limit: int = 0,
+    rescore: bool = False,
+    prune_below: int = 0,
+    target_url: str | None = None,
+) -> dict:
     """Score unscored jobs that have full descriptions.
 
     Args:
         limit: Maximum number of jobs to score in this run.
         rescore: If True, re-score all jobs (not just unscored ones).
         prune_below: If > 0, delete jobs with fit_score <= this value after scoring.
+        target_url: If provided, score only this job URL.
 
     Returns:
         {"scored": int, "errors": int, "elapsed": float, "distribution": list, "pruned": int}
@@ -338,7 +344,12 @@ def run_scoring(limit: int = 0, rescore: bool = False, prune_below: int = 0) -> 
     profile_context = "\n".join(part for part in (_build_profile_evidence_context(profile), search_context) if part)
     conn = get_connection()
 
-    if rescore:
+    if target_url:
+        jobs = conn.execute(
+            "SELECT * FROM jobs WHERE url = ? AND full_description IS NOT NULL",
+            (target_url,),
+        ).fetchall()
+    elif rescore:
         query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
         if limit > 0:
             query += " LIMIT ?"

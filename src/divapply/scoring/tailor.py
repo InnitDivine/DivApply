@@ -695,14 +695,19 @@ def tailor_resume(
 
 # â”€â”€ Batch Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def run_tailoring(min_score: int = 7, limit: int = 20,
-                  validation_mode: str = "normal") -> dict:
+def run_tailoring(
+    min_score: int = 7,
+    limit: int = 20,
+    validation_mode: str = "normal",
+    target_url: str | None = None,
+) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
     Args:
         min_score:       Minimum fit_score to tailor for.
         limit:           Maximum jobs to process.
         validation_mode: "strict", "normal", or "lenient".
+        target_url: If provided, tailor only this job URL.
 
     Returns:
         {"approved": int, "failed": int, "errors": int, "elapsed": float}
@@ -711,7 +716,21 @@ def run_tailoring(min_score: int = 7, limit: int = 20,
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
-    jobs = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=limit)
+    if target_url:
+        jobs = conn.execute(
+            """
+            SELECT * FROM jobs
+            WHERE url = ? AND fit_score >= ? AND full_description IS NOT NULL
+              AND tailored_resume_path IS NULL
+              AND COALESCE(tailor_attempts, 0) < ?
+            """,
+            (target_url, min_score, MAX_ATTEMPTS),
+        ).fetchall()
+        if jobs and not isinstance(jobs[0], dict):
+            columns = jobs[0].keys()
+            jobs = [dict(zip(columns, row)) for row in jobs]
+    else:
+        jobs = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=min_score, limit=limit)
 
     if not jobs:
         log.info("No untailored jobs with score >= %d.", min_score)

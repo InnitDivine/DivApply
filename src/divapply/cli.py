@@ -353,6 +353,220 @@ def coursework_summary() -> None:
     console.print("[dim]Coursework is hidden matching/tailoring knowledge. Transcript text is not shown or exported.[/dim]\n")
 
 
+def _extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
+    """Fetch lightweight metadata for a manually pasted job URL."""
+    from urllib.parse import urlparse
+
+    import httpx
+    from bs4 import BeautifulSoup
+
+    from divapply.security import validate_external_url
+
+    safe_url = validate_external_url(url, field="job URL")
+    host = urlparse(safe_url).hostname or "manual"
+    title_fallback = safe_url.rstrip("/").split("/")[-1].replace("-", " ").strip().title() or "Manual Job"
+
+    with httpx.Client(follow_redirects=True, timeout=20) as client:
+        response = client.get(
+            safe_url,
+            headers={
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36"
+                )
+            },
+        )
+        response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    for tag in soup(["script", "style", "noscript"]):
+        tag.decompose()
+
+    def meta_value(*names: str) -> str:
+        for name in names:
+            tag = soup.find("meta", attrs={"property": name}) or soup.find("meta", attrs={"name": name})
+            if tag and tag.get("content"):
+                return str(tag["content"]).strip()
+        return ""
+
+    h1 = soup.find("h1")
+    page_title = soup.find("title")
+    title = (
+        meta_value("og:title", "twitter:title")
+        or (h1.get_text(" ", strip=True) if h1 else "")
+        or (page_title.get_text(" ", strip=True) if page_title else "")
+        or title_fallback
+    )
+    description = meta_value("description", "og:description", "twitter:description")
+    text = soup.get_text("\n", strip=True)
+    if not description:
+        description = "\n".join(line for line in text.splitlines() if line)[:6000]
+
+    lower_text = text.lower()
+    inactive = any(
+        phrase in lower_text
+        for phrase in (
+            "this job is inactive",
+            "this opportunity has passed",
+            "job is no longer available",
+            "posting has expired",
+            "position has been filled",
+        )
+    )
+
+    return {
+        "title": title[:180],
+        "company": "Sutter Health" if "sutterhealth.org" in host else host,
+        "site": "Sutter Health" if "sutterhealth.org" in host else host,
+        "location": "",
+        "description": description,
+        "inactive": inactive,
+    }
+
+
+@app.command("add-url")
+def add_url(
+    job_url: str = typer.Argument(..., help="Job posting URL to add or update."),
+    title: Optional[str] = typer.Option(None, "--title", help="Override the detected job title."),
+    company: Optional[str] = typer.Option(None, "--company", help="Override the detected company."),
+    location: Optional[str] = typer.Option(None, "--location", help="Job location, if known."),
+    site: Optional[str] = typer.Option(None, "--site", help="Source/employer label, if known."),
+    no_fetch: bool = typer.Option(False, "--no-fetch", help="Skip page fetch and use provided metadata only."),
+    prepare: bool = typer.Option(False, "--prepare", help="Score, tailor resume, and create cover letter for this URL."),
+    min_score: int = typer.Option(7, "--min-score", help="Minimum score required before tailoring/cover generation."),
+    validation: str = typer.Option("normal", "--validation", help="Validation mode for generated documents."),
+) -> None:
+    """Add one pasted job URL, optionally preparing its application packet."""
+    _bootstrap()
+
+    from datetime import datetime, timezone
+
+    from divapply.database import get_connection
+    from divapply.security import validate_external_url
+
+    valid_modes = ("strict", "normal", "lenient", "none")
+    if validation not in valid_modes:
+        console.print(f"[red]Invalid --validation value:[/red] {validation}")
+        raise typer.Exit(code=1)
+
+    safe_url = validate_external_url(job_url, field="job URL")
+    metadata: dict[str, str | bool] = {
+        "title": safe_url.rstrip("/").split("/")[-1].replace("-", " ").strip().title() or "Manual Job",
+        "company": "Manual",
+        "site": "Manual URL",
+        "location": "",
+        "description": f"Manual job URL: {safe_url}",
+        "inactive": False,
+    }
+    if not no_fetch:
+        try:
+            metadata.update(_extract_manual_job_metadata(safe_url))
+        except Exception as exc:
+            console.print(f"[yellow]Could not fetch page metadata:[/yellow] {_safe_apply_error(str(exc))}")
+
+    title_value = title or str(metadata["title"])
+    company_value = company or str(metadata["company"])
+    site_value = site or str(metadata["site"])
+    location_value = location or str(metadata["location"])
+    description_value = str(metadata["description"])
+    inactive = bool(metadata["inactive"])
+    now = datetime.now(timezone.utc).isoformat()
+
+    apply_status = "failed" if inactive else None
+    apply_error = "expired: posting appears inactive" if inactive else None
+    apply_attempts = 99 if inactive else 0
+
+    conn = get_connection()
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, canonical_key, title, company, salary, description,
+            location, site, strategy, discovered_at, full_description,
+            application_url, detail_scraped_at, detail_error,
+            apply_status, apply_error, apply_attempts, verification_confidence
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            title=excluded.title,
+            company=excluded.company,
+            description=excluded.description,
+            location=excluded.location,
+            site=excluded.site,
+            full_description=excluded.full_description,
+            application_url=excluded.application_url,
+            detail_scraped_at=excluded.detail_scraped_at,
+            detail_error=excluded.detail_error,
+            apply_status=excluded.apply_status,
+            apply_error=excluded.apply_error,
+            apply_attempts=excluded.apply_attempts,
+            verification_confidence=excluded.verification_confidence,
+            archived_at=NULL
+        """,
+        (
+            safe_url,
+            f"{title_value}|{company_value}|{location_value}".casefold(),
+            title_value,
+            company_value,
+            "",
+            description_value,
+            location_value,
+            site_value,
+            "manual_url",
+            now,
+            description_value,
+            safe_url,
+            now,
+            "Posting appears inactive." if inactive else None,
+            apply_status,
+            apply_error,
+            apply_attempts,
+            "manual_url_inactive" if inactive else "manual_url",
+        ),
+    )
+    conn.commit()
+
+    console.print(f"[green]Added:[/green] {title_value} @ {company_value}")
+    if inactive:
+        console.print("[yellow]Posting appears inactive/expired, so it will not be queued for auto-apply.[/yellow]")
+
+    if not prepare:
+        console.print("[dim]Run again with --prepare to score and generate documents for this URL.[/dim]")
+        return
+
+    from divapply.config import check_tier
+    from divapply.scoring.cover_letter import run_cover_letters
+    from divapply.scoring.scorer import run_scoring
+    from divapply.scoring.tailor import run_tailoring
+
+    check_tier(2, "AI scoring/tailoring")
+
+    score_result = run_scoring(target_url=safe_url)
+    if not score_result.get("scored"):
+        console.print("[red]Could not score this URL. Check that the page has a readable job description.[/red]")
+        raise typer.Exit(code=1)
+
+    row = conn.execute(
+        "SELECT fit_score, tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
+        (safe_url,),
+    ).fetchone()
+    score = int(row["fit_score"] or 0)
+    console.print(f"[green]Score:[/green] {score}")
+    if score < min_score:
+        console.print(f"[yellow]Score is below --min-score {min_score}; not generating documents.[/yellow]")
+        return
+
+    tailor_result = run_tailoring(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
+    cover_result = run_cover_letters(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
+    row = conn.execute(
+        "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
+        (safe_url,),
+    ).fetchone()
+    console.print(
+        f"[green]Prepared:[/green] resume={row['tailored_resume_path'] or 'not generated'}; "
+        f"cover={row['cover_letter_path'] or 'not generated'}"
+    )
+    console.print(f"[dim]Tailor result: {tailor_result}; cover result: {cover_result}[/dim]")
+
+
 @app.command()
 def run(
     stages: Optional[list[str]] = typer.Argument(

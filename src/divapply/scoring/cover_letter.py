@@ -204,14 +204,19 @@ def generate_cover_letter(
 
 # â”€â”€ Batch Entry Point â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def run_cover_letters(min_score: int = 7, limit: int = 0,
-                      validation_mode: str = "normal") -> dict:
+def run_cover_letters(
+    min_score: int = 7,
+    limit: int = 0,
+    validation_mode: str = "normal",
+    target_url: str | None = None,
+) -> dict:
     """Generate cover letters for high-scoring jobs that have tailored resumes.
 
     Args:
         min_score:       Minimum fit_score threshold.
         limit:           Maximum jobs to process.
         validation_mode: "strict", "normal", or "lenient".
+        target_url: If provided, generate a cover letter only for this job URL.
 
     Returns:
         {"generated": int, "errors": int, "elapsed": float}
@@ -221,7 +226,16 @@ def run_cover_letters(min_score: int = 7, limit: int = 0,
     conn = get_connection()
 
     # Fetch jobs that have tailored resumes but no cover letter yet
-    if limit and limit > 0:
+    if target_url:
+        jobs = conn.execute(
+            "SELECT * FROM jobs "
+            "WHERE url = ? AND fit_score >= ? AND tailored_resume_path IS NOT NULL "
+            "AND full_description IS NOT NULL "
+            "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
+            "AND COALESCE(cover_attempts, 0) < ?",
+            (target_url, min_score, MAX_ATTEMPTS),
+        ).fetchall()
+    elif limit and limit > 0:
         jobs = conn.execute(
             "SELECT * FROM jobs "
             "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
