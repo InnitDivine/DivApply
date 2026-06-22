@@ -30,6 +30,14 @@ MAX_ATTEMPTS = 5  # max cross-run retries before giving up
 def _delete_temp_artifact(path) -> None:
     """Delete an intermediate generated text file after PDF creation."""
     try:
+        resolved = path.resolve()
+        root = COVER_LETTER_DIR.resolve()
+        if not resolved.is_relative_to(root):
+            log.warning("Refusing to delete artifact outside cover letter directory: %s", path)
+            return
+        if path.suffix != ".txt" or not path.name.endswith("_CL.txt"):
+            log.warning("Refusing to delete unexpected cover letter artifact: %s", path)
+            return
         if path.exists() or path.is_symlink():
             path.unlink()
     except OSError:

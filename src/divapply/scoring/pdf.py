@@ -5,6 +5,7 @@ and exports to PDF using headless Chromium via Playwright.
 """
 
 import logging
+import re
 from html import escape as _html_escape
 from pathlib import Path
 
@@ -12,6 +13,53 @@ from divapply.config import TAILORED_DIR
 from divapply.security import protect_file
 
 log = logging.getLogger(__name__)
+
+SECTION_ALIASES = {
+    "SUMMARY": "SUMMARY",
+    "PROFESSIONAL SUMMARY": "SUMMARY",
+    "PROFILE": "SUMMARY",
+    "TECHNICAL SKILLS": "TECHNICAL SKILLS",
+    "SKILLS": "TECHNICAL SKILLS",
+    "CORE SKILLS": "TECHNICAL SKILLS",
+    "EXPERIENCE": "EXPERIENCE",
+    "PROFESSIONAL EXPERIENCE": "EXPERIENCE",
+    "WORK EXPERIENCE": "EXPERIENCE",
+    "EMPLOYMENT": "EXPERIENCE",
+    "PROJECTS": "PROJECTS",
+    "PROJECT EXPERIENCE": "PROJECTS",
+    "CERTIFICATIONS": "CERTIFICATIONS",
+    "CERTIFICATIONS & LICENSES": "CERTIFICATIONS",
+    "LICENSES": "CERTIFICATIONS",
+    "EDUCATION": "EDUCATION",
+}
+
+
+def _clean_heading(line: str) -> str:
+    """Normalize generated section headings while leaving content untouched."""
+    cleaned = line.strip().strip("#").strip()
+    cleaned = re.sub(r"^[*\-_\s]+|[*\-_\s]+$", "", cleaned)
+    cleaned = cleaned.rstrip(":").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.upper()
+
+
+def _section_heading(line: str, *, allow_styled: bool = False) -> str | None:
+    """Return canonical section name for a line that looks like a resume heading."""
+    stripped = line.strip()
+    if not stripped or stripped.startswith(("-", "\u2022")):
+        return None
+
+    cleaned = _clean_heading(stripped)
+    if cleaned in SECTION_ALIASES:
+        return SECTION_ALIASES[cleaned]
+
+    if allow_styled:
+        return None
+
+    is_plain_caps = cleaned == cleaned.upper() and len(cleaned) > 3
+    if is_plain_caps and not any(ch.isdigit() for ch in cleaned) and len(cleaned.split()) <= 4:
+        return cleaned
+    return None
 
 
 # â”€â”€ Resume Parser â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -28,7 +76,7 @@ def parse_resume(text: str) -> dict:
     Returns:
         {"name": str, "title": str, "location": str, "contact": str, "sections": dict}
     """
-    lines = [line.rstrip() for line in text.strip().split("\n")]
+    lines = [line.rstrip() for line in text.strip().replace("\r\n", "\n").split("\n")]
 
     # Header: first few lines before the first ALL-CAPS section header.
     # Strategy: section headers always appear AFTER at least one blank line
@@ -44,14 +92,8 @@ def parse_resume(text: str) -> dict:
         if not stripped:
             found_blank = True
             continue
-        # Section header: ALL-CAPS, appears after at least one blank line
-        if (
-            found_blank
-            and stripped == stripped.upper()
-            and not stripped.startswith("-")
-            and len(stripped) > 3
-            and not stripped.startswith("\u2022")
-        ):
+        # Section headers may be ALL-CAPS or generated as "Summary:"/Markdown.
+        if found_blank and _section_heading(stripped):
             body_start = i
             break
         # Everything before the first blank gap is header content
@@ -85,26 +127,26 @@ def parse_resume(text: str) -> dict:
                 else:
                     location = header_lines[2]
 
-    # Split body into sections by ALL-CAPS headers
+    if body_start == 0:
+        for i, line in enumerate(lines[1:], start=1):
+            if _section_heading(line, allow_styled=True):
+                body_start = i
+                break
+
+    # Split body into sections by recognized headers.
     sections: dict[str, str] = {}
     current_section: str | None = None
     current_lines: list[str] = []
 
     for line in lines[body_start:]:
         stripped = line.strip()
-        # Detect section headers (all caps, no leading dash/bullet, longer than 3 chars)
-        if (
-            stripped
-            and stripped == stripped.upper()
-            and not stripped.startswith("-")
-            and len(stripped) > 3
-            and not stripped.startswith("\u2022")
-        ):
+        heading = _section_heading(stripped, allow_styled=True)
+        if heading:
             if current_section:
                 sections[current_section] = "\n".join(current_lines).strip()
-            current_section = stripped
+            current_section = heading
             current_lines = []
-        else:
+        elif current_section:
             current_lines.append(line)
 
     if current_section:
@@ -136,14 +178,19 @@ def parse_skills(text: str) -> list[tuple[str, str]]:
     current_cat = ""
     current_bullets: list[str] = []
 
+    def _flush() -> None:
+        nonlocal current_cat, current_bullets
+        if current_cat:
+            value = ", ".join(current_bullets).strip()
+            if value:
+                skills.append((current_cat, value))
+            current_cat = ""
+            current_bullets = []
+
     for line in text.strip().split("\n"):
         stripped = line.strip()
         if not stripped:
-            # Empty line flushes current category
-            if current_cat and current_bullets:
-                skills.append((current_cat, ", ".join(current_bullets)))
-                current_cat = ""
-                current_bullets = []
+            _flush()
             continue
 
         is_bullet = stripped.startswith("- ") or stripped.startswith("\u2022 ")
@@ -151,25 +198,25 @@ def parse_skills(text: str) -> list[tuple[str, str]]:
 
         if has_colon:
             # Format A: "Category: value"
-            if current_cat and current_bullets:
-                skills.append((current_cat, ", ".join(current_bullets)))
-                current_cat = ""
-                current_bullets = []
+            _flush()
             cat, val = stripped.split(":", 1)
-            skills.append((cat.strip(), val.strip()))
+            if cat.strip() and val.strip():
+                skills.append((cat.strip(), val.strip()))
         elif is_bullet:
             # Format B bullet: collect under current category
             if current_cat:
                 current_bullets.append(stripped[2:].strip())
+            elif ":" in stripped:
+                cat, val = stripped[2:].split(":", 1)
+                if cat.strip() and val.strip():
+                    skills.append((cat.strip(), val.strip()))
         else:
             # Format B category header
-            if current_cat and current_bullets:
-                skills.append((current_cat, ", ".join(current_bullets)))
+            _flush()
             current_cat = stripped
             current_bullets = []
 
-    if current_cat and current_bullets:
-        skills.append((current_cat, ", ".join(current_bullets)))
+    _flush()
 
     return skills
 
@@ -191,9 +238,17 @@ def parse_entries(text: str) -> list[dict]:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("- ") or stripped.startswith("\u2022 "):
+        is_bullet = (
+            stripped.startswith("- ")
+            or stripped.startswith("\u2022 ")
+            or bool(re.match(r"^\d+[.)]\s+", stripped))
+        )
+        if is_bullet:
+            bullet = re.sub(r"^(?:[-\u2022]|\d+[.)])\s+", "", stripped).strip()
             if current:
-                current["bullets"].append(stripped[2:].strip())
+                current["bullets"].append(bullet)
+            else:
+                current = {"title": "Highlights", "subtitle": "", "bullets": [bullet]}
         elif current is None or (
             not stripped.startswith("-")
             and not stripped.startswith("\u2022")
@@ -358,8 +413,6 @@ def build_html(resume: dict) -> str:
 <html>
 <head>
 <meta charset="utf-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 @page {{
     size: letter;
@@ -371,7 +424,7 @@ def build_html(resume: dict) -> str:
     box-sizing: border-box;
 }}
 body {{
-    font-family: 'DM Sans', 'Segoe UI', Arial, sans-serif;
+    font-family: Arial, 'Segoe UI', sans-serif;
     font-size: 9pt;
     line-height: 1.32;
     color: #2c2416;
@@ -391,11 +444,11 @@ body {{
     gap: 1rem;
 }}
 .name {{
-    font-family: 'Playfair Display', Georgia, serif;
+    font-family: Georgia, 'Times New Roman', serif;
     font-size: 20pt;
     font-weight: 900;
     color: #2c2416;
-    letter-spacing: -0.5px;
+    letter-spacing: 0;
     line-height: 1;
 }}
 .name span {{
@@ -428,7 +481,7 @@ body {{
     margin-top: 6px;
 }}
 .section-title {{
-    font-family: 'Playfair Display', Georgia, serif;
+    font-family: Georgia, 'Times New Roman', serif;
     font-size: 8.2pt;
     font-weight: 700;
     color: #c17f3e;
@@ -478,6 +531,7 @@ body {{
 .entry {{
     margin-bottom: 4px;
     break-inside: avoid;
+    page-break-inside: avoid;
     padding-left: 8px;
     border-left: 2px solid #e8dcc8;
 }}
@@ -499,7 +553,7 @@ body {{
     font-weight: 500;
     white-space: nowrap;
     flex-shrink: 0;
-    font-family: 'DM Sans', sans-serif;
+    font-family: Arial, 'Segoe UI', sans-serif;
     letter-spacing: 0.03em;
 }}
 .entry-subtitle {{
@@ -611,8 +665,6 @@ def build_cover_letter_html(text: str, profile: dict | None = None) -> str:
 <html>
 <head>
 <meta charset="utf-8">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
 <style>
 @page {{
     size: letter;
@@ -620,7 +672,7 @@ def build_cover_letter_html(text: str, profile: dict | None = None) -> str:
 }}
 * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 body {{
-    font-family: 'DM Sans', 'Segoe UI', Arial, sans-serif;
+    font-family: Arial, 'Segoe UI', sans-serif;
     font-size: 10.5pt;
     line-height: 1.6;
     color: #2c2416;
@@ -635,11 +687,11 @@ body {{
     align-items: flex-end;
 }}
 .name {{
-    font-family: 'Playfair Display', Georgia, serif;
+    font-family: Georgia, 'Times New Roman', serif;
     font-size: 20pt;
     font-weight: 900;
     color: #2c2416;
-    letter-spacing: -0.5px;
+    letter-spacing: 0;
     line-height: 1;
 }}
 .name span {{ color: #c17f3e; }}

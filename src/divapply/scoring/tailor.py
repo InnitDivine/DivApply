@@ -41,8 +41,16 @@ PROJECTS_MAX_ENTRIES = 1
 
 def _delete_temp_artifacts(*paths: Path) -> None:
     """Delete intermediate generated files after durable PDFs are available."""
+    root = TAILORED_DIR.resolve()
     for path in paths:
         try:
+            resolved = path.resolve()
+            if not resolved.is_relative_to(root):
+                log.warning("Refusing to delete artifact outside tailored directory: %s", path)
+                continue
+            if path.suffix not in {".txt", ".json"}:
+                log.warning("Refusing to delete unexpected temporary artifact type: %s", path)
+                continue
             if path.exists() or path.is_symlink():
                 path.unlink()
         except OSError:
