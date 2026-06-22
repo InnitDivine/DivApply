@@ -61,6 +61,8 @@ def _display_company(job: dict) -> str:
 
 # Runtime coordination shared by worker threads and Ctrl+C handling.
 POLL_INTERVAL = config.DEFAULTS["poll_interval"]
+MAX_RUNTIME_WORKERS = 4
+DEFAULT_APPLY_IDLE_TIMEOUT = 300
 _stop_event = threading.Event()
 _claude_procs: dict[int, subprocess.Popen] = {}
 _claude_lock = threading.Lock()
@@ -392,10 +394,12 @@ PERMANENT_FAILURES: set[str] = {
     "not_a_job_application", "unsafe_permissions",
     "unsafe_verification", "sso_required",
     "site_blocked", "cloudflare_blocked", "blocked_by_cloudflare",
-    "scam",
+    "scam", "bank_details", "payment_required", "biometric_verification",
 }
 
-PERMANENT_PREFIXES: tuple[str, ...] = ("site_blocked", "cloudflare", "blocked_by")
+PERMANENT_PREFIXES: tuple[str, ...] = (
+    "site_blocked", "cloudflare", "blocked_by", "captcha", "expired", "login_issue",
+)
 
 
 def _normalize_result_reason(text: str) -> str:
@@ -415,12 +419,50 @@ def _is_permanent_failure(result: str) -> bool:
         or any(reason.startswith(p) for p in PERMANENT_PREFIXES)
         or "ssn" in reason
         or "social_security" in reason
+        or re.search(r"\bsin\b", result_lower) is not None
+        or "bank_account" in reason
+        or "routing_number" in reason
+        or "payment" in reason
+        or "biometric" in reason
         or "unsafe_verification" in reason
     )
 
 
 def _clean_result_reason(text: str) -> str:
     return re.sub(r'[*`"]+$', "", text).strip()
+
+
+def _promoted_failure_status(reason: str) -> str | None:
+    normalized = _normalize_result_reason(reason)
+    for status in ("captcha", "expired", "login_issue"):
+        if normalized == status or normalized.startswith(f"{status}_"):
+            return status
+    return None
+
+
+APPLIED_CONFIRMATION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"\bthank you\b", re.IGNORECASE),
+    re.compile(r"\bapplication (?:has been )?(?:submitted|received|sent)\b", re.IGNORECASE),
+    re.compile(r"\bsubmitted successfully\b", re.IGNORECASE),
+    re.compile(r"\bconfirmation (?:number|email|message|page)\b", re.IGNORECASE),
+    re.compile(r"\breference (?:number|id)\b", re.IGNORECASE),
+    re.compile(r"\bemail (?:application|resume) sent\b", re.IGNORECASE),
+    re.compile(r"\bconfirmation:\s*\S+", re.IGNORECASE),
+)
+
+NEGATED_CONFIRMATION_RE = re.compile(
+    r"\b(?:no|not|without|missing|could not|cannot|can't|unable to)\s+"
+    r"(?:\w+\s+){0,3}(?:confirm|confirmation|submitted|submission|received)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_submission_confirmation(output: str) -> bool:
+    """Return True only when APPLIED output includes confirmation evidence."""
+    region = _agent_output_region(output)
+    if NEGATED_CONFIRMATION_RE.search(region):
+        return False
+    return any(pattern.search(region) for pattern in APPLIED_CONFIRMATION_PATTERNS)
 
 
 RESULT_LINE_RE = re.compile(
@@ -467,16 +509,21 @@ def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) ->
             parts = explicit_result.split(":", 1)
             raw_reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
             reason = _clean_result_reason(raw_reason)
-            normalized_reason = _normalize_result_reason(reason)
-            if normalized_reason in {"captcha", "expired", "login_issue"}:
-                add_event(f"[W{worker_id}] {normalized_reason.upper()} ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status=normalized_reason, last_action=f"{normalized_reason.upper()} ({elapsed}s)")
-                return normalized_reason, duration_ms
+            promoted = _promoted_failure_status(reason)
+            if promoted:
+                add_event(f"[W{worker_id}] {promoted.upper()} ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status=promoted, last_action=f"{promoted.upper()} ({elapsed}s)")
+                return promoted, duration_ms
             add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason[:30]}")
             update_state(worker_id, status="failed", last_action=f"FAILED: {reason[:25]}")
             return f"failed:{reason}", duration_ms
 
         result_status = explicit_result.upper()
+        if result_status == "APPLIED" and not _has_submission_confirmation(output):
+            reason = "missing_submission_confirmation"
+            add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason}")
+            update_state(worker_id, status="failed", last_action=f"FAILED: {reason}")
+            return f"failed:{reason}", duration_ms
         if result_status in {"APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"}:
             add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {job['title'][:30]}")
             update_state(worker_id, status=result_status.lower(),
@@ -493,11 +540,11 @@ def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) ->
             parts = re.split(r"RESULT:FAILED:", out_line, maxsplit=1, flags=re.IGNORECASE)
             raw_reason = parts[1].strip() if len(parts) > 1 and parts[1].strip() else "unknown"
             reason = _clean_result_reason(raw_reason)
-            normalized_reason = _normalize_result_reason(reason)
-            if normalized_reason in {"captcha", "expired", "login_issue"}:
-                add_event(f"[W{worker_id}] {normalized_reason.upper()} ({elapsed}s): {job['title'][:30]}")
-                update_state(worker_id, status=normalized_reason, last_action=f"{normalized_reason.upper()} ({elapsed}s)")
-                return normalized_reason, duration_ms
+            promoted = _promoted_failure_status(reason)
+            if promoted:
+                add_event(f"[W{worker_id}] {promoted.upper()} ({elapsed}s): {job['title'][:30]}")
+                update_state(worker_id, status=promoted, last_action=f"{promoted.upper()} ({elapsed}s)")
+                return promoted, duration_ms
             add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason[:30]}")
             update_state(worker_id, status="failed", last_action=f"FAILED: {reason[:25]}")
             return f"failed:{reason}", duration_ms
@@ -592,6 +639,21 @@ def _build_agent_command(
         return shlex.split(rendered, posix=False)
 
     return codex_args
+
+
+def _get_apply_idle_timeout(total_timeout: int | None) -> int | None:
+    """Return max seconds without agent output before killing the job."""
+    raw = os.environ.get("DIVAPPLY_APPLY_IDLE_TIMEOUT") or os.environ.get("APPLYPILOT_APPLY_IDLE_TIMEOUT")
+    if raw:
+        if raw.strip().lower() in {"0", "none", "off", "false", "no"}:
+            return None
+        try:
+            return max(30, int(raw))
+        except ValueError:
+            return DEFAULT_APPLY_IDLE_TIMEOUT
+    if total_timeout is None:
+        return DEFAULT_APPLY_IDLE_TIMEOUT
+    return min(DEFAULT_APPLY_IDLE_TIMEOUT, max(30, total_timeout // 3))
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +843,12 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         reader.start()
         timeout_seconds = config.get_apply_timeout()
         deadline = start + timeout_seconds if timeout_seconds is not None else None
+        idle_timeout_seconds = _get_apply_idle_timeout(timeout_seconds)
+        idle_deadline = (
+            time.time() + idle_timeout_seconds
+            if idle_timeout_seconds is not None
+            else None
+        )
 
         with open(worker_log, "a", encoding="utf-8") as lf:
             lf.write(log_header)
@@ -788,12 +856,22 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                 remaining = None if deadline is None else deadline - time.time()
                 if remaining is not None and remaining <= 0:
                     raise subprocess.TimeoutExpired(cmd, timeout_seconds)
+                idle_remaining = None if idle_deadline is None else idle_deadline - time.time()
+                if idle_remaining is not None and idle_remaining <= 0:
+                    raise subprocess.TimeoutExpired(cmd, idle_timeout_seconds)
+                wait_for = 0.5
+                if remaining is not None:
+                    wait_for = min(wait_for, remaining)
+                if idle_remaining is not None:
+                    wait_for = min(wait_for, idle_remaining)
                 try:
-                    raw_line = output_queue.get(timeout=0.5 if remaining is None else min(0.5, remaining))
+                    raw_line = output_queue.get(timeout=wait_for)
                 except queue.Empty:
                     continue
                 if raw_line is None:
                     break
+                if idle_timeout_seconds is not None:
+                    idle_deadline = time.time() + idle_timeout_seconds
                 line = raw_line.strip()
                 if not line:
                     continue
@@ -996,6 +1074,8 @@ def main(limit: int = 1, target_url: str | None = None,
     global POLL_INTERVAL
     if workers < 1:
         raise ValueError("workers must be at least 1")
+    if workers > MAX_RUNTIME_WORKERS:
+        raise ValueError(f"workers cannot exceed {MAX_RUNTIME_WORKERS}")
     if limit < 0:
         raise ValueError("limit cannot be negative")
     if poll_interval < 1:

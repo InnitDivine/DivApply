@@ -25,8 +25,12 @@ def _dashboard_db() -> sqlite3.Connection:
             detail_error TEXT,
             fit_score INTEGER,
             score_reasoning TEXT,
+            tailored_resume_path TEXT,
+            cover_letter_path TEXT,
             apply_status TEXT,
             applied_at TEXT,
+            apply_error TEXT,
+            verification_confidence TEXT,
             archived_at TEXT
         )
         """
@@ -71,6 +75,8 @@ def test_generate_dashboard_includes_accessible_controls(tmp_path, monkeypatch):
     assert path.endswith("dashboard.html")
     assert '<a class="skip-link" href="#jobs">Skip to jobs</a>' in html
     assert 'aria-label="Job filters"' in html
+    assert 'aria-label="Job status"' in html
+    assert 'aria-label="Generated documents"' in html
     assert 'aria-pressed="true"' in html
     assert 'role="status" aria-live="polite"' in html
     assert 'type="search"' in html
@@ -80,7 +86,7 @@ def test_generate_dashboard_includes_accessible_controls(tmp_path, monkeypatch):
     assert 'data-min-score="3"' in html
     assert "3+ Review" in html
     assert 'data-min-score="7"' in html
-    assert 'data-search="software engineer rbc logan, ut $100k python, accessibility strong local fit.' in html
+    assert 'data-search="software engineer rbc logan, ut $100k ready python, accessibility strong local fit.' in html
     assert "card.dataset.search || ''" in html
     assert "card.textContent.toLowerCase()" not in html
     assert "onclick=" not in html
@@ -100,6 +106,8 @@ def test_dashboard_uses_contrast_safe_brand_accents(tmp_path, monkeypatch):
     assert "@media (prefers-reduced-motion: reduce)" in html
     assert "min-height: 2.75rem" in html
     assert ".apply-link, .archive-btn { width: 100%; }" in html
+    assert ".state-ready" in html
+    assert ".score-reason" in html
 
 
 def test_dashboard_empty_state_is_accessible(tmp_path, monkeypatch):
@@ -226,11 +234,104 @@ def test_interactive_dashboard_uses_lazy_description_url(tmp_path, monkeypatch):
     assert "data-description-url=" in html
     assert "/description?token=test-token" in html
     assert "Open to load description." in html
+    assert "UNIQUE_FULL_DESCRIPTION_TAIL" not in html
 
 
 def test_lazy_description_script_is_empty_when_interactive_descriptions_disabled() -> None:
     assert view._lazy_description_script(enabled=False) == ""
-    assert "fetch(details.dataset.descriptionUrl" in view._lazy_description_script(enabled=True)
+    script = view._lazy_description_script(enabled=True)
+    assert "fetch(details.dataset.descriptionUrl" in script
+    assert "container.dataset.loaded = 'loading'" in script
+    assert "container.setAttribute('aria-busy', 'true')" in script
+    assert "container.textContent = await response.text()" in script
+
+
+def test_dashboard_renders_generated_doc_and_apply_states(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute(
+        """
+        UPDATE jobs
+        SET tailored_resume_path = ?, cover_letter_path = ?,
+            apply_status = 'applied', applied_at = '2026-06-20T10:00:00Z',
+            verification_confidence = 'high'
+        WHERE url = 'https://example.com/job'
+        """,
+        ("C:/Users/Dearr/.divapply/tailored/private.pdf", "C:/Users/Dearr/.divapply/cover/private.pdf"),
+    )
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, salary, description, location, site, strategy,
+            full_description, application_url, detail_error, fit_score, score_reasoning,
+            apply_status, applied_at, apply_error, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://example.com/manual",
+            "Manual ATS Role",
+            "",
+            "Short posting",
+            "Remote",
+            "indeed",
+            "direct",
+            "Manual posting.",
+            "https://example.com/manual-apply",
+            None,
+            7,
+            "ATS\nNeeds employer-site application.",
+            "manual",
+            None,
+            None,
+            None,
+        ),
+    )
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, salary, description, location, site, strategy,
+            full_description, application_url, detail_error, fit_score, score_reasoning,
+            apply_status, applied_at, apply_error, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            "https://example.com/expired",
+            "Expired Role",
+            "",
+            "Short posting",
+            "Remote",
+            "indeed",
+            "direct",
+            "",
+            "",
+            "expired: posting inactive",
+            6,
+            "Expired\nPosting is no longer active.",
+            "failed",
+            None,
+            "expired: posting appears inactive",
+            None,
+        ),
+    )
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(str(tmp_path / "dashboard.html"))
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert "Resumes generated" in html
+    assert "Cover letters generated" in html
+    assert "Marked applied" in html
+    assert "Manual apply needed" in html
+    assert "Expired or inactive" in html
+    assert '<span class="state-pill state-applied">Applied</span>' in html
+    assert '<span class="state-pill state-manual">Manual</span>' in html
+    assert '<span class="state-pill state-expired">Expired</span>' in html
+    assert "Resume ready" in html
+    assert "Cover ready" in html
+    assert "Verify high" in html
+    assert "private.pdf" not in html
+    assert "C:/Users/Dearr" not in html
+    assert "Description unavailable: expired: posting inactive" in html
 
 
 def test_dashboard_description_text_returns_full_description(monkeypatch):
@@ -280,6 +381,11 @@ def test_fetch_dashboard_snapshot_shapes_dashboard_read_model():
     assert snapshot.ready == 1
     assert snapshot.scored == 1
     assert snapshot.high_fit == 1
+    assert snapshot.tailored == 0
+    assert snapshot.with_cover_letter == 0
+    assert snapshot.applied == 0
+    assert snapshot.manual == 0
+    assert snapshot.expired == 0
     assert snapshot.score_dist == {8: 1}
     assert [job["url"] for job in snapshot.jobs] == ["https://example.com/job"]
 

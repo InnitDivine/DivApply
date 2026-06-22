@@ -14,7 +14,7 @@ def test_extract_result_prefers_contract_status(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: updates.append(kwargs))
 
     status, duration = launcher._extract_result(
-        "narrative\nRESULT:APPLIED\n",
+        "narrative\nCONFIRMATION: page says application submitted successfully\nRESULT:APPLIED\n",
         worker_id=2,
         job={"title": "Analyst"},
         duration_ms=2400,
@@ -23,6 +23,34 @@ def test_extract_result_prefers_contract_status(monkeypatch) -> None:
     assert status == "applied"
     assert duration == 2400
     assert updates[-1]["status"] == "applied"
+
+
+def test_extract_result_rejects_applied_without_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "I clicked submit.\nRESULT:APPLIED\n",
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:missing_submission_confirmation"
+
+
+def test_extract_result_rejects_negated_confirmation(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "I could not confirm submission.\nRESULT:APPLIED\n",
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:missing_submission_confirmation"
 
 
 def test_extract_result_promotes_known_failure_reason(monkeypatch) -> None:
@@ -37,6 +65,25 @@ def test_extract_result_promotes_known_failure_reason(monkeypatch) -> None:
     )
 
     assert status == "captcha"
+
+
+def test_extract_result_promotes_verbose_blocker_reasons(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    cases = {
+        "RESULT:FAILED:captcha required after submit": "captcha",
+        "RESULT:FAILED:expired posting no longer accepting applications": "expired",
+        "RESULT:FAILED:login issue after two redirects": "login_issue",
+    }
+    for output, expected in cases.items():
+        status, _ = launcher._extract_result(
+            output,
+            worker_id=0,
+            job={"title": "Support Role"},
+            duration_ms=1000,
+        )
+        assert status == expected
 
 
 def test_extract_result_uses_final_agent_result_not_prompt_contract(monkeypatch) -> None:
@@ -111,6 +158,7 @@ def test_extract_result_normalizes_failure_reason_for_retry_logic(monkeypatch) -
 def test_ssn_failure_is_permanent() -> None:
     assert launcher._is_permanent_failure("failed:reason requires SSN last 4 digits")
     assert launcher._is_permanent_failure("failed:requires social security number")
+    assert launcher._is_permanent_failure("failed:requires SIN before interview")
 
 
 def test_prompt_permanent_failures_are_not_retried() -> None:
@@ -126,6 +174,9 @@ def test_prompt_permanent_failures_are_not_retried() -> None:
         "failed:not_a_job_application",
         "failed:scam",
         "failed:blocked_by_cloudflare",
+        "failed:bank account required",
+        "failed:payment required",
+        "failed:biometric verification",
     ]:
         assert launcher._is_permanent_failure(result), result
 
@@ -133,6 +184,23 @@ def test_prompt_permanent_failures_are_not_retried() -> None:
 def test_transient_failures_remain_retryable() -> None:
     for result in ["failed:timeout", "failed:stuck", "failed:page_error", "failed:no_result_line"]:
         assert not launcher._is_permanent_failure(result), result
+
+
+def test_apply_idle_timeout_defaults_are_bounded(monkeypatch) -> None:
+    monkeypatch.delenv("DIVAPPLY_APPLY_IDLE_TIMEOUT", raising=False)
+    monkeypatch.delenv("APPLYPILOT_APPLY_IDLE_TIMEOUT", raising=False)
+
+    assert launcher._get_apply_idle_timeout(2700) == 300
+    assert launcher._get_apply_idle_timeout(90) == 30
+    assert launcher._get_apply_idle_timeout(None) == 300
+
+
+def test_apply_idle_timeout_env_override(monkeypatch) -> None:
+    monkeypatch.setenv("DIVAPPLY_APPLY_IDLE_TIMEOUT", "45")
+    assert launcher._get_apply_idle_timeout(2700) == 45
+
+    monkeypatch.setenv("DIVAPPLY_APPLY_IDLE_TIMEOUT", "off")
+    assert launcher._get_apply_idle_timeout(2700) is None
 
 
 def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
@@ -661,6 +729,38 @@ def test_worker_loop_dry_run_failure_does_not_mark_failed(monkeypatch) -> None:
     assert calls[0][2]["result"] == "failed:timeout"
 
 
+def test_worker_loop_marks_blockers_permanent(monkeypatch) -> None:
+    calls: list[dict] = []
+    jobs = [{
+        "url": "https://jobs.example/blocker",
+        "title": "Support Analyst",
+        "company": "Example",
+        "site": "Example ATS",
+        "application_url": "https://jobs.example/blocker/apply",
+        "fit_score": 9,
+    }]
+
+    def fake_acquire_job(*args, **kwargs):
+        return jobs.pop(0) if jobs else None
+
+    def fake_mark_result(*args, **kwargs):
+        calls.append({"args": args, "kwargs": kwargs})
+
+    monkeypatch.setattr(launcher, "acquire_job", fake_acquire_job)
+    monkeypatch.setattr(launcher, "run_job", lambda *args, **kwargs: ("captcha", 1200))
+    monkeypatch.setattr(launcher, "mark_result", fake_mark_result)
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    applied, failed = launcher.worker_loop(limit=1)
+
+    assert (applied, failed) == (0, 1)
+    assert calls == [{
+        "args": ("https://jobs.example/blocker", "failed", "captcha"),
+        "kwargs": {"permanent": True, "duration_ms": 1200},
+    }]
+
+
 def test_reset_failed_only_resets_failed_jobs(monkeypatch) -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -725,7 +825,10 @@ def test_run_job_removes_transient_prompt_file(tmp_path, monkeypatch) -> None:
     class FakeProc:
         def __init__(self, *args, **kwargs) -> None:
             self.stdin = FakeStdIn()
-            self.stdout = iter(["RESULT:APPLIED\n"])
+            self.stdout = iter([
+                "CONFIRMATION: page says application submitted successfully\n",
+                "RESULT:APPLIED\n",
+            ])
             self.returncode = 0
             self.pid = 12345
 
@@ -809,6 +912,7 @@ def test_main_records_parallel_worker_crashes(monkeypatch) -> None:
 def test_main_rejects_unsafe_worker_and_limit_values() -> None:
     for kwargs in [
         {"workers": 0},
+        {"workers": launcher.MAX_RUNTIME_WORKERS + 1},
         {"limit": -1},
         {"poll_interval": 0},
     ]:

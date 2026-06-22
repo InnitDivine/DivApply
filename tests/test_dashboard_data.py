@@ -56,9 +56,51 @@ def test_dashboard_snapshot_excludes_archived_rows_from_all_active_metrics(tmp_p
     assert snapshot.ready == 1
     assert snapshot.scored == 1
     assert snapshot.high_fit == 1
+    assert snapshot.tailored == 0
+    assert snapshot.with_cover_letter == 0
+    assert snapshot.applied == 0
+    assert snapshot.manual == 0
+    assert snapshot.expired == 0
     assert snapshot.score_dist == {7: 1}
     assert [row["title"] for row in snapshot.jobs] == ["Active"]
     assert [(row["site"], row["total"]) for row in snapshot.site_stats] == [("indeed", 1)]
+    close_connection(db_path)
+
+
+def test_dashboard_snapshot_counts_generated_docs_and_apply_states(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    _insert_job(
+        conn,
+        "https://example.com/generated",
+        title="Generated",
+        fit_score=8,
+    )
+    conn.execute(
+        """
+        UPDATE jobs
+        SET tailored_resume_path = ?, cover_letter_path = ?,
+            apply_status = 'applied', applied_at = '2026-06-21T12:00:00Z'
+        WHERE url = ?
+        """,
+        ("resume.pdf", "cover.pdf", "https://example.com/generated"),
+    )
+    _insert_job(conn, "https://example.com/manual", title="Manual", fit_score=7)
+    conn.execute("UPDATE jobs SET apply_status = 'manual' WHERE url = ?", ("https://example.com/manual",))
+    _insert_job(conn, "https://example.com/expired", title="Expired", fit_score=6)
+    conn.execute(
+        "UPDATE jobs SET apply_status = 'failed', apply_error = 'expired: posting inactive' WHERE url = ?",
+        ("https://example.com/expired",),
+    )
+    conn.commit()
+
+    snapshot = fetch_dashboard_snapshot(conn)
+
+    assert snapshot.tailored == 1
+    assert snapshot.with_cover_letter == 1
+    assert snapshot.applied == 1
+    assert snapshot.manual == 1
+    assert snapshot.expired == 1
     close_connection(db_path)
 
 

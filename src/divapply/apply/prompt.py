@@ -862,7 +862,7 @@ def build_prompt(job: dict, tailored_resume: str,
 
     # Dry-run: override submit instruction
     if dry_run:
-        submit_instruction = "IMPORTANT: Do NOT click the final Submit/Apply button. Review the form, verify all fields, then output RESULT:APPLIED with a note that this was a dry run."
+        submit_instruction = "IMPORTANT: Do NOT click the final Submit/Apply button. Review the form, verify all fields, then output RESULT:FAILED:dry_run_complete with a note that this was a dry run."
     else:
         submit_instruction = """BEFORE clicking Submit/Apply, run a mandatory pre-submit check:
   1. Scroll to the top of the page. Take a snapshot.
@@ -961,7 +961,7 @@ Before filling any form, spend 2 actions verifying this is a legitimate employer
 3. LOCATION CHECK. Read the page for location info. If not eligible, output RESULT and stop.
 4. Find and click the Apply button. If email-only (page says "email resume to X"):
    - send_email with subject "Application for {job['title']} -- {display_name}", body = 2-3 sentence pitch + contact info, attach resume PDF: ["{pdf_path}"]
-   - Output RESULT:APPLIED. Done.
+   - Output CONFIRMATION: email application sent, then RESULT:APPLIED. Done.
    After clicking Apply: browser_snapshot. Run CAPTCHA DETECT -- many sites trigger CAPTCHAs right after the Apply click. If found, solve before continuing.
 5. Login wall?
    5a. FIRST: check the URL.
@@ -989,7 +989,7 @@ Before filling any form, spend 2 actions verifying this is a legitimate employer
 12. Output your result.
 
 == RESULT CODES (output EXACTLY one) ==
-RESULT:APPLIED -- submitted successfully
+RESULT:APPLIED -- submitted successfully, only after also outputting a separate CONFIRMATION line with the exact page/email evidence
 RESULT:EXPIRED -- job closed or no longer accepting applications
 RESULT:CAPTCHA -- blocked by unsolvable captcha
 RESULT:LOGIN_ISSUE -- could not sign in or create account
@@ -997,7 +997,7 @@ RESULT:FAILED:not_eligible_location -- onsite outside acceptable area, no remote
 RESULT:FAILED:not_eligible_work_auth -- requires unauthorized work location
 RESULT:FAILED:reason -- any other failure (brief reason)
 
-APPLIED is only allowed after a real final submission confirmation: a thank-you page, application received message, confirmation email sent by the ATS, application/reference number, or an equivalent employer confirmation. If you filled a form but did not submit it, hit a validation error, reached a review page, or are unsure, output RESULT:FAILED:reason instead. If the site asks for SSN/SIN, bank/payment details, biometric verification, unsafe permissions, unsupported SSO, or a login you cannot complete, fail with the specific blocker; never output APPLIED for a blocked or partial application.
+APPLIED is only allowed after a real final submission confirmation: a thank-you page, application received message, confirmation email sent by the ATS, application/reference number, or an equivalent employer confirmation. Immediately before RESULT:APPLIED, output one line beginning with CONFIRMATION: and briefly quote or summarize the confirmation evidence, for example "CONFIRMATION: page says application received" or "CONFIRMATION: reference number ABC123". If you filled a form but did not submit it, hit a validation error, reached a review page, or are unsure, output RESULT:FAILED:reason instead. If the site asks for SSN/SIN, bank/payment details, biometric verification, unsafe permissions, unsupported SSO, or a login you cannot complete, fail with the specific blocker; never output APPLIED for a blocked or partial application.
 
 == BROWSER EFFICIENCY â€” MINIMIZE ACTIONS AND TOKENS ==
 GOLDEN RULES â€” every action costs tokens, every screenshot costs tokens:

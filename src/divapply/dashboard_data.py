@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sqlite3
 
-from divapply.database import get_connection
+from divapply.database import ensure_columns, get_connection
 
 
 @dataclass(frozen=True)
@@ -20,6 +20,11 @@ class DashboardSnapshot:
     ready: int
     scored: int
     high_fit: int
+    tailored: int
+    with_cover_letter: int
+    applied: int
+    manual: int
+    expired: int
     score_dist: dict[int, int]
     site_stats: list[sqlite3.Row]
     jobs: list[sqlite3.Row]
@@ -36,6 +41,7 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     """Fetch and shape all database data required by the dashboard view."""
     if conn is None:
         conn = get_connection()
+    ensure_columns(conn)
     dashboard_score_table = (
         "jobs INDEXED BY idx_jobs_dashboard_score"
         if _has_index(conn, "idx_jobs_dashboard_score")
@@ -64,6 +70,32 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
         "WHERE archived_at IS NULL AND fit_score >= 7"
     ).fetchone()[0] or 0)
+    tailored = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL "
+        "AND tailored_resume_path IS NOT NULL "
+        "AND tailored_resume_path != ''"
+    ).fetchone()[0] or 0)
+    with_cover_letter = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL "
+        "AND cover_letter_path IS NOT NULL "
+        "AND cover_letter_path != ''"
+    ).fetchone()[0] or 0)
+    applied = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL "
+        "AND (apply_status = 'applied' OR applied_at IS NOT NULL)"
+    ).fetchone()[0] or 0)
+    manual = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL AND apply_status = 'manual'"
+    ).fetchone()[0] or 0)
+    expired = int(conn.execute(
+        f"SELECT COUNT(*) FROM {dashboard_score_table} "
+        "WHERE archived_at IS NULL "
+        "AND (apply_status = 'expired' OR apply_error LIKE 'expired:%' OR detail_error LIKE 'expired:%')"
+    ).fetchone()[0] or 0)
 
     score_dist: dict[int, int] = {}
     if scored:
@@ -91,7 +123,8 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     jobs = conn.execute(f"""
         SELECT url, title, salary, description, location, site, strategy,
                full_description, application_url, detail_error,
-               fit_score, score_reasoning, apply_status, applied_at
+               fit_score, score_reasoning, tailored_resume_path, cover_letter_path,
+               apply_status, applied_at, apply_error, verification_confidence
         FROM {dashboard_score_table}
         WHERE archived_at IS NULL AND fit_score >= 5
         ORDER BY fit_score DESC, site, title
@@ -103,6 +136,11 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
         ready=ready,
         scored=scored,
         high_fit=high_fit,
+        tailored=tailored,
+        with_cover_letter=with_cover_letter,
+        applied=applied,
+        manual=manual,
+        expired=expired,
         score_dist=score_dist,
         site_stats=site_stats,
         jobs=jobs,

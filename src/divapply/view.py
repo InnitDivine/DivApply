@@ -84,6 +84,47 @@ def _truncate(value: str, limit: int) -> str:
     return value[: limit - 3].rstrip() + "..."
 
 
+def _has_value(value: Any) -> bool:
+    return bool(str(value or "").strip())
+
+
+def _apply_state(row: Any) -> tuple[str, str, str]:
+    """Return CSS class, visible label, and concise explanation for a job state."""
+    status = str(row["apply_status"] or "").strip().casefold()
+    applied_at = str(row["applied_at"] or "").strip()
+    apply_error = str(row["apply_error"] or "").strip()
+    detail_error = str(row["detail_error"] or "").strip()
+    has_apply_url = _has_value(row["application_url"])
+    has_description = _has_value(row["full_description"])
+
+    if status == "applied" or applied_at:
+        return "state-applied", "Applied", "Application is recorded as submitted."
+    if status == "manual":
+        return "state-manual", "Manual", "This posting needs manual application on the employer site."
+    if status == "in_progress":
+        return "state-progress", "In progress", "An apply worker has claimed this job."
+    if status == "failed":
+        if "expired" in apply_error.casefold() or "expired" in detail_error.casefold():
+            return "state-expired", "Expired", "Posting appears inactive or expired."
+        return "state-failed", "Failed", "The last apply attempt failed."
+    if status == "expired" or "expired" in apply_error.casefold() or "expired" in detail_error.casefold():
+        return "state-expired", "Expired", "Posting appears inactive or expired."
+    if has_description and has_apply_url:
+        return "state-ready", "Ready", "Description and apply link are available."
+    if has_apply_url:
+        return "state-review", "Needs description", "Apply link exists, but the full description is missing."
+    return "state-review", "Needs apply link", "No safe apply link is available."
+
+
+def _score_reasoning_parts(value: str) -> tuple[str, str]:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines:
+        return "", ""
+    keywords = _truncate(lines[0], 120)
+    reasoning = _truncate(" ".join(lines[1:]), 220) if len(lines) > 1 else ""
+    return keywords, reasoning
+
+
 def _lazy_description_script(*, enabled: bool) -> str:
     """Return dashboard JavaScript for optional same-origin description loading."""
     if not enabled:
@@ -93,8 +134,12 @@ document.querySelectorAll('.full-desc-details[data-description-url]').forEach(de
   details.addEventListener('toggle', async () => {
     if (!details.open) return;
     const container = details.querySelector('.full-desc');
-    if (!container || container.dataset.loaded === 'true') return;
+    if (!container || container.dataset.loaded === 'true' || container.dataset.loaded === 'loading') return;
+    const summary = details.querySelector('summary');
     container.textContent = 'Loading description...';
+    container.dataset.loaded = 'loading';
+    container.setAttribute('aria-busy', 'true');
+    if (summary) summary.setAttribute('aria-busy', 'true');
     try {
       const response = await fetch(details.dataset.descriptionUrl, { credentials: 'same-origin' });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -102,6 +147,10 @@ document.querySelectorAll('.full-desc-details[data-description-url]').forEach(de
       container.dataset.loaded = 'true';
     } catch (error) {
       container.textContent = 'Could not load the description. Open the job posting link instead.';
+      container.dataset.loaded = 'false';
+    } finally {
+      container.removeAttribute('aria-busy');
+      if (summary) summary.removeAttribute('aria-busy');
     }
   });
 });
@@ -131,6 +180,11 @@ def generate_dashboard(
     ready = snapshot.ready
     scored = snapshot.scored
     high_fit = snapshot.high_fit
+    tailored = snapshot.tailored
+    with_cover_letter = snapshot.with_cover_letter
+    applied = snapshot.applied
+    manual = snapshot.manual
+    expired = snapshot.expired
     score_dist = snapshot.score_dist
     site_stats = snapshot.site_stats
     jobs = snapshot.jobs
@@ -198,15 +252,15 @@ def generate_dashboard(
         site = escape(j["site"] or "")
         site_color = _site_color(j["site"] or "")
         apply_url = _safe_href(j["application_url"], field="dashboard apply url")
-        # Parse keywords and reasoning from score_reasoning
-        reasoning_raw = j["score_reasoning"] or ""
-        reasoning_lines = reasoning_raw.split("\n")
-        keywords = _truncate(reasoning_lines[0], 120) if reasoning_lines else ""
-        reasoning = _truncate(reasoning_lines[1], 200) if len(reasoning_lines) > 1 else ""
+        keywords, reasoning = _score_reasoning_parts(j["score_reasoning"] or "")
 
         desc_raw = j["full_description"] or ""
         desc_preview = escape(_truncate(desc_raw, 300))
         desc_len = len(desc_raw)
+        state_class, state_label, state_help = _apply_state(j)
+        has_resume = _has_value(j["tailored_resume_path"])
+        has_cover = _has_value(j["cover_letter_path"])
+        confidence = str(j["verification_confidence"] or "").strip()
         meta_parts = []
         meta_parts.append(
             f'<span class="meta-tag site-tag" style="border-color:{site_color}">{site}</span>'
@@ -216,6 +270,13 @@ def generate_dashboard(
         if location:
             meta_parts.append(f'<span class="meta-tag location">{location[:40]}</span>')
         meta_html = " ".join(meta_parts)
+        doc_chips = [
+            f'<span class="status-chip {"is-done" if has_resume else "is-pending"}">Resume {"ready" if has_resume else "not generated"}</span>',
+            f'<span class="status-chip {"is-done" if has_cover else "is-pending"}">Cover {"ready" if has_cover else "not generated"}</span>',
+        ]
+        if confidence:
+            doc_chips.append(f'<span class="status-chip is-neutral">Verify {escape(_truncate(confidence, 28))}</span>')
+        docs_html = "".join(doc_chips)
 
         apply_html = ""
         if apply_url:
@@ -252,6 +313,13 @@ def generate_dashboard(
                 f"({desc_len:,} characters in database)</summary><div class='full-desc'>"
                 "Open the job posting link for the full description.</div></details>"
             )
+        elif j["detail_error"]:
+            full_description_html = (
+                f'<div class="desc-warning" role="note">Description unavailable: '
+                f'{escape(_truncate(str(j["detail_error"]), 140))}</div>'
+            )
+        else:
+            full_description_html = '<div class="desc-warning" role="note">Full description has not been enriched yet.</div>'
         search_text = " ".join(
             part
             for part in (
@@ -259,6 +327,7 @@ def generate_dashboard(
                 j["site"] or "",
                 j["location"] or "",
                 j["salary"] or "",
+                state_label,
                 keywords,
                 reasoning,
                 _truncate(desc_raw, 300),
@@ -267,15 +336,20 @@ def generate_dashboard(
         ).casefold()
 
         job_section_parts.append(f"""
-        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-search="{escape(search_text, quote=True)}" role="listitem">
+        <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-state="{state_class.replace('state-', '')}" data-search="{escape(search_text, quote=True)}" role="listitem">
           <div class="card-header">
             <span class="score-pill" style="background:{_score_color(score)}" aria-label="Fit score {score}">{score}</span>
             {title_html}
           </div>
           <div class="meta-row">{meta_html}</div>
-          {f'<div class="keywords-row">{escape(keywords)}</div>' if keywords else ''}
-          {f'<div class="reasoning-row">{escape(reasoning)}</div>' if reasoning else ''}
-          <p class="desc-preview">{desc_preview}</p>
+          <div class="state-row" aria-label="Job status">
+            <span class="state-pill {state_class}">{state_label}</span>
+            <span class="state-help">{escape(state_help)}</span>
+          </div>
+          <div class="doc-row" aria-label="Generated documents">{docs_html}</div>
+          {f'<div class="score-reason"><span class="score-reason-label">Signals</span><span>{escape(keywords)}</span></div>' if keywords else '<div class="score-reason muted-reason">No score signals saved yet.</div>'}
+          {f'<div class="score-reason"><span class="score-reason-label">Why</span><span>{escape(reasoning)}</span></div>' if reasoning else ''}
+          {f'<p class="desc-preview">{desc_preview}</p>' if desc_preview else ''}
           {full_description_html}
           <div class="card-footer">{apply_html}{archive_html}</div>
         </article>""")
@@ -311,13 +385,17 @@ def generate_dashboard(
   .subtitle {{ color: #94a3b8; margin-bottom: 2rem; }}
 
   /* Summary cards */
-  .summary {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 1rem; margin-bottom: 2.5rem; }}
+  .summary {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 1rem; margin-bottom: 2rem; }}
   .stat-card {{ background: #1e293b; border: 1px solid #334155; border-radius: 8px; padding: 1.25rem; min-width: 0; }}
   .stat-num {{ font-size: 2rem; font-weight: 700; }}
   .stat-label {{ color: #cbd5e1; font-size: 0.85rem; margin-top: 0.25rem; }}
   .stat-ok .stat-num {{ color: #34d399; }}
   .stat-scored .stat-num {{ color: #60a5fa; }}
   .stat-high .stat-num {{ color: #fbbf24; }}
+  .stat-docs .stat-num {{ color: #a7f3d0; }}
+  .stat-manual .stat-num {{ color: #fcd34d; }}
+  .stat-applied .stat-num {{ color: #93c5fd; }}
+  .stat-expired .stat-num {{ color: #fca5a5; }}
   .stat-total .stat-num {{ color: #e2e8f0; }}
 
   /* Filters */
@@ -375,10 +453,26 @@ def generate_dashboard(
   .meta-tag.salary {{ background: #064e3b; color: #6ee7b7; }}
   .meta-tag.location {{ background: #1e3a5f; color: #93c5fd; }}
 
-  .keywords-row {{ font-size: 0.8rem; color: #34d399; margin-bottom: 0.3rem; line-height: 1.4; overflow-wrap: anywhere; }}
-  .reasoning-row {{ font-size: 0.8rem; color: #cbd5e1; margin-bottom: 0.5rem; font-style: italic; line-height: 1.4; overflow-wrap: anywhere; }}
+  .state-row {{ display: flex; gap: 0.5rem; align-items: center; margin: 0.55rem 0; min-width: 0; }}
+  .state-pill {{ border: 1px solid #64748b; border-radius: 999px; padding: 0.15rem 0.55rem; font-size: 0.75rem; font-weight: 800; white-space: nowrap; }}
+  .state-help {{ color: #cbd5e1; font-size: 0.8rem; overflow-wrap: anywhere; }}
+  .state-ready {{ background: #064e3b; border-color: #34d399; color: #bbf7d0; }}
+  .state-applied {{ background: #1e3a8a; border-color: #93c5fd; color: #dbeafe; }}
+  .state-manual {{ background: #713f12; border-color: #facc15; color: #fef3c7; }}
+  .state-expired, .state-failed {{ background: #7f1d1d; border-color: #fca5a5; color: #fee2e2; }}
+  .state-progress {{ background: #312e81; border-color: #a5b4fc; color: #e0e7ff; }}
+  .state-review {{ background: #334155; border-color: #94a3b8; color: #f8fafc; }}
+  .doc-row {{ display: flex; flex-wrap: wrap; gap: 0.35rem; margin-bottom: 0.65rem; }}
+  .status-chip {{ border: 1px solid #475569; border-radius: 5px; padding: 0.15rem 0.45rem; color: #e2e8f0; background: #0f172a; font-size: 0.75rem; line-height: 1.4; }}
+  .status-chip.is-done {{ border-color: #34d399; color: #bbf7d0; }}
+  .status-chip.is-pending {{ border-color: #64748b; color: #cbd5e1; }}
+  .status-chip.is-neutral {{ border-color: #93c5fd; color: #bfdbfe; }}
+  .score-reason {{ display: grid; grid-template-columns: 4.25rem minmax(0, 1fr); gap: 0.45rem; color: #cbd5e1; font-size: 0.8rem; margin-bottom: 0.35rem; line-height: 1.4; overflow-wrap: anywhere; }}
+  .score-reason-label {{ color: #93c5fd; font-weight: 800; text-transform: uppercase; font-size: 0.68rem; letter-spacing: 0; }}
+  .muted-reason {{ color: #94a3b8; display: block; }}
 
   .desc-preview {{ font-size: 0.85rem; color: #cbd5e1; line-height: 1.5; margin-bottom: 0.75rem; max-height: 3.9em; overflow: hidden; overflow-wrap: anywhere; }}
+  .desc-warning {{ border: 1px solid #475569; background: #0f172a; color: #cbd5e1; border-radius: 8px; padding: 0.65rem 0.75rem; font-size: 0.8rem; margin-bottom: 0.75rem; overflow-wrap: anywhere; }}
 
   .card-footer {{ display: flex; justify-content: flex-end; gap: 0.5rem; flex-wrap: wrap; }}
   .archive-form {{ margin-left: 0; }}
@@ -399,7 +493,6 @@ def generate_dashboard(
   .empty-state {{ background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #cbd5e1; padding: 1.25rem; }}
 
   @media (max-width: 768px) {{
-    .summary {{ grid-template-columns: repeat(2, 1fr); }}
     .score-section {{ grid-template-columns: 1fr; }}
     .job-grid {{ grid-template-columns: 1fr; }}
     body {{ padding: 1rem; }}
@@ -414,6 +507,8 @@ def generate_dashboard(
     .search-input {{ width: 100%; }}
     .score-header {{ align-items: flex-start; }}
     .card-header {{ align-items: flex-start; }}
+    .state-row {{ align-items: flex-start; flex-direction: column; }}
+    .score-reason {{ grid-template-columns: 1fr; gap: 0.15rem; }}
     .card-footer {{ align-items: stretch; flex-direction: column; }}
     .apply-link, .archive-btn {{ width: 100%; }}
   }}
@@ -438,6 +533,11 @@ def generate_dashboard(
   <div class="stat-card stat-ok"><div class="stat-num">{ready}</div><div class="stat-label">Ready with description and URL</div></div>
   <div class="stat-card stat-scored"><div class="stat-num">{scored}</div><div class="stat-label">Scored by LLM</div></div>
   <div class="stat-card stat-high"><div class="stat-num">{high_fit}</div><div class="stat-label">Strong fit, score 7+</div></div>
+  <div class="stat-card stat-docs"><div class="stat-num">{tailored}</div><div class="stat-label">Resumes generated</div></div>
+  <div class="stat-card stat-docs"><div class="stat-num">{with_cover_letter}</div><div class="stat-label">Cover letters generated</div></div>
+  <div class="stat-card stat-applied"><div class="stat-num">{applied}</div><div class="stat-label">Marked applied</div></div>
+  <div class="stat-card stat-manual"><div class="stat-num">{manual}</div><div class="stat-label">Manual apply needed</div></div>
+  <div class="stat-card stat-expired"><div class="stat-num">{expired}</div><div class="stat-label">Expired or inactive</div></div>
 </section>
 
 <section class="filters" aria-label="Job filters">

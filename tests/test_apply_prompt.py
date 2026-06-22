@@ -317,5 +317,53 @@ def test_apply_prompt_requires_real_submission_confirmation(tmp_path, monkeypatc
     )
 
     assert "APPLIED is only allowed after a real final submission confirmation" in prompt
+    assert "output one line beginning with CONFIRMATION:" in prompt
+    assert "RESULT:APPLIED -- submitted successfully, only after also outputting" in prompt
     assert "If you filled a form but did not submit it" in prompt
     assert "SSN/SIN, bank/payment details, biometric verification" in prompt
+
+
+def test_apply_prompt_dry_run_does_not_request_applied_result(tmp_path, monkeypatch) -> None:
+    resume_txt = tmp_path / "tailored.txt"
+    resume_pdf = tmp_path / "tailored.pdf"
+    resume_txt.write_text("resume text", encoding="utf-8")
+    resume_pdf.write_bytes(b"%PDF-1.4\n")
+
+    profile = {
+        "personal": {
+            "full_name": "Example Person",
+            "email": "person@example.com",
+            "phone": "555-0100",
+            "city": "Logan",
+        }
+    }
+
+    monkeypatch.setattr(prompt_mod.config, "APPLY_WORKER_DIR", tmp_path / "workers")
+    monkeypatch.setattr(prompt_mod.config, "load_profile", lambda: profile)
+    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(prompt_mod.config, "load_blocked_sso", lambda: [])
+    monkeypatch.setattr(prompt_mod.config, "load_credentials", lambda: {})
+    monkeypatch.setattr(prompt_mod, "_build_profile_summary", lambda profile: "profile summary")
+    monkeypatch.setattr(prompt_mod, "_build_location_check", lambda profile, search_config: "location check")
+    monkeypatch.setattr(prompt_mod, "_build_salary_section", lambda profile, search_config=None: "salary section")
+    monkeypatch.setattr(prompt_mod, "_build_screening_section", lambda profile, search_config=None: "screening section")
+    monkeypatch.setattr(prompt_mod, "_build_hard_rules", lambda profile: "hard rules")
+    monkeypatch.setattr(answers, "render_answer_bank_for_prompt", lambda: "answer bank")
+
+    prompt = prompt_mod.build_prompt(
+        job={
+            "url": "https://example.com/job",
+            "application_url": "https://example.com/apply",
+            "title": "Support Analyst",
+            "company": "Real Employer",
+            "site": "Indeed",
+            "fit_score": 8,
+            "tailored_resume_path": str(resume_txt),
+        },
+        tailored_resume="resume text",
+        dry_run=True,
+    )
+
+    assert "Do NOT click the final Submit/Apply button" in prompt
+    assert "RESULT:FAILED:dry_run_complete" in prompt
+    assert "then output RESULT:APPLIED with a note that this was a dry run" not in prompt
