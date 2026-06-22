@@ -33,6 +33,73 @@ def test_validation_catches_fabricated_credentials() -> None:
     assert any("Fabricated skill" in error for error in report["errors"])
 
 
+def test_validation_allows_coursework_skill_in_skills_section() -> None:
+    profile = {
+        "skills_boundary": {"tools": ["Python", "Excel"]},
+        "coursework_skills": ["Example College: Active Directory, device imaging"],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    data = {
+        "title": "IT Support Technician",
+        "summary": "Troubleshot user requests and documented support steps.",
+        "skills": {"Tools": "Python, Excel, Active Directory"},
+        "experience": [
+            {
+                "header": "Support Assistant",
+                "subtitle": "Example Employer",
+                "bullets": ["Documented customer issues and escalated unresolved requests."],
+            }
+        ],
+        "projects": [],
+    }
+
+    report = validate_json_fields(data, profile, mode="normal")
+
+    assert report["passed"], report["errors"]
+
+
+def test_validation_rejects_coursework_skill_rewritten_as_paid_work() -> None:
+    profile = {
+        "skills_boundary": {"tools": ["Python", "Excel"]},
+        "coursework_skills": ["Example College: Active Directory, device imaging"],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    data = {
+        "title": "IT Support Technician",
+        "summary": "Troubleshot user requests and documented support steps.",
+        "skills": {"Tools": "Python, Excel, Active Directory"},
+        "experience": [
+            {
+                "header": "Support Assistant",
+                "subtitle": "Example Employer",
+                "bullets": ["Resolved employee account issues in Active Directory."],
+            }
+        ],
+        "projects": [],
+    }
+
+    report = validate_json_fields(data, profile, mode="normal")
+
+    assert not report["passed"]
+    assert any("Coursework-only skill used as paid work" in error for error in report["errors"])
+
+
+def test_validation_rejects_llm_supplied_education() -> None:
+    data = {
+        "title": "Analyst",
+        "summary": "Built reports.",
+        "skills": {"Tools": "Python, Excel"},
+        "experience": [{"header": "Analyst", "subtitle": "Example Employer", "bullets": ["Built reports."]}],
+        "projects": [],
+        "education": "Invented University | Completed Degree",
+    }
+
+    report = validate_json_fields(data, _profile(), mode="normal")
+
+    assert not report["passed"]
+    assert any("Education must be injected" in error for error in report["errors"])
+
+
 _RESUME_NO_PROJECTS = """\
 Jane Doe
 Analyst
@@ -92,3 +159,25 @@ def test_validate_tailored_resume_none_mode_skips_all() -> None:
     report = validate_tailored_resume("garbage text only", {}, mode="none")
     assert report == {"passed": True, "errors": [], "warnings": []}
 
+
+def test_validate_tailored_resume_rejects_coursework_skill_in_experience() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "skills_boundary": {"tools": ["Python", "Excel"]},
+        "coursework_skills": ["Example College: Active Directory"],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "- Built reports",
+        "- Resolved account requests in Active Directory",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Example Employer work included reports and customer support.",
+        mode="normal",
+    )
+
+    assert not report["passed"]
+    assert any("Coursework-only skill used as paid work" in error for error in report["errors"])

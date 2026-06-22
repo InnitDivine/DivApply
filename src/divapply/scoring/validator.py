@@ -84,6 +84,127 @@ def _build_skills_set(profile: dict) -> set[str]:
     return allowed
 
 
+def _split_skill_tokens(raw: str) -> list[str]:
+    """Split a profile/coursework skill summary into comparable skill tokens."""
+    if ":" in raw:
+        raw = raw.split(":", 1)[1]
+    parts = re.split(r"[,;/|]", raw)
+    return [part.strip().lower() for part in parts if part.strip()]
+
+
+def _build_coursework_skills_set(profile: dict) -> set[str]:
+    """Return skills supported by coursework summaries, not paid work."""
+    skills: set[str] = set()
+    for item in profile.get("coursework_skills", []) or []:
+        if isinstance(item, str):
+            skills.update(_split_skill_tokens(item))
+        elif isinstance(item, dict):
+            for value in item.values():
+                if isinstance(value, str):
+                    skills.update(_split_skill_tokens(value))
+                elif isinstance(value, list):
+                    skills.update(str(skill).strip().lower() for skill in value if str(skill).strip())
+    for row in profile.get("coursework", []) or []:
+        raw_skills = row.get("skills") if isinstance(row, dict) else None
+        if isinstance(raw_skills, list):
+            skills.update(str(skill).strip().lower() for skill in raw_skills if str(skill).strip())
+        elif isinstance(raw_skills, str):
+            skills.update(_split_skill_tokens(raw_skills))
+    return {skill for skill in skills if len(skill) > 1}
+
+
+def _profile_evidence_text(profile: dict, original_text: str = "") -> str:
+    """Flatten verified facts into a lower-case evidence string."""
+    chunks: list[str] = [original_text]
+    chunks.extend(skill for skills in profile_skills(profile).values() for skill in skills)
+    chunks.extend(profile.get("coursework_summary", []) or [])
+    chunks.extend(profile.get("coursework_skills", []) or [])
+    resume_facts = profile.get("resume_facts", {}) or {}
+    for value in resume_facts.values():
+        if isinstance(value, list):
+            chunks.extend(str(item) for item in value)
+        elif value:
+            chunks.append(str(value))
+    for cert in profile.get("certifications", []) or []:
+        chunks.append(str(cert))
+    for school in profile.get("education_schools", []) or []:
+        if isinstance(school, dict):
+            chunks.extend(str(value) for value in school.values() if value)
+    return " ".join(chunks).lower()
+
+
+def _add_unsupported_metric_findings(text: str, profile: dict, errors: list[str]) -> None:
+    """Reject generated numeric outcome claims not present in verified metrics."""
+    resume_facts = profile.get("resume_facts", {}) or {}
+    allowed_metrics = " ".join(str(metric).lower() for metric in resume_facts.get("real_metrics", []) or [])
+    metric_patterns = (
+        r"\b\d+(?:\.\d+)?\s?%",
+        r"\b\d+(?:\.\d+)?\s?(?:x|times)\b",
+        r"\b\d+(?:\.\d+)?\s?(?:hours?|hrs?|minutes?|mins?|transactions?|tickets?|calls?|users?|devices?|systems?)\b",
+    )
+    for pattern in metric_patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            metric = match.group(0).lower()
+            if metric not in allowed_metrics:
+                errors.append(f"Unsupported metric: '{match.group(0)}'")
+
+
+def _add_unsupported_credential_findings(text: str, evidence_text: str, errors: list[str]) -> None:
+    """Reject generated credential/degree claims that are absent from verified facts."""
+    patterns = (
+        r"\b(?:certified|certification|certificate|license|licensed|clearance)\b",
+        r"\b(?:associate|bachelor|master|phd|doctorate|degree)\b",
+        r"\b(?:aws certified|pmp|scrum master|comptia|a\+|network\+|security\+)\b",
+    )
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            claim = match.group(0).lower()
+            if claim not in evidence_text:
+                errors.append(f"Unsupported credential or degree claim: '{match.group(0)}'")
+
+
+def _add_coursework_as_work_findings(
+    experience_entries: list[dict],
+    profile: dict,
+    original_text: str,
+    errors: list[str],
+) -> None:
+    """Reject coursework-only skills when they are claimed inside paid work."""
+    coursework_skills = _build_coursework_skills_set(profile)
+    if not coursework_skills:
+        return
+    paid_work_evidence = (original_text + " " + " ".join(_build_skills_set(profile))).lower()
+    coursework_only = {skill for skill in coursework_skills if skill not in paid_work_evidence}
+    if not coursework_only:
+        return
+    for entry in experience_entries:
+        header = str(entry.get("header", "")).lower()
+        subtitle = str(entry.get("subtitle", "")).lower()
+        context = f"{header} {subtitle}"
+        if "course" in context or "project" in context or "school" in context:
+            continue
+        for bullet in entry.get("bullets", []) or []:
+            bullet_lower = str(bullet).lower()
+            for skill in sorted(coursework_only):
+                if re.search(r"\b" + re.escape(skill) + r"\b", bullet_lower):
+                    errors.append(f"Coursework-only skill used as paid work: '{skill}'")
+
+
+def _section_text(text: str, section: str, next_sections: tuple[str, ...]) -> str:
+    """Return text between an uppercase resume section and the next section."""
+    pattern = r"(?im)^" + re.escape(section) + r"\s*$"
+    match = re.search(pattern, text)
+    if not match:
+        return ""
+    start = match.end()
+    end = len(text)
+    for next_section in next_sections:
+        next_match = re.search(r"(?im)^" + re.escape(next_section) + r"\s*$", text[start:])
+        if next_match:
+            end = min(end, start + next_match.start())
+    return text[start:end]
+
+
 def sanitize_text(text: str) -> str:
     """Auto-fix common LLM output issues instead of rejecting."""
     text = text.replace(" \u2014 ", ", ").replace("\u2014", ", ")   # em dash -> comma
@@ -146,6 +267,8 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     # projects must exist but can be empty list
     if "projects" not in data:
         errors.append("Missing required field: projects")
+    if data.get("education"):
+        errors.append("Education must be injected from profile, not LLM output")
     if errors:
         return {"passed": False, "errors": errors, "warnings": warnings}
 
@@ -155,10 +278,11 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
     # Skills: check for fabrication (always enforced)
     if isinstance(data["skills"], dict):
         skills_text = " ".join(str(v) for v in data["skills"].values()).lower()
+        evidence_text = _profile_evidence_text(profile)
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
-            if fake in skills_text:
+            if fake in skills_text and fake not in evidence_text:
                 errors.append(f"Fabricated skill: '{fake}'")
 
     # Experience: check preserved companies (first 2 are required, rest are warnings)
@@ -181,6 +305,7 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
         for entry in data["experience"]:
             for b in entry.get("bullets", []):
                 all_text_parts.append(b)
+        _add_coursework_as_work_findings(data["experience"], profile, "", errors)
 
     # Projects: collect bullets
     if isinstance(data["projects"], list):
@@ -193,6 +318,9 @@ def validate_json_fields(data: dict, profile: dict, mode: str = "normal") -> dic
 
     # Bulk text checks
     all_text = " ".join(all_text_parts).lower()
+    evidence_text = _profile_evidence_text(profile)
+    _add_unsupported_metric_findings(all_text, profile, errors)
+    _add_unsupported_credential_findings(all_text, evidence_text, errors)
 
     # LLM self-talk is always an error regardless of mode (indicates broken output)
     _add_llm_leak_findings(all_text, errors)
@@ -282,10 +410,11 @@ def validate_tailored_resume(
     skills_end = text_lower.find("experience", skills_start) if skills_start != -1 else -1
     if skills_start != -1 and skills_end != -1:
         skills_block = text_lower[skills_start:skills_end]
+        evidence_text = _profile_evidence_text(profile, original_text)
         for fake in FABRICATION_WATCHLIST:
             if len(fake) <= 2:
                 continue
-            if fake in skills_block:
+            if fake in skills_block and fake not in evidence_text:
                 errors.append(f"FABRICATED SKILL in Technical Skills: '{fake}'")
 
     # 8. Scan full document for fabrication watchlist items not in original
@@ -296,6 +425,17 @@ def validate_tailored_resume(
                 continue
             if fake in text_lower and fake not in original_lower:
                 warnings.append(f"New tool/skill appeared: '{fake}' (not in original)")
+
+    # 8b. Coursework-only skills may appear in skills, but not as paid-work duties.
+    experience_block = _section_text(text, "EXPERIENCE", ("PROJECTS", "EDUCATION"))
+    experience_entry = {"header": "EXPERIENCE", "subtitle": "", "bullets": experience_block.splitlines()}
+    _add_coursework_as_work_findings([experience_entry], profile, original_text, errors)
+
+    # 8c. Numeric outcomes and credential/degree claims must be supported.
+    evidence_text = _profile_evidence_text(profile, original_text)
+    _add_unsupported_metric_findings(text, profile, errors)
+    non_education_text = text.replace(_section_text(text, "EDUCATION", ()), "")
+    _add_unsupported_credential_findings(non_education_text.lower(), evidence_text, errors)
 
     # 9. Em dashes (should be auto-fixed by sanitize_text, but safety net)
     if "\u2014" in text or "\u2013" in text:
