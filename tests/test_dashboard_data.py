@@ -4,11 +4,14 @@ from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply.database import close_connection, init_db
 
 
+LONG_DESCRIPTION = "Full job description with responsibilities and minimum qualifications. " * 5
+
+
 def _insert_job(conn, url: str, **overrides) -> None:
     values = {
         "title": "Support Analyst",
         "site": "indeed",
-        "full_description": "Help users with technical issues.",
+        "full_description": LONG_DESCRIPTION,
         "application_url": "https://apply.example/job",
         "fit_score": 7,
         "archived_at": None,
@@ -130,14 +133,20 @@ def test_dashboard_snapshot_ready_requires_description_and_nonempty_application_
     conn = init_db(db_path)
     _insert_job(conn, "https://example.com/ready", title="Ready")
     _insert_job(conn, "https://example.com/no-description", title="No Description", full_description=None)
+    _insert_job(conn, "https://example.com/short-description", title="Short Description", full_description="Metadata.")
     _insert_job(conn, "https://example.com/blank-apply", title="Blank Apply", application_url="")
     conn.commit()
 
     snapshot = fetch_dashboard_snapshot(conn)
 
-    assert snapshot.total == 3
+    assert snapshot.total == 4
     assert snapshot.ready == 1
-    assert {row["title"] for row in snapshot.jobs} == {"Ready", "No Description", "Blank Apply"}
+    assert {row["title"] for row in snapshot.jobs} == {
+        "Ready",
+        "No Description",
+        "Short Description",
+        "Blank Apply",
+    }
     close_connection(db_path)
 
 

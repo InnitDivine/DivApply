@@ -7,6 +7,9 @@ from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply import view
 
 
+LONG_DESCRIPTION = "Full job description with responsibilities and minimum qualifications. " * 5
+
+
 def _dashboard_db() -> sqlite3.Connection:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
@@ -51,7 +54,7 @@ def _dashboard_db() -> sqlite3.Connection:
             "Logan, UT",
             "RBC",
             "direct",
-            "Build accessible tools for job search workflows.",
+            LONG_DESCRIPTION,
             "https://example.com/apply",
             None,
             8,
@@ -341,7 +344,7 @@ def test_dashboard_description_text_returns_full_description(monkeypatch):
     status, text = view._dashboard_description_text({"url": "https://example.com/job"})
 
     assert status == 200
-    assert text == "Build accessible tools for job search workflows."
+    assert text == LONG_DESCRIPTION
 
 
 def test_fetch_dashboard_snapshot_shapes_dashboard_read_model():

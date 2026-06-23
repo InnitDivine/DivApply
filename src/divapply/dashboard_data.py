@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sqlite3
 
-from divapply.database import ensure_columns, get_connection
+from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, ensure_columns, get_connection
 
 
 @dataclass(frozen=True)
@@ -58,7 +58,7 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     ready = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_ready_table} "
         "WHERE archived_at IS NULL "
-        "AND full_description IS NOT NULL "
+        f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
         "AND application_url IS NOT NULL "
         "AND application_url != ''"
     ).fetchone()[0] or 0)
