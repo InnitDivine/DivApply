@@ -21,6 +21,11 @@ from divapply.migrations import run_migrations
 
 log = logging.getLogger(__name__)
 
+MIN_FULL_DESCRIPTION_CHARS = 200
+MEANINGFUL_FULL_DESCRIPTION_SQL = (
+    f"full_description IS NOT NULL AND length(trim(full_description)) >= {MIN_FULL_DESCRIPTION_CHARS}"
+)
+
 # Thread-local connection storage - each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
 _local = threading.local()
@@ -912,18 +917,18 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
 
     stale_cutoff = (datetime.now(timezone.utc) - timedelta(seconds=3600)).isoformat()
     count_row = conn.execute(
-        """
+        f"""
         SELECT
             COUNT(*) AS total,
             SUM(CASE WHEN detail_scraped_at IS NULL THEN 1 ELSE 0 END) AS pending_detail,
-            SUM(CASE WHEN full_description IS NOT NULL THEN 1 ELSE 0 END) AS with_description,
+            SUM(CASE WHEN {MEANINGFUL_FULL_DESCRIPTION_SQL} THEN 1 ELSE 0 END) AS with_description,
             SUM(CASE WHEN detail_error IS NOT NULL THEN 1 ELSE 0 END) AS detail_errors,
             SUM(CASE WHEN fit_score IS NOT NULL THEN 1 ELSE 0 END) AS scored,
-            SUM(CASE WHEN full_description IS NOT NULL AND fit_score IS NULL THEN 1 ELSE 0 END) AS unscored,
+            SUM(CASE WHEN {MEANINGFUL_FULL_DESCRIPTION_SQL} AND fit_score IS NULL THEN 1 ELSE 0 END) AS unscored,
             SUM(CASE WHEN tailored_resume_path IS NOT NULL THEN 1 ELSE 0 END) AS tailored,
             SUM(CASE
                 WHEN fit_score >= 7
-                 AND full_description IS NOT NULL
+                 AND {MEANINGFUL_FULL_DESCRIPTION_SQL}
                  AND tailored_resume_path IS NULL
                 THEN 1 ELSE 0
             END) AS untailored_eligible,
@@ -1132,16 +1137,16 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict],
 _STAGE_CONDITIONS = {
     "discovered": "1=1",
     "pending_detail": "detail_scraped_at IS NULL",
-    "enriched": "full_description IS NOT NULL",
-    "pending_score": "full_description IS NOT NULL AND fit_score IS NULL",
+    "enriched": MEANINGFUL_FULL_DESCRIPTION_SQL,
+    "pending_score": f"{MEANINGFUL_FULL_DESCRIPTION_SQL} AND fit_score IS NULL",
     "scored": "fit_score IS NOT NULL",
     "pending_tailor": (
-        "fit_score >= ? AND full_description IS NOT NULL "
+        f"fit_score >= ? AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
         "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
     ),
     "tailored": "tailored_resume_path IS NOT NULL",
     "pending_cover": (
-        "fit_score >= ? AND full_description IS NOT NULL "
+        f"fit_score >= ? AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
         "AND tailored_resume_path IS NOT NULL "
         "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
         "AND COALESCE(cover_attempts, 0) < 5"

@@ -128,6 +128,7 @@ def _has_schedule_only_mismatch(llm_result: dict) -> bool:
 
 def _has_referral_or_priority_exception(*, job_description: str, resume_text: str, llm_result: dict) -> bool:
     """Return True when search context or LLM evidence marks a referral exception."""
+    job_evidence = job_description.casefold()
     llm_evidence = " ".join(
         str(llm_result.get(key, ""))
         for key in ("risk_flags", "missing_skills", "apply_or_skip_reason", "reasoning")
@@ -136,9 +137,9 @@ def _has_referral_or_priority_exception(*, job_description: str, resume_text: st
     has_exception = any(term in evidence for term in _REFERRAL_EXCEPTION_TERMS)
     if not has_exception:
         return False
-    if any(term in evidence for term in _PRIORITY_EMPLOYER_TERMS):
+    if any(term in job_evidence for term in _PRIORITY_EMPLOYER_TERMS):
         return True
-    return "priority employer" in evidence or "employer priority" in evidence
+    return "priority employer" in job_evidence or "employer priority" in job_evidence
 
 
 def composite_score(

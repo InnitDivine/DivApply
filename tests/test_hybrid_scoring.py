@@ -221,6 +221,31 @@ def test_composite_score_lifts_schedule_only_sutter_referral_exception() -> None
     assert breakdown["referral_schedule_exception"] is True
 
 
+def test_composite_score_does_not_apply_sutter_exception_to_other_employers() -> None:
+    result = composite_score(
+        job_description=(
+            "TITLE: Front Desk Representative\n"
+            "COMPANY: Local Retail Employer\n"
+            "DESCRIPTION:\nFull-time role. Required: customer service, scheduling, and records."
+        ),
+        resume_text=(
+            "Customer service, scheduling, records, payments.\n"
+            "Referral/priority employer schedule exception: Sutter Health may be scored without the part-time-only penalty."
+        ),
+        llm_result={
+            "score": 4,
+            "risk_flags": "full-time schedule mismatch",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Only apply if the schedule works.",
+            "reasoning": "Only concern is full-time schedule against a part-time search filter.",
+        },
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] < 6
+    assert breakdown["referral_schedule_exception"] is False
+
+
 def test_composite_score_keeps_hard_gap_cap_for_sutter_referral_exception() -> None:
     result = composite_score(
         job_description="COMPANY: Sutter Health\nDESCRIPTION:\nRequired: RN license and patient care.",

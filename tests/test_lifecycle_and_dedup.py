@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from divapply.database import (
+    MIN_FULL_DESCRIPTION_CHARS,
     add_application_event,
     archive_job,
     canonical_job_key,
@@ -19,6 +20,9 @@ from divapply.database import (
     record_reliability_event,
     store_jobs,
 )
+
+
+LONG_DESCRIPTION = "Full job description with responsibilities and minimum qualifications. " * 5
 
 
 def test_get_connection_creates_missing_parent_directory(tmp_path) -> None:
@@ -161,12 +165,12 @@ def test_get_jobs_by_stage_pending_apply_requires_nonempty_application_url(tmp_p
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         [
-            ("https://example.com/empty", "Empty", 8, "Description", "", "resume.txt", "2026-01-01"),
+            ("https://example.com/empty", "Empty", 8, LONG_DESCRIPTION, "", "resume.txt", "2026-01-01"),
             (
                 "https://example.com/ready",
                 "Ready",
                 8,
-                "Description",
+                LONG_DESCRIPTION,
                 "https://apply.example/ready",
                 "resume.txt",
                 "2026-01-02",
@@ -194,13 +198,42 @@ def test_get_jobs_by_stage_pending_cover_treats_empty_path_as_missing(tmp_path) 
         )
         VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        ("https://example.com/cover", "Cover", 8, "Description", "resume.txt", "", "2026-01-01"),
+        ("https://example.com/cover", "Cover", 8, LONG_DESCRIPTION, "resume.txt", "", "2026-01-01"),
     )
     conn.commit()
 
     rows = get_jobs_by_stage(conn=conn, stage="pending_cover", min_score=7)
 
     assert [row["url"] for row in rows] == ["https://example.com/cover"]
+    close_connection(db_path)
+
+
+def test_get_jobs_by_stage_pending_score_requires_meaningful_description(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.executemany(
+        """
+        INSERT INTO jobs (url, title, full_description, discovered_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        [
+            ("https://example.com/snippet", "Snippet", "One-line metadata.", "2026-01-01"),
+            (
+                "https://example.com/full",
+                "Full",
+                "A" * MIN_FULL_DESCRIPTION_CHARS,
+                "2026-01-02",
+            ),
+        ],
+    )
+    conn.commit()
+
+    rows = get_jobs_by_stage(conn=conn, stage="pending_score")
+    stats = get_stats(conn)
+
+    assert [row["url"] for row in rows] == ["https://example.com/full"]
+    assert stats["with_description"] == 1
+    assert stats["unscored"] == 1
     close_connection(db_path)
 
 
@@ -433,7 +466,7 @@ def test_get_stats_reports_aggregate_stage_counts(tmp_path) -> None:
                 "Unscored",
                 "Indeed",
                 "2026-01-01",
-                "Description",
+                LONG_DESCRIPTION,
                 None,
                 None,
                 None,
@@ -452,7 +485,7 @@ def test_get_stats_reports_aggregate_stage_counts(tmp_path) -> None:
                 "Ready",
                 "LinkedIn",
                 "2026-01-01",
-                "Description",
+                LONG_DESCRIPTION,
                 "minor scrape issue",
                 8,
                 "resume.txt",
@@ -471,7 +504,7 @@ def test_get_stats_reports_aggregate_stage_counts(tmp_path) -> None:
                 "Applied",
                 "LinkedIn",
                 "2026-01-01",
-                "Description",
+                LONG_DESCRIPTION,
                 None,
                 6,
                 "resume2.txt",

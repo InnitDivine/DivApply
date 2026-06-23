@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 
 from divapply.config import RESUME_PATH, load_profile, load_search_config, profile_skills
-from divapply.database import get_connection, get_jobs_by_stage
+from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
@@ -378,11 +378,11 @@ def run_scoring(
 
     if target_url:
         jobs = conn.execute(
-            "SELECT * FROM jobs WHERE url = ? AND full_description IS NOT NULL",
+            f"SELECT * FROM jobs WHERE url = ? AND {MEANINGFUL_FULL_DESCRIPTION_SQL}",
             (target_url,),
         ).fetchall()
     elif rescore:
-        query = "SELECT * FROM jobs WHERE full_description IS NOT NULL"
+        query = f"SELECT * FROM jobs WHERE {MEANINGFUL_FULL_DESCRIPTION_SQL}"
         if limit > 0:
             query += " LIMIT ?"
             jobs = conn.execute(query, (limit,)).fetchall()
