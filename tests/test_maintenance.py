@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from divapply import config
@@ -76,6 +77,25 @@ def test_cleanup_artifacts_deletes_only_selected_files_and_requires_backup_flag(
     assert result.deleted == (backup,)
     assert not backup.exists()
     assert not backup.parent.exists()
+
+
+def test_cleanup_artifacts_skips_symlink_candidates(tmp_path, monkeypatch) -> None:
+    app_dir = _patch_cleanup_paths(monkeypatch, tmp_path)
+    target = app_dir / "real-dashboard.html"
+    target.write_text("keep", encoding="utf-8")
+    symlink = app_dir / "dashboard-bench-link.html"
+    try:
+        symlink.symlink_to(target)
+    except OSError as exc:
+        pytest.skip(f"symlinks unavailable in this environment: {exc}")
+
+    result = cleanup_artifacts(dry_run=False)
+
+    assert symlink in result.candidates
+    assert result.deleted == ()
+    assert result.skipped == (symlink,)
+    assert symlink.exists()
+    assert target.exists()
 
 
 def test_cleanup_command_is_preview_by_default(tmp_path, monkeypatch) -> None:
