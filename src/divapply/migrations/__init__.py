@@ -32,6 +32,9 @@ def _m0002_application_events(conn: sqlite3.Connection) -> None:
             FOREIGN KEY(job_url) REFERENCES jobs(url)
         )
     """)
+    _add_column(conn, "application_events", "notes", "TEXT")
+    _add_column(conn, "application_events", "follow_up_at", "TEXT")
+    _add_column(conn, "application_events", "created_at", "TEXT DEFAULT CURRENT_TIMESTAMP")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_job_url ON application_events(job_url)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_application_events_follow_up ON application_events(follow_up_at)")
 

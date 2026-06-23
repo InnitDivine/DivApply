@@ -721,6 +721,13 @@ def clean_page_html(html: str, max_chars: int = 150_000) -> str:
     if main and len(str(main)) > 1000:
         soup = BeautifulSoup(str(main), "html.parser")
 
+    for hidden in soup.select(
+        "[class*='d-none'], [class*='hidden'], [class*='sr-only'], "
+        "[hidden], [aria-hidden='true'], [style*='display:none'], [style*='display: none'], "
+        "[style*='visibility:hidden'], [style*='visibility: hidden']"
+    ):
+        hidden.decompose()
+
     for tag in soup.find_all(["script", "style", "svg", "noscript", "iframe",
                               "link", "meta", "head", "footer", "nav"]):
         tag.decompose()

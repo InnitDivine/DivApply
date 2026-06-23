@@ -466,7 +466,7 @@ def _has_submission_confirmation(output: str) -> bool:
 
 
 RESULT_LINE_RE = re.compile(
-    r"^\s*RESULT:(APPLIED|EXPIRED|CAPTCHA|LOGIN_ISSUE|FAILED(?::[^\r\n]+)?)\s*$",
+    r"^\s*RESULT:\s*(APPLIED|EXPIRED|CAPTCHA|LOGIN_ISSUE|FAILED(?:\s*:\s*[^\r\n]+)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -490,7 +490,7 @@ def _last_explicit_result(output: str) -> str | None:
     for line in region.splitlines():
         match = RESULT_LINE_RE.match(line)
         if match:
-            result = match.group(1)
+            result = re.sub(r"\s*:\s*", ":", match.group(1).strip())
     return result
 
 

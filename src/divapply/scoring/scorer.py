@@ -110,7 +110,7 @@ def _parse_score_response(response: str) -> dict:
     }
 
     for line in response.split("\n"):
-        line = line.strip()
+        line = line.strip().replace("**", "")
         upper = line.upper()
         if upper.startswith(("FIT_SCORE:", "SCORE:")):
             try:
