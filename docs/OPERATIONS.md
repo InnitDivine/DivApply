@@ -11,6 +11,7 @@ CI runs on pull requests, pushes to `main`, and manual dispatch. It verifies:
 - Dependency audit with `pip-audit`
 - Source distribution and wheel build
 - Package metadata with `twine check`
+- Clean wheel install smoke checks for both `divapply` and `python -m divapply`
 - Docker image build and CLI smoke checks
 
 CI and release jobs use explicit read-only repository permissions except for the publish step, which grants only the `contents: write` and `id-token: write` permissions needed for GitHub Releases and PyPI Trusted Publishing. Jobs have timeouts so hung tests, builds, audits, or Docker commands do not block the pipeline indefinitely.
@@ -69,8 +70,11 @@ python -m pip install "divapply[full]"
 python -m pip install --no-deps python-jobspy
 python -c "import jobspy"
 divapply --version
+python -m divapply --version
 divapply selfcheck
 ```
+
+The clean install smoke test intentionally installs `python-jobspy` with `--no-deps` after `divapply[full]`. Upstream `python-jobspy` 1.1.82 still pins `markdownify<0.14.0`, while DivApply's secure runtime dependency floor requires `markdownify>=0.14.1`.
 
 ## Monitoring And Logging
 

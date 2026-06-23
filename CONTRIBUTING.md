@@ -7,10 +7,15 @@ Thanks for helping improve DivApply. This project is a Windows-first, AI-assiste
 ```bash
 git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
-python -m pip install -e ".[dev]"
+python -m pip install -e ".[dev,full]"
+python -m pip install --no-deps python-jobspy
 divapply --version
+python -m divapply --version
 python -m pytest -q
+ruff check .
 ```
+
+The separate `python -m pip install --no-deps python-jobspy` step matches the runtime install path in the README. Do not install upstream JobSpy dependencies directly until its `markdownify<0.14.0` pin is relaxed.
 
 ## Repo Layout
 
@@ -21,5 +26,6 @@ python -m pytest -q
 ## Contributing Notes
 
 - Keep the public CLI and docs aligned with DivApply.
+- Keep editable installs and built wheel installs behaviorally aligned.
 - Prefer small, reviewable changes.
 - If you use AI-assisted code generation, review the result before commit.
