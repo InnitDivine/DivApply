@@ -351,6 +351,45 @@ def test_profile_evidence_context_marks_in_progress_education_without_completion
     assert "Example College | AAS | Information Technology | completed" not in context
 
 
+def test_score_job_prompt_includes_coursework_as_internal_only(monkeypatch) -> None:
+    captured: dict = {}
+
+    class FakeClient:
+        def chat(self, messages, **kwargs):
+            captured["messages"] = messages
+            return "\n".join([
+                "FIT_SCORE: 6",
+                "MATCHED_SKILLS: Python",
+                "MISSING_SKILLS: none",
+                "KEYWORD_HITS: support",
+                "RISK_FLAGS: none",
+                "APPLY_OR_SKIP_REASON: Apply.",
+                "SCORE_REASONING: Coursework supports the support workflow.",
+            ])
+
+    monkeypatch.setattr(scorer, "get_client_for_stage", lambda stage: FakeClient())
+
+    scorer.score_job(
+        resume_text="Helped users and wrote Python reports.",
+        job={
+            "title": "IT Support Technician",
+            "company": "Example Health",
+            "site": "Example ATS",
+            "location": "Remote",
+            "full_description": "Support users and troubleshoot access issues.",
+        },
+        coursework_summary="Example College: Help desk fundamentals.",
+        coursework_skills_summary="Example College: Active Directory exposure.",
+        profile_context="Education: Example College | AAS | Information Technology | in progress",
+    )
+
+    user_prompt = captured["messages"][1]["content"]
+    assert "ACADEMIC COURSEWORK (internal only, do not cite unless already in resume)" in user_prompt
+    assert "COURSEWORK SKILL MAP (internal only, do not cite unless already in resume)" in user_prompt
+    assert "Active Directory exposure" in user_prompt
+    assert "do not treat in-progress credentials as completed" in user_prompt
+
+
 def test_search_evidence_context_includes_schedule_filters() -> None:
     context = _build_search_evidence_context(
         {

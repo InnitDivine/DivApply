@@ -93,6 +93,25 @@ def test_cover_letter_html_escapes_text_but_keeps_contact_separator() -> None:
     assert "fonts.googleapis.com" not in html
 
 
+def test_convert_to_pdf_html_only_detects_cover_letter_by_filename(tmp_path) -> None:
+    from divapply.scoring.pdf import convert_to_pdf
+
+    text_path = tmp_path / "Example_CL.txt"
+    text_path.write_text("Hello,\n\nI support A&B <systems>.", encoding="utf-8")
+
+    out = convert_to_pdf(
+        text_path,
+        output_path=tmp_path / "cover.html",
+        html_only=True,
+        profile={"personal": {"full_name": "Example Person", "email": "person@example.com"}},
+    )
+
+    html = out.read_text(encoding="utf-8")
+    assert "Example Person" in html
+    assert "A&amp;B &lt;systems&gt;" in html
+    assert "Dear" not in text_path.read_text(encoding="utf-8")
+
+
 def test_parse_resume_handles_malformed_generated_headings_and_preserves_sections() -> None:
     resume = parse_resume("""Example Person
 Support Analyst

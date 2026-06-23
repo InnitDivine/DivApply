@@ -181,3 +181,23 @@ def test_validate_tailored_resume_rejects_coursework_skill_in_experience() -> No
 
     assert not report["passed"]
     assert any("Coursework-only skill used as paid work" in error for error in report["errors"])
+
+
+def test_validate_tailored_resume_rejects_unsupported_license_claim() -> None:
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "Built reports for Example Employer while maintaining a CPA license.",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        {
+            "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+            "resume_facts": {"preserved_companies": ["Example Employer"]},
+        },
+        original_text="Example Employer work included reporting.",
+        mode="normal",
+    )
+
+    assert not report["passed"]
+    assert any("Unsupported credential or degree claim" in error for error in report["errors"])

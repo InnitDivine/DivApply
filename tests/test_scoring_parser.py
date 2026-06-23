@@ -36,3 +36,26 @@ def test_parse_score_response_keeps_old_format_compatible() -> None:
     assert parsed["keyword_hits"] == "Excel"
     assert parsed["reasoning"] == "Good match"
 
+
+def test_parse_score_response_accepts_markdown_bold_labels() -> None:
+    parsed = _parse_score_response(
+        "\n".join(
+            [
+                "**FIT_SCORE:** 8",
+                "**MATCHED_SKILLS:** Python, SQL",
+                "**MISSING_SKILLS:** none",
+                "**KEYWORD_HITS:** reporting",
+                "**RISK_FLAGS:** none",
+                "**APPLY_OR_SKIP_REASON:** Apply.",
+                "**SCORE_REASONING:** Strong overlap.",
+            ]
+        )
+    )
+
+    assert parsed["score"] == 8
+    assert parsed["matched_skills"] == "Python, SQL"
+    assert parsed["missing_skills"] == "none"
+    assert parsed["keyword_hits"] == "reporting"
+    assert parsed["risk_flags"] == "none"
+    assert parsed["apply_or_skip_reason"] == "Apply."
+    assert parsed["reasoning"] == "Strong overlap."

@@ -21,6 +21,26 @@ def test_extract_json_raises_for_non_json_text() -> None:
         smartextract.extract_json("No structured response")
 
 
+def test_clean_page_html_removes_hidden_inactive_blocks() -> None:
+    html = """
+    <main>
+      <section class="jobs-list">
+        <article class="job-card"><a href="/jobs/live">Device Support Technician I</a></article>
+      </section>
+      <section class="phenom-hidden" aria-hidden="true">
+        We're Sorry, This Job Is Inactive. This opportunity has passed.
+      </section>
+      <div style="display:none">posting has expired</div>
+    </main>
+    """
+
+    cleaned = smartextract.clean_page_html(html)
+
+    assert "Device Support Technician I" in cleaned
+    assert "This Job Is Inactive" not in cleaned
+    assert "posting has expired" not in cleaned
+
+
 def test_resolve_json_path_handles_nested_lists_and_dict_display_values() -> None:
     data = {
         "results": [

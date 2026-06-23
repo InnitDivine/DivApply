@@ -25,6 +25,20 @@ def test_extract_result_prefers_contract_status(monkeypatch) -> None:
     assert updates[-1]["status"] == "applied"
 
 
+def test_extract_result_accepts_result_line_with_space_after_colon(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "Confirmation number ABC-123.\nRESULT: APPLIED\n",
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "applied"
+
+
 def test_extract_result_rejects_applied_without_confirmation(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "add_event", lambda message: None)
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
