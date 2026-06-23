@@ -472,10 +472,10 @@ def _dismiss_popups(page) -> None:
 
 
 def _linkedin_login(page, profile: dict) -> bool:
-    """Attempt to log into LinkedIn using credentials from profile.json."""
+    """Attempt to log into LinkedIn using saved credentials or env defaults."""
     email, password = _get_credentials(profile, "linkedin.com")
     if not email or not password:
-        log.warning("No LinkedIn credentials found in profile.json")
+        log.warning("No LinkedIn credentials found in credentials.yaml or environment")
         return False
 
     log.info("Attempting LinkedIn login with %s...", email)
@@ -792,10 +792,10 @@ def _automate_linkedin(context, profile: dict, content: dict) -> PlatformResult:
 # ---------------------------------------------------------------------------
 
 def _facebook_login(page, profile: dict) -> bool:
-    """Attempt to log into Facebook using credentials from profile.json."""
+    """Attempt to log into Facebook using saved credentials or env defaults."""
     email, password = _get_credentials(profile, "facebook.com")
     if not email or not password:
-        log.warning("No Facebook credentials found in profile.json")
+        log.warning("No Facebook credentials found in credentials.yaml or environment")
         return False
 
     log.info("Attempting Facebook login with %s...", email)
