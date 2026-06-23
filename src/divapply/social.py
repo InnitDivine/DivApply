@@ -1,4 +1,4 @@
-﻿"""Social platform profile syncer â€” full browser automation.
+"""Social platform profile syncer - full browser automation.
 
 Extracts login cookies from the user's Firefox profile, launches Playwright
 Firefox with those cookies, and automates profile updates on each platform.
@@ -70,7 +70,7 @@ def _get_firefox_profile_path() -> Path:
     """Find the user's active Firefox profile directory."""
     profiles_ini = Path(os.environ.get("APPDATA", "")) / "Mozilla" / "Firefox" / "profiles.ini"
     if not profiles_ini.exists():
-        raise FileNotFoundError("Firefox profiles.ini not found â€” is Firefox installed?")
+        raise FileNotFoundError("Firefox profiles.ini not found - is Firefox installed?")
 
     profiles_dir = profiles_ini.parent / "Profiles"
 
@@ -161,7 +161,7 @@ def _extract_cookies(domains: list[str]) -> list[dict]:
             if expiry and expiry > 0:
                 exp = float(expiry)
                 if exp > 32503680000:
-                    exp = exp / 1000.0  # convert ms â†’ seconds
+                    exp = exp / 1000.0  # convert ms -> seconds
                 # Skip already-expired cookies
                 if exp < now_s:
                     continue
@@ -238,8 +238,8 @@ CURRENT RESUME:
 
 Return ONLY valid JSON (no fences, no commentary):
 {{
-  "headline": "LinkedIn headline â€” max 120 chars, keyword-rich for recruiters",
-  "summary": "About section â€” 3-4 short paragraphs, first person, professional. Highlight government experience, IT skills, and career direction. Include keywords recruiters search for. Under 2000 chars.",
+  "headline": "LinkedIn headline - max 120 chars, keyword-rich for recruiters",
+  "summary": "About section - 3-4 short paragraphs, first person, professional. Highlight government experience, IT skills, and career direction. Include keywords recruiters search for. Under 2000 chars.",
   "skills": ["skill1", "skill2", "...up to 15 top skills ordered by relevance"]
 }}"""
 
@@ -319,7 +319,7 @@ def _update_github(profile: dict, bio: str) -> PlatformResult:
 
     if not token:
         result.content = {"bio": bio}
-        result.error = "GITHUB_TOKEN not set â€” bio generated but not pushed"
+        result.error = "GITHUB_TOKEN not set - bio generated but not pushed"
         return result
 
     p = profile.get("personal", {})
@@ -522,14 +522,14 @@ def _linkedin_login(page, profile: dict) -> bool:
     url = page.url.lower()
     if "checkpoint" in url or "challenge" in url:
         _screenshot(page, "linkedin_login_challenge")
-        log.warning("LinkedIn login hit a security challenge â€” may need manual verification")
+        log.warning("LinkedIn login hit a security challenge - may need manual verification")
         return False
 
     if "feed" in url or "mynetwork" in url or "in/" in url:
         log.info("LinkedIn login successful")
         return True
 
-    # One more check â€” are we still on login page?
+    # One more check - are we still on login page?
     if "login" not in url:
         log.info("LinkedIn login appears successful (url: %s)", url[:80])
         return True
@@ -557,7 +557,7 @@ def _linkedin_check_login(page, profile: dict) -> bool:
     if logged_in:
         return True
 
-    # Cookies didn't work â€” try logging in with credentials
+    # Cookies didn't work - try logging in with credentials
     log.info("LinkedIn cookies didn't authenticate, attempting login...")
     return _linkedin_login(page, profile)
 
@@ -582,7 +582,7 @@ def _linkedin_update_headline(page, profile: dict, headline: str) -> bool:
     # Wait for the edit modal/form to appear
     time.sleep(2)
 
-    # Find the headline field â€” LinkedIn labels it "Headline" or has placeholder
+    # Find the headline field - LinkedIn labels it "Headline" or has placeholder
     filled = False
     # Strategy 1: get_by_label
     for label_text in ["Headline", "Headline*"]:
@@ -746,7 +746,7 @@ def _automate_linkedin(context, profile: dict, content: dict) -> PlatformResult:
         # Check login (attempts credential login if cookies fail)
         if not _linkedin_check_login(page, profile):
             _screenshot(page, "linkedin_not_logged_in")
-            result.error = "Not logged into LinkedIn â€” cookies expired and credential login failed"
+            result.error = "Not logged into LinkedIn - cookies expired and credential login failed"
             return result
 
         log.info("LinkedIn: logged in, starting updates...")
@@ -832,7 +832,7 @@ def _facebook_login(page, profile: dict) -> bool:
     url = page.url.lower()
     if "checkpoint" in url or "two_step_verification" in url:
         _screenshot(page, "facebook_login_challenge")
-        log.warning("Facebook login hit a security challenge â€” may need manual verification")
+        log.warning("Facebook login hit a security challenge - may need manual verification")
         return False
 
     # Check we're past login
@@ -877,7 +877,7 @@ def _facebook_check_login(page, profile: dict) -> bool:
 def _facebook_update_bio(page, bio: str) -> bool:
     """Update the Facebook bio/intro text.
 
-    Current Facebook UI flow: profile â†’ "Edit profile" button â†’ bio textarea
+    Current Facebook UI flow: profile -> "Edit profile" button -> bio textarea
     in the edit profile dialog.
     """
     page.goto("https://www.facebook.com/me", wait_until="domcontentloaded", timeout=20000)
@@ -912,7 +912,7 @@ def _facebook_update_bio(page, bio: str) -> bool:
     if _safe_click(page, bio_edit, timeout=3000):
         time.sleep(1)
 
-    # Find textarea â€” could be labeled "Bio", "Describe who you are", or just a textarea
+    # Find textarea - could be labeled "Bio", "Describe who you are", or just a textarea
     for selector in [
         page.get_by_role("textbox", name="Describe who you are"),
         page.get_by_placeholder("Describe who you are"),
@@ -1157,7 +1157,7 @@ def _automate_facebook(context, profile: dict, bio: str) -> PlatformResult:
     try:
         if not _facebook_check_login(page, profile):
             _screenshot(page, "facebook_not_logged_in")
-            result.error = "Not logged into Facebook â€” cookies expired and credential login failed"
+            result.error = "Not logged into Facebook - cookies expired and credential login failed"
             return result
 
         log.info("Facebook: logged in, starting updates...")
@@ -1242,7 +1242,7 @@ def sync_profiles(
         bio = _generate_github_bio(profile)
         if dry_run:
             result = PlatformResult(platform="GitHub", content={"bio": bio})
-            result.error = "dry run â€” not pushed"
+            result.error = "dry run - not pushed"
         else:
             result = _update_github(profile, bio)
         results.append(result)
@@ -1319,14 +1319,14 @@ def sync_profiles(
                     "summary": linkedin_content["summary"],
                     "skills": ", ".join(linkedin_content.get("skills", [])),
                 },
-                error="dry run â€” not automated",
+                error="dry run - not automated",
             ))
 
         if "facebook" in targets and facebook_bio:
             results.append(PlatformResult(
                 platform="Facebook",
                 content={"bio": facebook_bio},
-                error="dry run â€” not automated",
+                error="dry run - not automated",
             ))
 
     # Save snapshot
@@ -1344,4 +1344,3 @@ def sync_profiles(
     log.info("Sync snapshot saved to %s", out_path)
 
     return results
-
