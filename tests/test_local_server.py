@@ -1,12 +1,15 @@
 import socket
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Iterator
 
 import pytest
 
 from divapply.local_server import bind_local_server, find_free_port
 
 
-def _find_consecutive_free_ports(host: str) -> int:
+@contextmanager
+def _reserve_first_of_consecutive_free_ports(host: str) -> Iterator[socket.socket]:
     for base in range(20000, 65000):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as first:
             try:
@@ -18,17 +21,16 @@ def _find_consecutive_free_ports(host: str) -> int:
                     second.bind((host, base + 1))
                 except OSError:
                     continue
-                return base
+                first.listen()
+                yield first
+                return
     raise RuntimeError("No consecutive free localhost ports available for test.")
 
 
 def test_find_free_port_skips_occupied_port() -> None:
     host = "127.0.0.1"
-    occupied_port = _find_consecutive_free_ports(host)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
-        occupied.bind((host, occupied_port))
-        occupied.listen()
-
+    with _reserve_first_of_consecutive_free_ports(host) as occupied:
+        occupied_port = occupied.getsockname()[1]
         free_port = find_free_port(host, occupied_port, attempts=25)
 
     assert free_port != occupied_port
@@ -52,11 +54,8 @@ def test_bind_local_server_skips_occupied_port_atomically() -> None:
             self.end_headers()
 
     host = "127.0.0.1"
-    occupied_port = _find_consecutive_free_ports(host)
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
-        occupied.bind((host, occupied_port))
-        occupied.listen()
-
+    with _reserve_first_of_consecutive_free_ports(host) as occupied:
+        occupied_port = occupied.getsockname()[1]
         server, actual_port = bind_local_server(ThreadingHTTPServer, Handler, host, occupied_port, attempts=25)
 
     try:
