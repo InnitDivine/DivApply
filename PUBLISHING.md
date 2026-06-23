@@ -60,6 +60,8 @@ pip install "divapply[full]"
 python -m pip install --no-deps python-jobspy
 ```
 
+`python-jobspy` is installed with `--no-deps` because upstream version 1.1.82 still pins `markdownify<0.14.0`, while DivApply's secure full extra requires `markdownify>=0.14.1` for CVE-2025-46656. Do not move `python-jobspy` into the `full` extra or remove the no-deps release smoke test until upstream relaxes that pin and `pip-audit` passes without ignores.
+
 Before the next PyPI release, users can install the latest `main` directly from GitHub:
 
 ```bash
@@ -72,7 +74,9 @@ python -m pip install --no-deps python-jobspy
 ```bash
 python -m pip install --upgrade "divapply[full]"
 python -m pip install --no-deps python-jobspy
+python -c "import jobspy"
 divapply --version
+python -m divapply --version
 divapply doctor
 ```
 

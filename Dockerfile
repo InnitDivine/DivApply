@@ -20,7 +20,8 @@ COPY pyproject.toml README.md LICENSE ./
 COPY src ./src
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install .
+    && python -m pip install ".[full]" \
+    && python -m pip install --no-deps python-jobspy
 
 USER appuser
 VOLUME ["/data"]

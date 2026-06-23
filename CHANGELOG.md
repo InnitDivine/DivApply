@@ -4,6 +4,10 @@ All notable changes to DivApply will be documented here.
 
 ## Unreleased
 
+- Clarified the pip-first install path, JobSpy dependency tradeoff, and release smoke tests.
+- Added packaging regression coverage for CLI entrypoint parity, README command alignment, and the secure JobSpy runtime contract.
+- Updated CI and Docker smoke installs to exercise clean wheel installs plus the documented JobSpy no-deps step.
+
 ## 0.4.8
 
 - Documented the required `python-jobspy` no-deps install step for pip-based setup and release smoke tests.

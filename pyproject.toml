@@ -26,7 +26,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
     "pandas>=2.0",
-    ]
+]
 
 [project.optional-dependencies]
 coursework = ["pypdf>=6.13.0"]
@@ -37,6 +37,13 @@ jobspy-runtime = [
     "tls-client>=1.0",
     "regex>=2024.0",
     "markdownify>=0.14.1",
+]
+# Upstream python-jobspy currently pins markdownify<0.14.0, which conflicts
+# with the CVE-2025-46656 fix in markdownify>=0.14.1. Keep this extra explicit
+# for compatibility testing, but do not include it in full until that pin is
+# relaxed upstream.
+jobspy-upstream = [
+    "python-jobspy==1.1.82; python_version < '3.13'",
 ]
 full = [
     "numpy==1.26.3; python_version < '3.13'",

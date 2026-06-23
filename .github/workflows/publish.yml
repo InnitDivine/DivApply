@@ -105,10 +105,19 @@ jobs:
           . .venv-smoke/bin/activate
           python -m pip install --upgrade pip
           WHEEL="$(ls dist/*.whl)"
+          python -m pip install "$WHEEL"
+          divapply --version
+          python -m divapply --version
+          divapply selfcheck
+          python -m pip uninstall -y divapply
           python -m pip install "$WHEEL[full]"
+          # Upstream python-jobspy 1.1.82 pins vulnerable markdownify<0.14.0.
+          # DivApply installs the secure runtime floor first, then JobSpy itself
+          # without transitive deps until upstream relaxes that pin.
           python -m pip install --no-deps python-jobspy
           python -c "import jobspy"
           divapply --version
+          python -m divapply --version
           divapply selfcheck
 
       - name: Publish package to PyPI

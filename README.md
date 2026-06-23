@@ -58,7 +58,9 @@ python -m pip install "divapply[full] @ git+https://github.com/InnitDivine/DivAp
 python -m pip install --no-deps python-jobspy
 ```
 
-Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for JobSpy runtime dependencies, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins a vulnerable `markdownify` range, install DivApply's secure dependency floor first, then install `python-jobspy` separately with `--no-deps`. If JobSpy is missing, run `python -m pip install "divapply[full]" && python -m pip install --no-deps python-jobspy`. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
+Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for the secure JobSpy runtime dependency floor, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins `markdownify<0.14.0`, which conflicts with the CVE-2025-46656 fix in `markdownify>=0.14.1`, install DivApply's secure dependency floor first, then install `python-jobspy` separately with `--no-deps`. If JobSpy is missing, run `python -m pip install "divapply[full]" && python -m pip install --no-deps python-jobspy`. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
+
+`divapply[jobspy-upstream]` is declared only for compatibility checks against upstream `python-jobspy` metadata. It is not part of the recommended install path because it allows pip to install the vulnerable upstream `markdownify` range.
 
 Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
 
@@ -279,20 +281,30 @@ Privacy details: [docs/PRIVACY.md](docs/PRIVACY.md)
 
 ```powershell
 divapply init
+divapply add-url JOB_URL
 divapply edit
 divapply doctor
 divapply selfcheck
 divapply run
 divapply run -w 4
+divapply credentials --username you@example.com
+divapply browser-login --url https://www.myworkday.com/
 divapply status
+divapply track applied JOB_URL
+divapply followups
+divapply analytics
 divapply dashboard
 divapply explain JOB_URL
+divapply rescore
 divapply export jobs --out jobs.csv
+divapply answers list
 divapply backup
 divapply cleanup
 divapply apply --dry-run
 divapply apply --yes
 divapply migrate
+divapply prune --dry-run
+divapply sync --dry-run
 ```
 
 `divapply dashboard` opens an interactive local dashboard. Applied jobs include an Archive button so you can hide submitted applications without deleting their history. Archiving also removes generated resume and cover-letter files for that job. Use `divapply dashboard --static` when you only want to write a standalone HTML file.
@@ -306,7 +318,11 @@ git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
 .\install.ps1 -Dev
 python --version  # expected on the maintained Windows setup: Python 3.12.13
+python -m pip install -e .
+divapply --version
+python -m divapply --version
 python -m pytest -q
+ruff check .
 ```
 
 Release notes: [CHANGELOG.md](CHANGELOG.md)

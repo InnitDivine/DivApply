@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+import re
+import subprocess
+import sys
+import tomllib
+from pathlib import Path
+
 from typer.testing import CliRunner
 
 import divapply.config as config
@@ -9,6 +15,65 @@ from divapply.cli import app
 
 
 runner = CliRunner()
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_console_script_and_module_entrypoint_report_same_version() -> None:
+    console_result = subprocess.run(
+        ["divapply", "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    module_result = subprocess.run(
+        [sys.executable, "-m", "divapply", "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert console_result.stdout == module_result.stdout
+
+
+def test_pyproject_keeps_secure_jobspy_install_contract() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    extras = pyproject["project"]["optional-dependencies"]
+
+    assert "python-jobspy==1.1.82; python_version < '3.13'" in extras["jobspy-upstream"]
+    assert "markdownify>=0.14.1" in extras["jobspy-runtime"]
+    assert "markdownify>=0.14.1" in extras["full"]
+    assert all("python-jobspy" not in dep for dep in extras["full"])
+
+
+def test_readme_common_commands_match_registered_cli_commands() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    common_commands = re.search(r"## Common Commands\s+```powershell\n(?P<body>.*?)\n```", readme, re.S)
+
+    assert common_commands is not None
+    documented = {
+        line.split()[1]
+        for line in common_commands.group("body").splitlines()
+        if line.startswith("divapply ") and len(line.split()) > 1
+    }
+    registered = {
+        command.name or command.callback.__name__.replace("_", "-")
+        for command in cli.app.registered_commands
+    }
+    registered.update(group.name for group in cli.app.registered_groups)
+
+    assert documented <= registered
+    assert {
+        "add-url",
+        "credentials",
+        "browser-login",
+        "track",
+        "followups",
+        "analytics",
+        "rescore",
+        "answers",
+        "prune",
+        "sync",
+    } <= documented
 
 
 def test_short_help_flag_works_for_run_command() -> None:
