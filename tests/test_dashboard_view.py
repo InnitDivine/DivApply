@@ -240,6 +240,30 @@ def test_interactive_dashboard_uses_lazy_description_url(tmp_path, monkeypatch):
     assert "UNIQUE_FULL_DESCRIPTION_TAIL" not in html
 
 
+def test_dashboard_short_description_is_not_marked_ready_or_lazy_loaded(tmp_path, monkeypatch):
+    conn = _dashboard_db()
+    conn.execute(
+        "UPDATE jobs SET full_description = ? WHERE url = 'https://example.com/job'",
+        ("Metadata.",),
+    )
+    conn.commit()
+    monkeypatch.setattr(view, "get_connection", lambda: conn)
+
+    path = view.generate_dashboard(
+        str(tmp_path / "dashboard.html"),
+        archive_endpoint="/archive",
+        archive_token="test-token",
+        description_endpoint="/description",
+    )
+    html = Path(path).read_text(encoding="utf-8")
+
+    assert '<div class="stat-card stat-ok"><div class="stat-num">0</div>' in html
+    assert '<span class="state-pill state-review">Needs description</span>' in html
+    assert "Full description has not been enriched yet." in html
+    assert "data-description-url=" not in html
+    assert "Description preview only" not in html
+
+
 def test_lazy_description_script_is_empty_when_interactive_descriptions_disabled() -> None:
     assert view._lazy_description_script(enabled=False) == ""
     script = view._lazy_description_script(enabled=True)

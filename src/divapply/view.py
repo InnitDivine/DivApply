@@ -24,7 +24,7 @@ from rich.console import Console
 
 from divapply.config import APP_DIR
 from divapply.dashboard_data import fetch_dashboard_snapshot
-from divapply.database import archive_job, get_connection, record_reliability_event
+from divapply.database import MIN_FULL_DESCRIPTION_CHARS, archive_job, get_connection, record_reliability_event
 from divapply.local_server import bind_local_server
 from divapply.security import local_request_is_same_origin, parse_local_form_length, sanitize_external_url
 
@@ -88,6 +88,10 @@ def _has_value(value: Any) -> bool:
     return bool(str(value or "").strip())
 
 
+def _has_meaningful_description(value: Any) -> bool:
+    return len(str(value or "").strip()) >= MIN_FULL_DESCRIPTION_CHARS
+
+
 def _apply_state(row: Any) -> tuple[str, str, str]:
     """Return CSS class, visible label, and concise explanation for a job state."""
     status = str(row["apply_status"] or "").strip().casefold()
@@ -95,7 +99,7 @@ def _apply_state(row: Any) -> tuple[str, str, str]:
     apply_error = str(row["apply_error"] or "").strip()
     detail_error = str(row["detail_error"] or "").strip()
     has_apply_url = _has_value(row["application_url"])
-    has_description = _has_value(row["full_description"])
+    has_description = _has_meaningful_description(row["full_description"])
 
     if status == "applied" or applied_at:
         return "state-applied", "Applied", "Application is recorded as submitted."
@@ -299,7 +303,8 @@ def generate_dashboard(
             else f'<span class="job-title">{title}</span>'
         )
         full_description_html = ""
-        if desc_raw and description_endpoint and archive_token and j["url"]:
+        has_meaningful_description = _has_meaningful_description(desc_raw)
+        if has_meaningful_description and description_endpoint and archive_token and j["url"]:
             desc_params = urllib.parse.urlencode({"token": archive_token, "url": j["url"]})
             desc_url = escape(f"{description_endpoint}?{desc_params}", quote=True)
             full_description_html = (
@@ -307,7 +312,7 @@ def generate_dashboard(
                 f"{desc_url}\"><summary class='expand-btn'>Full description ({desc_len:,} characters)"
                 "</summary><div class='full-desc' data-loaded='false'>Open to load description.</div></details>"
             )
-        elif desc_raw:
+        elif has_meaningful_description:
             full_description_html = (
                 "<details class='full-desc-details'><summary class='expand-btn'>Description preview only "
                 f"({desc_len:,} characters in database)</summary><div class='full-desc'>"

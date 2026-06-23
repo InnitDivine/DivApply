@@ -24,7 +24,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from divapply.config import load_env, ensure_dirs
-from divapply.database import init_db, get_connection, get_stats
+from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, init_db, get_connection, get_stats
 
 log = logging.getLogger(__name__)
 console = Console()
@@ -291,10 +291,10 @@ class _StageTracker:
 # SQL to count pending work for each stage
 _PENDING_SQL: dict[str, str] = {
     "enrich": "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL",
-    "score":  "SELECT COUNT(*) FROM jobs WHERE full_description IS NOT NULL AND fit_score IS NULL",
+    "score": f"SELECT COUNT(*) FROM jobs WHERE {MEANINGFUL_FULL_DESCRIPTION_SQL} AND fit_score IS NULL",
     "tailor": (
         "SELECT COUNT(*) FROM jobs WHERE fit_score >= ? "
-        "AND full_description IS NOT NULL "
+        f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
         "AND tailored_resume_path IS NULL "
         "AND COALESCE(tailor_attempts, 0) < 5"
     ),
