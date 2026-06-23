@@ -107,6 +107,11 @@ PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST r
 
 PARAGRAPH 3 (1-2 sentences): Reference one specific thing about the company or role from the job description. Then close: "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
 
+JOB DESCRIPTION ACCURACY:
+- Use the job description as evidence, not decoration. Mention a company, duty, requirement, or team detail only if it appears in TARGET JOB.
+- If VERIFIED EXTRA CONTEXT is present, you may use it briefly, but do not quote or invent referral details beyond that text.
+- Never mention logins, passwords, tokens, private credentials, or application-site automation.
+
 BANNED WORDS AND PHRASES (automated validator rejects ANY of these â€” do not use even once):
 {all_banned}
 
@@ -117,6 +122,7 @@ BANNED PUNCTUATION: No em dashes (â€”) or en dashes (â€“). Use commas 
 
 VOICE:
 - Write like a real professional emailing someone they respect. Not formal, not casual. Just direct.
+- Avoid stock cover-letter openings like "I am writing to express my interest" or "I am excited to apply."
 - NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact.
 - NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem."
 - Prefer concrete facts over generalities. If a sentence does not add useful information, cut it.
@@ -141,7 +147,10 @@ def _strip_preamble(text: str) -> str:
     similar meta-commentary before the actual letter text. Strip everything
     before the first occurrence of "Dear" so the validator's start-check passes.
     """
-    dear_idx = text.lower().find("dear")
+    lowered = text.lower()
+    dear_idx = lowered.find("dear hiring manager")
+    if dear_idx == -1:
+        dear_idx = lowered.find("dear")
     if dear_idx > 0:
         return text[dear_idx:]
     return text
@@ -196,7 +205,13 @@ def generate_cover_letter(
         letter = sanitize_text(letter)  # auto-fix em dashes, smart quotes
         letter = _strip_preamble(letter)  # remove any "Here is the letter:" prefix
 
-        validation = validate_cover_letter(letter, mode=validation_mode)
+        validation = validate_cover_letter(
+            letter,
+            mode=validation_mode,
+            profile=profile,
+            resume_text=resume_text,
+            job=job,
+        )
         if validation["passed"]:
             return letter
 

@@ -71,6 +71,41 @@ FABRICATION_WATCHLIST: set[str] = {
     "certif", "certified", "pmp", "scrum master", "aws certified",
 }
 
+COVER_LETTER_TOOL_TERMS: set[str] = FABRICATION_WATCHLIST | {
+    "aws", "azure", "gcp", "google cloud",
+    "docker", "kubernetes", "terraform", "ansible",
+    "react", "node", "node.js", "typescript", "javascript",
+    "java", "golang", "ruby", "php",
+    "salesforce", "tableau", "power bi", "servicenow",
+    "quickbooks", "workday", "oracle", "sap",
+    "certification", "licensed", "license",
+}
+
+COVER_LETTER_CREDENTIAL_TERMS: set[str] = {
+    "api key",
+    "apikey",
+    "credential",
+    "credentials",
+    "login",
+    "password",
+    "passcode",
+    "secret",
+    "token",
+}
+
+GENERIC_COVER_LETTER_PHRASES: list[str] = [
+    "i am writing to express my interest",
+    "i am thrilled to apply",
+    "i am excited to apply",
+    "i would be honored",
+    "perfect fit",
+    "unique blend",
+    "dynamic team",
+    "esteemed organization",
+    "bring value to your organization",
+    "thank you for your time and consideration",
+]
+
 REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION"}
 
 
@@ -82,6 +117,19 @@ def _build_skills_set(profile: dict) -> set[str]:
     for category in profile_skills(profile).values():
         allowed.update(s.lower().strip() for s in category)
     return allowed
+
+
+def _normalized_skill_aliases(profile: dict) -> set[str]:
+    """Return lower-case skill aliases allowed in generated documents."""
+    aliases = _build_skills_set(profile)
+    expanded = set(aliases)
+    for skill in aliases:
+        expanded.add(skill.replace(".", ""))
+        if skill == "node.js":
+            expanded.add("node")
+        if skill == "javascript":
+            expanded.add("js")
+    return expanded
 
 
 def _split_skill_tokens(raw: str) -> list[str]:
@@ -233,6 +281,72 @@ def _add_llm_leak_findings(text: str, errors: list[str]) -> None:
     found = [phrase for phrase in LLM_LEAK_PHRASES if phrase in text]
     if found:
         errors.append(f"LLM self-talk: '{found[0]}'")
+
+
+def _term_in_text(term: str, text: str) -> bool:
+    """Match a skill/tool term as a phrase without substring false positives."""
+    return bool(re.search(r"(?<![\w+#.])" + re.escape(term) + r"(?![\w+#.])", text))
+
+
+def _add_cover_letter_tool_findings(
+    text_lower: str,
+    profile: dict | None,
+    resume_text: str,
+    job: dict | None,
+    errors: list[str],
+) -> None:
+    """Reject unsupported tools, credentials, and job-only tool claims."""
+    for term in COVER_LETTER_CREDENTIAL_TERMS:
+        if _term_in_text(term, text_lower):
+            errors.append(f"Private credential mentioned: '{term}'")
+            return
+
+    profile = profile or {}
+    allowed = _normalized_skill_aliases(profile)
+    evidence = (resume_text or "").lower()
+    if profile:
+        for term in COVER_LETTER_TOOL_TERMS:
+            if term in allowed:
+                continue
+            if _term_in_text(term, text_lower) and not _term_in_text(term, evidence):
+                errors.append(f"Unsupported tool or credential mentioned: '{term}'")
+                return
+
+    if not job:
+        return
+
+    job_text = " ".join(
+        str(job.get(key) or "")
+        for key in ("title", "company", "site", "location", "full_description", "description")
+    ).lower()
+    for term in COVER_LETTER_TOOL_TERMS:
+        if term in allowed or _term_in_text(term, evidence):
+            continue
+        if _term_in_text(term, job_text) and _term_in_text(term, text_lower):
+            errors.append(f"Job-only tool or credential claimed: '{term}'")
+            return
+
+
+def _add_cover_letter_job_specificity_findings(
+    text_lower: str,
+    job: dict | None,
+    warnings: list[str],
+) -> None:
+    """Warn when the letter does not anchor itself to the target posting."""
+    if not job:
+        return
+    anchors = [
+        str(job.get("company") or "").strip().lower(),
+        str(job.get("title") or "").strip().lower(),
+    ]
+    description = str(job.get("full_description") or job.get("description") or "").lower()
+    for candidate in re.findall(r"\b[a-z][a-z0-9+#.]{3,}\b", description):
+        if candidate not in {"required", "preferred", "responsibilities", "experience", "ability"}:
+            anchors.append(candidate)
+        if len(anchors) >= 8:
+            break
+    if not any(anchor and anchor in text_lower for anchor in anchors):
+        warnings.append("Cover letter does not reference the target role, company, or job description.")
 
 
 # â”€â”€ JSON Field Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -480,7 +594,14 @@ def validate_tailored_resume(
 
 # â”€â”€ Cover Letter Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-def validate_cover_letter(text: str, mode: str = "normal") -> dict:
+def validate_cover_letter(
+    text: str,
+    mode: str = "normal",
+    *,
+    profile: dict | None = None,
+    resume_text: str = "",
+    job: dict | None = None,
+) -> dict:
     """Programmatic validation of a cover letter.
 
     Args:
@@ -490,6 +611,9 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
               normal  â†’ banned words are warnings; word limit is soft (+25 words)
               lenient â†’ banned words ignored; word count not checked
               none    â†’ skip validation entirely
+        profile: Optional profile dict used to catch unsupported tool mentions.
+        resume_text: Optional resume text used as additional factual evidence.
+        job: Optional job dict used for target-specific warnings and job-only tools.
 
     Returns:
         {"passed": bool, "errors": list[str], "warnings": list[str]}
@@ -510,16 +634,27 @@ def validate_cover_letter(text: str, mode: str = "normal") -> dict:
     # 2. Banned words â€” severity depends on mode
     _add_banned_word_findings(text_lower, mode, errors, warnings)
 
+    generic = [phrase for phrase in GENERIC_COVER_LETTER_PHRASES if phrase in text_lower]
+    if generic:
+        msg = f"Generic cover-letter phrase: '{generic[0]}'"
+        if mode != "lenient":
+            errors.append(msg)
+
     # 3. Word count
     words = len(text.split())
     if mode == "strict" and words > 250:
         errors.append(f"Too long ({words} words). Max 250.")
     elif mode == "normal" and words > 275:
-        warnings.append(f"Long ({words} words). Target 250.")
+        errors.append(f"Too long ({words} words). Max 275.")
     # lenient: no word count check
 
     # 4. LLM self-talk â€” always an error regardless of mode
     _add_llm_leak_findings(text_lower, errors)
+
+    # 4b. Unsupported tools and credentials are hard errors when profile/job
+    # evidence is available.
+    _add_cover_letter_tool_findings(text_lower, profile, resume_text, job, errors)
+    _add_cover_letter_job_specificity_findings(text_lower, job, warnings)
 
     # 5. Must start with "Dear" â€” always checked (preamble should have been stripped)
     stripped = text.strip()
