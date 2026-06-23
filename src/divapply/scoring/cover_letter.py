@@ -11,7 +11,7 @@ import time
 from datetime import datetime, timezone
 
 from divapply.config import COVER_LETTER_DIR, RESUME_PATH, load_profile, profile_skills
-from divapply.database import get_connection
+from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, get_connection
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
@@ -253,7 +253,7 @@ def run_cover_letters(
         jobs = conn.execute(
             "SELECT * FROM jobs "
             "WHERE url = ? AND fit_score >= ? AND tailored_resume_path IS NOT NULL "
-            "AND full_description IS NOT NULL "
+            f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
             "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < ?",
             (target_url, min_score, MAX_ATTEMPTS),
@@ -262,7 +262,7 @@ def run_cover_letters(
         jobs = conn.execute(
             "SELECT * FROM jobs "
             "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
-            "AND full_description IS NOT NULL "
+            f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
             "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < ? "
             "ORDER BY fit_score DESC LIMIT ?",
@@ -272,7 +272,7 @@ def run_cover_letters(
         jobs = conn.execute(
             "SELECT * FROM jobs "
             "WHERE fit_score >= ? AND tailored_resume_path IS NOT NULL "
-            "AND full_description IS NOT NULL "
+            f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
             "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < ? "
             "ORDER BY fit_score DESC",
