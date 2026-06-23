@@ -34,8 +34,11 @@ The repository-side install path is now guarded by `tools/bootstrap.ps1`, which 
 
 ## Validation Targets
 
-- `pip install .`
-- `pip install -e .`
+- `pip install ".[full]"`
+- `pip install -e ".[dev,full]"`
+- `pip install --no-deps python-jobspy`
+- `divapply --version`
+- `python -m divapply --version`
 - `divapply init`
 - `divapply status`
 - `divapply doctor`

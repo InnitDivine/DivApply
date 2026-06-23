@@ -76,6 +76,25 @@ def test_readme_common_commands_match_registered_cli_commands() -> None:
     } <= documented
 
 
+def test_install_docs_use_full_editable_and_entrypoint_parity_checks() -> None:
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    operations = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
+    migration = (ROOT / "docs" / "MIGRATION.md").read_text(encoding="utf-8")
+
+    assert 'python -m pip install -e ".[dev,full]"' in contributing
+    assert "python -m pip install --no-deps python-jobspy" in contributing
+    assert "python -m divapply --version" in contributing
+    assert "ruff check ." in contributing
+
+    assert 'python -m pip install "divapply[full]"' in operations
+    assert "python -m pip install --no-deps python-jobspy" in operations
+    assert "python -m divapply --version" in operations
+
+    assert 'pip install ".[full]"' in migration
+    assert 'pip install -e ".[dev,full]"' in migration
+    assert "pip install --no-deps python-jobspy" in migration
+
+
 def test_short_help_flag_works_for_run_command() -> None:
     result = runner.invoke(app, ["run", "-h"])
 
