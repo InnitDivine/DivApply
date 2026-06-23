@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile, profile_skills
-from divapply.database import get_connection, get_jobs_by_stage
+from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, get_connection, get_jobs_by_stage
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
@@ -736,10 +736,10 @@ def run_tailoring(
         jobs = conn.execute(
             """
             SELECT * FROM jobs
-            WHERE url = ? AND fit_score >= ? AND full_description IS NOT NULL
+            WHERE url = ? AND fit_score >= ? AND {meaningful_full_description}
               AND tailored_resume_path IS NULL
               AND COALESCE(tailor_attempts, 0) < ?
-            """,
+            """.format(meaningful_full_description=MEANINGFUL_FULL_DESCRIPTION_SQL),
             (target_url, min_score, MAX_ATTEMPTS),
         ).fetchall()
         if jobs and not isinstance(jobs[0], dict):
