@@ -223,6 +223,21 @@ def test_apply_cost_guard_allows_dry_run_and_explicit_override() -> None:
     ) is None
 
 
+def test_apply_model_does_not_inherit_general_llm_model(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-nano")
+    monkeypatch.delenv("LLM_MODEL_APPLY", raising=False)
+
+    assert cli._resolve_apply_model("codex") == "gpt-5.4-mini"
+
+
+def test_apply_model_prefers_apply_specific_env(monkeypatch) -> None:
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-nano")
+    monkeypatch.setenv("LLM_MODEL_APPLY", "gpt-5.4-mini")
+
+    assert cli._resolve_apply_model("codex") == "gpt-5.4-mini"
+    assert cli._resolve_apply_model("codex", "custom-model") == "custom-model"
+
+
 def test_credentials_command_writes_local_credentials(tmp_path, monkeypatch) -> None:
     credentials_path = tmp_path / "credentials.yaml"
 

@@ -141,6 +141,25 @@ def test_extract_result_ignores_prompt_result_codes_without_agent_result(monkeyp
     assert status == "failed:no_result_line"
 
 
+def test_extract_result_reports_unsupported_agent_model_before_prompt_examples(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "\n".join([
+            "user",
+            "RESULT:FAILED:reason -- any other failure (brief reason)",
+            'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error",'
+            '"message":"The model is not supported when using Codex with a ChatGPT account."}}',
+        ]),
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:agent_model_unsupported"
+
+
 def test_extract_result_requires_explicit_applied_result(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "add_event", lambda message: None)
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)

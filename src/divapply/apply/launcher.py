@@ -494,6 +494,14 @@ def _last_explicit_result(output: str) -> str | None:
     return result
 
 
+def _agent_setup_failure(output: str) -> str | None:
+    """Return a normalized setup failure when the backend exits before acting."""
+    output_lower = output.lower()
+    if "invalid_request_error" in output_lower and "model" in output_lower and "not supported" in output_lower:
+        return "agent_model_unsupported"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Agent result parsing
 # ---------------------------------------------------------------------------
@@ -501,6 +509,12 @@ def _last_explicit_result(output: str) -> str | None:
 def _extract_result(output: str, worker_id: int, job: dict, duration_ms: int) -> tuple[str, int]:
     """Translate backend output into one normalized application status."""
     elapsed = max(1, duration_ms // 1000)
+
+    setup_failure = _agent_setup_failure(output)
+    if setup_failure:
+        add_event(f"[W{worker_id}] FAILED ({elapsed}s): {setup_failure}")
+        update_state(worker_id, status="failed", last_action=f"FAILED: {setup_failure}")
+        return f"failed:{setup_failure}", duration_ms
 
     # Preferred path: the agent follows the prompt contract and emits RESULT:*.
     explicit_result = _last_explicit_result(output)
