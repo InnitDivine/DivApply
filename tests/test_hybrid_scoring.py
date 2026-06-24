@@ -196,6 +196,28 @@ def test_composite_score_preserves_positive_llm_apply_signal() -> None:
     assert result["score"] > 2
 
 
+def test_composite_score_preserves_apply_signal_with_minor_risks() -> None:
+    result = composite_score(
+        job_description=(
+            "Part-time front desk agent. Duties include greeting guests, reservations, "
+            "payment handling, phones, records, and customer problem solving."
+        ),
+        resume_text="Public counter service, payment processing, scheduling, records, and customer support.",
+        llm_result={
+            "score": 8,
+            "risk_flags": "schedule flexibility not explicitly confirmed; no exact same-title experience",
+            "missing_skills": "property management system",
+            "apply_or_skip_reason": "Apply - transferable front desk and payment experience align well.",
+            "reasoning": "Strong fit for customer-facing front desk duties with only minor system/schedule unknowns.",
+        },
+        weights={"keyword": 0.45, "embedding": 0.45, "llm": 0.1},
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["positive_apply_floor"] is True
+
+
 def test_composite_score_lifts_schedule_only_sutter_referral_exception() -> None:
     result = composite_score(
         job_description=(

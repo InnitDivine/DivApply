@@ -100,9 +100,8 @@ def _has_hard_mismatch(llm_result: dict) -> bool:
 
 
 def _has_positive_apply_signal(llm_result: dict) -> bool:
-    """Return True when the LLM found a strong fit without meaningful risks."""
-    risk_flags = str(llm_result.get("risk_flags", "") or "").strip().casefold()
-    if risk_flags not in {"", "none", "n/a"}:
+    """Return True when the LLM found a strong fit without hard disqualifiers."""
+    if _has_hard_mismatch(llm_result):
         return False
 
     apply_reason = str(llm_result.get("apply_or_skip_reason", "") or "").casefold()
