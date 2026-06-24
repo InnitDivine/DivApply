@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import os
 import subprocess
 import sys
 import tomllib
@@ -20,9 +21,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_console_script_and_module_entrypoint_report_same_version() -> None:
+    scripts_dir = Path(sys.executable).resolve().parent
+    launcher = scripts_dir / ("divapply.cmd" if os.name == "nt" else "divapply")
+    if not launcher.exists():
+        pytest.skip("DivApply script launcher is not installed for this interpreter")
     try:
         console_result = subprocess.run(
-            ["divapply", "--version"],
+            [str(launcher), "--version"],
             check=True,
             capture_output=True,
             text=True,
@@ -49,6 +54,16 @@ def test_pyproject_keeps_secure_jobspy_install_contract() -> None:
     assert "markdownify>=0.14.1" in extras["jobspy-runtime"]
     assert "markdownify>=0.14.1" in extras["full"]
     assert all("python-jobspy" not in dep for dep in extras["full"])
+
+
+def test_pyproject_uses_plain_script_launchers_for_windows_device_guard() -> None:
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    wheel = pyproject["tool"]["hatch"]["build"]["targets"]["wheel"]
+
+    assert "scripts" not in pyproject["project"]
+    assert wheel["shared-scripts"]["scripts/divapply"] == "divapply"
+    assert wheel["shared-scripts"]["scripts/divapply.cmd"] == "divapply.cmd"
+    assert (ROOT / "scripts" / "divapply.cmd").read_text(encoding="utf-8").startswith("@echo off")
 
 
 def test_readme_common_commands_match_registered_cli_commands() -> None:

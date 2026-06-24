@@ -56,9 +56,6 @@ full = [
 ]
 dev = ["pytest>=7.0", "ruff>=0.1", "pip-audit>=2.10"]
 
-[project.scripts]
-divapply = "divapply.cli:app"
-
 [project.urls]
 Homepage = "https://github.com/InnitDivine/DivApply"
 Repository = "https://github.com/InnitDivine/DivApply"
@@ -70,6 +67,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/divapply"]
+shared-scripts = { "scripts/divapply" = "divapply", "scripts/divapply.cmd" = "divapply.cmd" }
 
 [tool.hatch.build]
 artifacts = [

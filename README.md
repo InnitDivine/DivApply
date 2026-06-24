@@ -60,6 +60,8 @@ python -m pip install --no-deps python-jobspy
 
 Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for the secure JobSpy runtime dependency floor, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins `markdownify<0.14.0`, which conflicts with the CVE-2025-46656 fix in `markdownify>=0.14.1`, install DivApply's secure dependency floor first, then install `python-jobspy` separately with `--no-deps`. If JobSpy is missing, run `python -m pip install "divapply[full]" && python -m pip install --no-deps python-jobspy`. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
 
+On Windows, DivApply installs plain `divapply`/`divapply.cmd` launchers instead of relying on a generated `divapply.exe`, so managed PCs that block generated console-script executables can still run `divapply` directly from `cmd`.
+
 `divapply[jobspy-upstream]` is declared only for compatibility checks against upstream `python-jobspy` metadata. It is not part of the recommended install path because it allows pip to install the vulnerable upstream `markdownify` range.
 
 Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
