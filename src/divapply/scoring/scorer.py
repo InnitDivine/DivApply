@@ -11,7 +11,12 @@ import time
 from datetime import datetime, timezone
 
 from divapply.config import RESUME_PATH, load_profile, load_search_config, profile_skills
-from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, get_connection, get_jobs_by_stage
+from divapply.database import (
+    MEANINGFUL_FULL_DESCRIPTION_SQL,
+    delete_scored_jobs_at_or_below,
+    get_connection,
+    get_jobs_by_stage,
+)
 from divapply.llm import get_client_for_stage
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
@@ -481,12 +486,7 @@ def run_scoring(
     # Auto-prune low-score jobs if requested
     pruned = 0
     if prune_below > 0:
-        cursor = conn.execute(
-            "DELETE FROM jobs WHERE fit_score IS NOT NULL AND fit_score > 0 AND fit_score <= ?",
-            (prune_below,),
-        )
-        pruned = cursor.rowcount
-        conn.commit()
+        pruned = delete_scored_jobs_at_or_below(prune_below, conn=conn, positive_only=True)
         if pruned:
             log.info("Auto-pruned %d jobs with fit_score <= %d", pruned, prune_below)
 

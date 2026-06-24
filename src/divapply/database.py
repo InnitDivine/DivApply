@@ -380,6 +380,45 @@ def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> N
         conn.commit()
 
 
+def delete_scored_jobs_at_or_below(
+    max_score: int,
+    *,
+    conn: sqlite3.Connection | None = None,
+    positive_only: bool = False,
+) -> int:
+    """Delete scored jobs and dependent lifecycle rows without violating FKs."""
+    if conn is None:
+        conn = get_connection()
+
+    score_predicate = "fit_score IS NOT NULL AND fit_score <= ?"
+    if positive_only:
+        score_predicate += " AND fit_score > 0"
+
+    with _transaction(conn):
+        total = int(conn.execute(
+            f"SELECT COUNT(*) FROM jobs WHERE {score_predicate}",
+            (max_score,),
+        ).fetchone()[0])
+        if total == 0:
+            return 0
+
+        ensure_application_events_table(conn)
+        conn.execute(
+            f"""
+            DELETE FROM application_events
+            WHERE job_url IN (
+                SELECT url FROM jobs WHERE {score_predicate}
+            )
+            """,
+            (max_score,),
+        )
+        conn.execute(
+            f"DELETE FROM jobs WHERE {score_predicate}",
+            (max_score,),
+        )
+        return total
+
+
 def ensure_reliability_events_table(conn: sqlite3.Connection | None = None) -> None:
     """Create the local operational event table used for production monitoring."""
     if conn is None:

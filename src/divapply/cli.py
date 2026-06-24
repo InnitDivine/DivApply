@@ -1552,14 +1552,19 @@ def doctor() -> None:
 
 @app.command()
 def prune(
-    max_score: int = typer.Option(4, "--max-score", help="Delete scored jobs at or below this score (default: 4)."),
+    max_score: int = typer.Option(
+        4,
+        "--max-score",
+        "--maxscore",
+        help="Delete scored jobs at or below this score (default: 4).",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview without deleting."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation prompt."),
 ) -> None:
     """Remove low-scoring jobs from the database to reduce clutter."""
     _bootstrap()
 
-    from divapply.database import get_connection
+    from divapply.database import delete_scored_jobs_at_or_below, get_connection
 
     conn = get_connection()
 
@@ -1592,12 +1597,8 @@ def prune(
             console.print("[dim]Cancelled.[/dim]")
             return
 
-    conn.execute(
-        "DELETE FROM jobs WHERE fit_score IS NOT NULL AND fit_score <= ?",
-        (max_score,),
-    )
-    conn.commit()
-    console.print(f"[green]Deleted {total} low-scoring jobs (score <= {max_score}).[/green]")
+    deleted = delete_scored_jobs_at_or_below(max_score, conn=conn)
+    console.print(f"[green]Deleted {deleted} low-scoring jobs (score <= {max_score}).[/green]")
 
 
 @app.command()

@@ -10,6 +10,7 @@ from divapply.database import (
     archive_job,
     canonical_job_key,
     close_connection,
+    delete_scored_jobs_at_or_below,
     get_application_analytics,
     get_application_timeline,
     get_connection,
@@ -619,6 +620,29 @@ def test_add_application_event_rejects_unknown_job_url(tmp_path) -> None:
 
     assert count == 0
     assert event["severity"] == "error"
+    close_connection(db_path)
+
+
+def test_delete_scored_jobs_at_or_below_removes_lifecycle_events_first(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO jobs (url, title, fit_score, discovered_at) VALUES (?, ?, ?, ?)",
+        ("https://example.com/low", "Low Fit", 4, "2026-01-01"),
+    )
+    conn.execute(
+        "INSERT INTO jobs (url, title, fit_score, discovered_at) VALUES (?, ?, ?, ?)",
+        ("https://example.com/high", "High Fit", 8, "2026-01-01"),
+    )
+    conn.commit()
+    add_application_event("https://example.com/low", "applied", conn=conn)
+
+    deleted = delete_scored_jobs_at_or_below(4, conn=conn)
+
+    assert deleted == 1
+    assert conn.execute("SELECT COUNT(*) FROM jobs WHERE url = ?", ("https://example.com/low",)).fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM jobs WHERE url = ?", ("https://example.com/high",)).fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM application_events").fetchone()[0] == 0
     close_connection(db_path)
 
 

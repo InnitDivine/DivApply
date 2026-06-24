@@ -11,6 +11,7 @@ import pytest
 from typer.testing import CliRunner
 
 import divapply.config as config
+import divapply.database as database
 import divapply.pipeline as pipeline
 from divapply import cli
 from divapply.cli import app
@@ -159,6 +160,27 @@ def test_run_prune_score_yes_executes(monkeypatch) -> None:
 
     assert result.exit_code == 0
     assert received["prune_below"] == 3
+
+
+def test_prune_accepts_maxscore_alias_in_dry_run(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = database.init_db(db_path)
+    conn.execute(
+        "INSERT INTO jobs (url, title, fit_score, discovered_at) VALUES (?, ?, ?, ?)",
+        ("https://example.com/low", "Low Fit", 4, "2026-01-01"),
+    )
+    conn.commit()
+    database.close_connection(db_path)
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(database, "LEGACY_DB_PATH", tmp_path / "missing.db")
+
+    result = runner.invoke(app, ["prune", "--maxscore", "4", "--dry-run"])
+
+    assert result.exit_code == 0
+    assert "Dry run - no changes made." in result.output
+    database.close_connection(db_path)
 
 
 def test_apply_cost_guard_allows_default_real_single_job() -> None:
