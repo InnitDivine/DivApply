@@ -227,6 +227,26 @@ def test_salary_section_uses_part_time_guidance_from_search_config() -> None:
     assert "Do not apply unless the user explicitly selected it" in section
 
 
+def test_location_check_includes_employer_relocation_exception() -> None:
+    section = prompt_mod._build_location_check(
+        {"personal": {"city": "Logan"}},
+        {
+            "location": {"accept_patterns": ["Logan"]},
+            "relocation_exception_employers": [
+                {
+                    "name": "Sutter Health",
+                    "locations": ["Roseville, CA", "Auburn, CA"],
+                }
+            ],
+        },
+    )
+
+    assert "Employer-specific relocation exception" in section
+    assert "If employer/source is Sutter Health" in section
+    assert "Roseville, CA, Auburn, CA" in section
+    assert "before rejecting" in section
+
+
 def test_apply_prompt_allows_normal_hourly_employee_applications(tmp_path, monkeypatch) -> None:
     resume_txt = tmp_path / "tailored.txt"
     resume_pdf = tmp_path / "tailored.pdf"

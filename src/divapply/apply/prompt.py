@@ -164,10 +164,25 @@ def _build_location_check(profile: dict, search_config: dict) -> str:
     else:
         city_list = primary_city
 
+    relocation_lines: list[str] = []
+    for item in search_config.get("relocation_exception_employers", []) or []:
+        if isinstance(item, dict):
+            name = str(item.get("name") or item.get("employer") or "").strip()
+            locations = [str(value).strip() for value in item.get("locations", []) or [] if str(value).strip()]
+            if name and locations:
+                relocation_lines.append(f"- If employer/source is {name} and the role is onsite/hybrid in {', '.join(locations)} -> ELIGIBLE. Apply.")
+        else:
+            name = str(item).strip()
+            if name:
+                relocation_lines.append(f"- If employer/source is {name}, use the profile's employer-specific relocation guidance before rejecting for location.")
+    relocation_block = "\n".join(relocation_lines)
+
     return f"""== LOCATION CHECK (do this FIRST before any form) ==
 Read the job page. Determine the work arrangement. Then decide:
 - "Remote" or "work from anywhere" -> ELIGIBLE. Apply.
 - "Hybrid" or "onsite" in {city_list} -> ELIGIBLE. Apply.
+- Employer-specific relocation exception? Check the exception list below before rejecting.
+{relocation_block if relocation_block else "- No employer-specific relocation exceptions are configured."}
 - "Hybrid" or "onsite" in another city BUT the posting also says "remote OK" or "remote option available" -> ELIGIBLE. Apply.
 - "Onsite only" or "hybrid only" in any city outside the list above with NO remote option -> NOT ELIGIBLE. Stop immediately. Output RESULT:FAILED:not_eligible_location
 - City is overseas (India, Philippines, Europe, etc.) with no remote option -> NOT ELIGIBLE. Output RESULT:FAILED:not_eligible_location
