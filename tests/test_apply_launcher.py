@@ -395,6 +395,82 @@ def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
     assert ready["agent_id"] == "worker-4"
 
 
+def test_acquire_job_honors_max_score(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            title TEXT,
+            company TEXT,
+            site TEXT,
+            application_url TEXT,
+            tailored_resume_path TEXT,
+            fit_score INTEGER,
+            location TEXT,
+            full_description TEXT,
+            cover_letter_path TEXT,
+            apply_status TEXT,
+            apply_error TEXT,
+            apply_attempts INTEGER,
+            agent_id TEXT,
+            last_attempted_at TEXT
+        )
+    """)
+    conn.executemany("""
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, [
+        (
+            "https://jobs.example/score-8",
+            "Higher Score",
+            "Higher Co",
+            "Indeed",
+            "https://apply.example/score-8",
+            "resume.txt",
+            8,
+            "Remote",
+            "Higher scoring role.",
+            0,
+        ),
+        (
+            "https://jobs.example/score-7",
+            "Tier Seven",
+            "Seven Co",
+            "Indeed",
+            "https://apply.example/score-7",
+            "resume.txt",
+            7,
+            "Remote",
+            "Tier seven role.",
+            0,
+        ),
+    ])
+    conn.commit()
+
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda url: False, raising=False)
+
+    job = launcher.acquire_job(min_score=7, max_score=7, worker_id=6)
+
+    assert job is not None
+    assert job["url"] == "https://jobs.example/score-7"
+    skipped = conn.execute(
+        "SELECT apply_status FROM jobs WHERE url = ?",
+        ("https://jobs.example/score-8",),
+    ).fetchone()
+    claimed = conn.execute(
+        "SELECT apply_status, agent_id FROM jobs WHERE url = ?",
+        ("https://jobs.example/score-7",),
+    ).fetchone()
+    assert skipped["apply_status"] is None
+    assert claimed["apply_status"] == "in_progress"
+    assert claimed["agent_id"] == "worker-6"
+
+
 def test_acquire_job_skips_unsafe_apply_url_and_claims_next_job(monkeypatch) -> None:
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

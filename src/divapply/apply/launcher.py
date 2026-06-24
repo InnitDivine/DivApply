@@ -119,12 +119,14 @@ def _make_mcp_config(
 # ---------------------------------------------------------------------------
 
 def acquire_job(target_url: str | None = None, min_score: int = 7,
+                max_score: int | None = None,
                 worker_id: int = 0) -> dict | None:
     """Atomically acquire the next job to apply to.
 
     Args:
         target_url: Apply to a specific URL instead of picking from queue.
         min_score: Minimum fit_score threshold.
+        max_score: Optional maximum fit_score threshold.
         worker_id: Worker claiming this job (for tracking).
 
     Returns:
@@ -152,6 +154,10 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             else:
                 # Build parameterized filters to avoid SQL injection
                 params: list = [min_score]
+                max_score_clause = ""
+                if max_score is not None:
+                    max_score_clause = "AND fit_score <= ?"
+                    params.append(max_score)
                 site_clause = ""
                 if blocked_sites:
                     placeholders = ",".join("?" * len(blocked_sites))
@@ -169,6 +175,7 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                       AND (apply_status IS NULL OR apply_status = 'failed')
                       AND (apply_attempts IS NULL OR apply_attempts < ?)
                       AND fit_score >= ?
+                      {max_score_clause}
                       {site_clause}
                       {url_clauses}
                     ORDER BY fit_score DESC, url
@@ -708,12 +715,17 @@ def get_manual_command(backend: str, model: str, prompt_file: Path, mcp_path: Pa
     return " ".join(shlex.quote(part) for part in cmd) + f" < {shlex.quote(str(prompt_file))}"
 
 
-def gen_prompt(target_url: str, min_score: int = 7,
+def gen_prompt(target_url: str, min_score: int = 7, max_score: int | None = None,
                model: str = "gpt-5.4-mini", worker_id: int = 0,
                backend: str | None = None, browser: str = "chromium",
                headless: bool = False) -> Path | None:
     """Generate prompt and MCP files without running the apply agent."""
-    job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
+    job = acquire_job(
+        target_url=target_url,
+        min_score=min_score,
+        max_score=max_score,
+        worker_id=worker_id,
+    )
     if not job:
         return None
 
@@ -978,7 +990,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 
 def worker_loop(worker_id: int = 0, limit: int = 1,
                 target_url: str | None = None,
-                min_score: int = 7, headless: bool = False,
+                min_score: int = 7, max_score: int | None = None,
+                headless: bool = False,
                 model: str = "gpt-5.4-mini", backend: str = "codex",
                 browser: str = "chromium",
                 dry_run: bool = False) -> tuple[int, int]:
@@ -997,7 +1010,12 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         update_state(worker_id, status="idle", job_title="", company="",
                      last_action="waiting for job", actions=0)
 
-        job = acquire_job(target_url=target_url, min_score=min_score, worker_id=worker_id)
+        job = acquire_job(
+            target_url=target_url,
+            min_score=min_score,
+            max_score=max_score,
+            worker_id=worker_id,
+        )
         if not job:
             if not continuous:
                 add_event(f"[W{worker_id}] Queue empty")
@@ -1079,7 +1097,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 # ---------------------------------------------------------------------------
 
 def main(limit: int = 1, target_url: str | None = None,
-         min_score: int = 7, headless: bool = False,
+         min_score: int = 7, max_score: int | None = None,
+         headless: bool = False,
          model: str = "gpt-5.4-mini", backend: str = "codex",
          browser: str = "chromium",
          dry_run: bool = False, continuous: bool = False,
@@ -1092,6 +1111,8 @@ def main(limit: int = 1, target_url: str | None = None,
         raise ValueError(f"workers cannot exceed {MAX_RUNTIME_WORKERS}")
     if limit < 0:
         raise ValueError("limit cannot be negative")
+    if max_score is not None and max_score < min_score:
+        raise ValueError("max_score cannot be less than min_score")
     if poll_interval < 1:
         raise ValueError("poll_interval must be at least 1")
     POLL_INTERVAL = poll_interval
@@ -1168,6 +1189,7 @@ def main(limit: int = 1, target_url: str | None = None,
                         limit=effective_limit,
                         target_url=target_url,
                         min_score=min_score,
+                        max_score=max_score,
                         headless=headless,
                         model=model,
                         backend=backend,
@@ -1190,6 +1212,7 @@ def main(limit: int = 1, target_url: str | None = None,
                                 limit=limits[i],
                                 target_url=target_url,
                                 min_score=min_score,
+                                max_score=max_score,
                                 headless=headless,
                                 model=model,
                                 backend=backend,

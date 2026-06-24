@@ -739,6 +739,7 @@ def apply(
     limit: Optional[int] = typer.Option(None, "--limit", "-l", help="Max applications to submit."),
     workers: int = typer.Option(1, "--workers", "-w", help="Number of parallel browser workers."),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for job selection."),
+    max_score: Optional[int] = typer.Option(None, "--max-score", help="Maximum fit score for job selection."),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Apply agent model name."),
     backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Apply agent backend: codex or claude."),
     browser: str = typer.Option("chromium", "--browser", help="Playwright browser: chromium, chrome, msedge, firefox, webkit."),
@@ -842,6 +843,7 @@ def apply(
         prompt_file = gen_prompt(
             target,
             min_score=min_score,
+            max_score=max_score,
             model=resolved_model,
             backend=resolved_backend,
             browser=resolved_browser,
@@ -901,6 +903,7 @@ def apply(
         limit=effective_limit,
         target_url=url,
         min_score=min_score,
+        max_score=max_score,
         headless=headless,
         model=resolved_model,
         backend=resolved_backend,
