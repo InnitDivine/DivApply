@@ -44,6 +44,29 @@ def test_normalize_search_config_accepts_simple_user_keys() -> None:
     assert cfg["customer_service_max_hours_per_week"] == 15
 
 
+def test_validate_search_config_warns_for_legacy_aliases_without_breaking() -> None:
+    report = config.validate_search_config(
+        {
+            "search_city": "Logan, UT",
+            "job_boards": ["indeed"],
+            "search_terms": ["front desk part time"],
+            "nearby_locations": ["logan"],
+            "reject_locations": ["ogden"],
+            "target_titles": ["front desk"],
+            "avoid_titles": ["manager"],
+            "avoid_keywords": ["commission only"],
+            "trusted_sites": ["usu.edu"],
+            "part_time_titles": ["customer service"],
+        }
+    )
+
+    assert report["passed"]
+    assert "job_boards is a legacy searches.yaml key; prefer boards" in report["warnings"]
+    assert "search_terms is a legacy searches.yaml key; prefer queries" in report["warnings"]
+    assert "nearby_locations is a legacy searches.yaml key; prefer locations" in report["warnings"]
+    assert "target_titles is a legacy searches.yaml key; prefer include_titles" in report["warnings"]
+
+
 def test_shipped_search_example_uses_locations_without_default_manual_filters() -> None:
     example_path = config.CONFIG_DIR / "searches.example.yaml"
     cfg = yaml.safe_load(example_path.read_text(encoding="utf-8"))

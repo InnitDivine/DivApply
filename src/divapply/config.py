@@ -318,10 +318,27 @@ def validate_search_config(cfg: dict | None = None) -> dict:
     """Validate search config shape without contacting job boards."""
     if cfg is None:
         cfg = load_search_config()
-    cfg = normalize_search_config(cfg or {})
+    raw_cfg = dict(cfg or {})
+    cfg = normalize_search_config(raw_cfg)
 
     errors: list[str] = []
     warnings: list[str] = []
+
+    legacy_aliases = {
+        "job_boards": "boards",
+        "sites": "boards",
+        "search_terms": "queries",
+        "nearby_locations": "locations",
+        "reject_locations": "location.reject_patterns",
+        "target_titles": "include_titles",
+        "avoid_titles": "exclude_titles",
+        "avoid_keywords": "excluded_keywords",
+        "trusted_sites": "trusted_local_sites",
+        "part_time_titles": "customer_service_title_terms",
+    }
+    for old_key, new_key in legacy_aliases.items():
+        if old_key in raw_cfg:
+            warnings.append(f"{old_key} is a legacy searches.yaml key; prefer {new_key}")
 
     queries = cfg.get("queries", [])
     locations = cfg.get("locations", [])

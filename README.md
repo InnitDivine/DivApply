@@ -202,6 +202,9 @@ defaults:
 
 Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries`, places in `locations`, schedule intent in `require_part_time`, and boards in `boards`. DivApply derives normal location filtering from `locations`; manual filters such as `location.accept_patterns`, `reject_patterns`, `exclude_titles`, `excluded_keywords`, and customer-service-specific hour filters are optional escape hatches only when a board repeatedly returns results that need cleanup before scoring.
 
+Older search configs still load, but `divapply selfcheck` warns on legacy aliases so you can migrate gradually:
+`search_terms` -> `queries`, `job_boards` or `sites` -> `boards`, `nearby_locations` -> `locations`, `reject_locations` -> `location.reject_patterns`, `target_titles` -> `include_titles`, `avoid_titles` -> `exclude_titles`, and `avoid_keywords` -> `excluded_keywords`.
+
 ## Resume Rules
 
 Treat `resume.txt` as the source of truth.
