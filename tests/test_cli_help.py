@@ -6,6 +6,7 @@ import sys
 import tomllib
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 import divapply.config as config
@@ -19,12 +20,17 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_console_script_and_module_entrypoint_report_same_version() -> None:
-    console_result = subprocess.run(
-        ["divapply", "--version"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        console_result = subprocess.run(
+            ["divapply", "--version"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 4551:
+            pytest.skip("Windows Application Control blocked the console-script launcher")
+        raise
     module_result = subprocess.run(
         [sys.executable, "-m", "divapply", "--version"],
         check=True,

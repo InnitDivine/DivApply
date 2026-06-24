@@ -67,6 +67,18 @@ def test_validate_search_config_warns_for_legacy_aliases_without_breaking() -> N
     assert "target_titles is a legacy searches.yaml key; prefer include_titles" in report["warnings"]
 
 
+def test_validate_search_config_does_not_warn_for_normalized_sites_alias() -> None:
+    raw_cfg = {
+        "queries": [{"query": "help desk", "tier": 1}],
+        "locations": [{"location": "Logan, UT"}],
+        "boards": ["indeed", "linkedin"],
+    }
+    report = config.validate_search_config(config.normalize_search_config(raw_cfg))
+
+    assert report["passed"]
+    assert "sites is a legacy searches.yaml key; prefer boards" not in report["warnings"]
+
+
 def test_shipped_search_example_uses_locations_without_default_manual_filters() -> None:
     example_path = config.CONFIG_DIR / "searches.example.yaml"
     cfg = yaml.safe_load(example_path.read_text(encoding="utf-8"))

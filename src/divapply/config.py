@@ -326,7 +326,6 @@ def validate_search_config(cfg: dict | None = None) -> dict:
 
     legacy_aliases = {
         "job_boards": "boards",
-        "sites": "boards",
         "search_terms": "queries",
         "nearby_locations": "locations",
         "reject_locations": "location.reject_patterns",
@@ -339,6 +338,8 @@ def validate_search_config(cfg: dict | None = None) -> dict:
     for old_key, new_key in legacy_aliases.items():
         if old_key in raw_cfg:
             warnings.append(f"{old_key} is a legacy searches.yaml key; prefer {new_key}")
+    if "sites" in raw_cfg and ("boards" not in raw_cfg or raw_cfg.get("sites") != raw_cfg.get("boards")):
+        warnings.append("sites is a legacy searches.yaml key; prefer boards")
 
     queries = cfg.get("queries", [])
     locations = cfg.get("locations", [])
