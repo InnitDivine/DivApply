@@ -247,6 +247,76 @@ def test_location_check_includes_employer_relocation_exception() -> None:
     assert "before rejecting" in section
 
 
+def test_profile_for_california_job_uses_configured_ca_address() -> None:
+    profile = {
+        "personal": {
+            "full_name": "Example Person",
+            "email": "person@example.com",
+            "phone": "555-0100",
+            "address": "10 Utah St",
+            "city": "Logan",
+            "province_state": "UT",
+            "country": "United States",
+            "postal_code": "84321",
+        },
+        "application_addresses": {
+            "california": {
+                "address": "20 California St",
+                "city": "Auburn",
+                "province_state": "CA",
+                "country": "United States",
+                "postal_code": "95603",
+            }
+        },
+    }
+
+    adjusted = prompt_mod._profile_for_job_address(profile, {"title": "Patient Access", "location": "Roseville, CA"})
+
+    assert adjusted["personal"]["address"] == "20 California St"
+    assert adjusted["personal"]["city"] == "Auburn"
+    assert adjusted["personal"]["province_state"] == "CA"
+    assert adjusted["personal"]["postal_code"] == "95603"
+    assert profile["personal"]["address"] == "10 Utah St"
+
+
+def test_profile_for_utah_job_keeps_default_address() -> None:
+    profile = {
+        "personal": {
+            "full_name": "Example Person",
+            "email": "person@example.com",
+            "phone": "555-0100",
+            "address": "10 Utah St",
+            "city": "Logan",
+            "province_state": "UT",
+            "country": "United States",
+            "postal_code": "84321",
+        },
+        "application_addresses": {
+            "california": {
+                "address": "20 California St",
+                "city": "Auburn",
+                "province_state": "CA",
+                "country": "United States",
+                "postal_code": "95603",
+            }
+        },
+    }
+
+    adjusted = prompt_mod._profile_for_job_address(profile, {"title": "Help Desk", "location": "Logan, UT"})
+
+    assert adjusted["personal"]["address"] == "10 Utah St"
+    assert adjusted["personal"]["city"] == "Logan"
+    assert adjusted["personal"]["province_state"] == "UT"
+
+
+def test_california_address_detection_handles_sutter_without_state() -> None:
+    assert prompt_mod._job_uses_california_address({"company": "Sutter Health", "location": "Roseville"})
+
+
+def test_california_address_detection_does_not_match_candidate_text() -> None:
+    assert not prompt_mod._job_uses_california_address({"title": "Candidate Support Specialist", "location": "Logan, UT"})
+
+
 def test_apply_prompt_allows_normal_hourly_employee_applications(tmp_path, monkeypatch) -> None:
     resume_txt = tmp_path / "tailored.txt"
     resume_pdf = tmp_path / "tailored.pdf"

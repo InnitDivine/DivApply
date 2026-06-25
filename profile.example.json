@@ -16,6 +16,15 @@
     "github_url": "",
     "website_url": ""
   },
+  "application_addresses": {
+    "california": {
+      "address": "456 California St",
+      "city": "Auburn",
+      "province_state": "CA",
+      "country": "United States",
+      "postal_code": "95603"
+    }
+  },
   "work_authorization": {
     "legally_authorized_to_work": "Yes",
     "require_sponsorship": "No",

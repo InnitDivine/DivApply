@@ -5,8 +5,10 @@ how to fill out a job application form using Playwright MCP tools. All
 personal data is loaded from the user's profile -- nothing is hardcoded.
 """
 
+import copy
 import logging
 import os
+import re
 import shutil
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +16,41 @@ from pathlib import Path
 from divapply import config
 
 logger = logging.getLogger(__name__)
+
+
+_CALIFORNIA_TARGET_AREAS = ("roseville", "rocklin", "lincoln", "auburn", "sacramento", "folsom")
+
+
+def _job_text_for_location(job: dict, *, include_description: bool = False) -> str:
+    keys = ["location", "title", "company", "site", "url", "application_url"]
+    if include_description:
+        keys.append("full_description")
+    return " ".join(str(job.get(key) or "") for key in keys).lower()
+
+
+def _job_uses_california_address(job: dict) -> bool:
+    """Return True when an application should use the configured CA address."""
+    text = _job_text_for_location(job)
+    if re.search(r"\b(ca|california)\b", text):
+        return True
+    if "sutter" in text:
+        return True
+    return any(area in text for area in _CALIFORNIA_TARGET_AREAS)
+
+
+def _profile_for_job_address(profile: dict, job: dict) -> dict:
+    """Return a profile copy with the job-appropriate application address."""
+    addresses = profile.get("application_addresses", {}) or {}
+    california = addresses.get("california") or addresses.get("ca")
+    if not california or not _job_uses_california_address(job):
+        return profile
+
+    adjusted = copy.deepcopy(profile)
+    personal = adjusted.setdefault("personal", {})
+    for key in ("address", "city", "province_state", "country", "postal_code"):
+        if california.get(key):
+            personal[key] = california[key]
+    return adjusted
 
 
 def _read_pdf_text(path: Path) -> str:
@@ -746,6 +783,7 @@ def build_prompt(job: dict, tailored_resume: str,
         Complete prompt string for the AI agent.
     """
     profile = config.load_profile()
+    profile = _profile_for_job_address(profile, job)
     search_config = config.load_search_config()
     personal = profile["personal"]
 
