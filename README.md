@@ -64,7 +64,7 @@ On Windows, DivApply installs plain `divapply`/`divapply.cmd` launchers instead 
 
 `divapply[jobspy-upstream]` is declared only for compatibility checks against upstream `python-jobspy` metadata. It is not part of the recommended install path because it allows pip to install the vulnerable upstream `markdownify` range.
 
-Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
+Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It uses `DIVAPPLY_BROWSER` when configured, otherwise it defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
 
 ## Clone Setup
 
@@ -158,7 +158,7 @@ divapply browser-login --url https://www.myworkday.com/
 divapply browser-login --url https://imh.wd108.myworkdayjobs.com/IntermountainCareers
 ```
 
-Future `divapply apply --browser chromium --workers 1` runs reuse the worker-0 profile cookies. Use the same `--browser` and `--worker` values for login and apply.
+Future `divapply apply --workers 1` runs reuse the worker-0 profile cookies for the configured browser. Use the same `--browser` and `--worker` values for login and apply when overriding the configured browser.
 
 If Google says "This browser or app may not be secure", use real Chrome for both login and apply:
 
@@ -166,6 +166,8 @@ If Google says "This browser or app may not be secure", use real Chrome for both
 divapply browser-login --browser chrome --url https://www.myworkday.com/
 divapply apply --browser chrome --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
 ```
+
+To make real Chrome the default saved-cookie browser, set `DIVAPPLY_BROWSER=chrome` in `~/.divapply/.env`. Then both `divapply browser-login` and `divapply apply` use the Chrome worker profile unless you explicitly pass a different `--browser`.
 
 Auto-apply has no hard per-job timeout by default because multi-step ATS flows such as Workday can take several minutes. For fail-fast testing, set a temporary timeout for that session:
 

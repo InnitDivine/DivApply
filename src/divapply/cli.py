@@ -679,10 +679,10 @@ def browser_login(
         "--url",
         help="Login page to open in the persistent apply browser profile.",
     ),
-    browser: str = typer.Option(
-        "chromium",
+    browser: Optional[str] = typer.Option(
+        None,
         "--browser",
-        help="Browser profile to prepare: chromium, chrome, msedge, firefox, or webkit.",
+        help="Browser profile to prepare. Defaults to DIVAPPLY_BROWSER, or chromium.",
     ),
     worker: int = typer.Option(0, "--worker", "-w", help="Apply worker profile number to reuse."),
 ) -> None:
@@ -742,7 +742,7 @@ def apply(
     max_score: Optional[int] = typer.Option(None, "--max-score", help="Maximum fit score for job selection."),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Apply agent model name."),
     backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Apply agent backend: codex or claude."),
-    browser: str = typer.Option("chromium", "--browser", help="Playwright browser: chromium, chrome, msedge, firefox, webkit."),
+    browser: Optional[str] = typer.Option(None, "--browser", help="Apply browser. Defaults to DIVAPPLY_BROWSER, or chromium."),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),

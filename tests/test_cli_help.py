@@ -275,7 +275,7 @@ def test_browser_login_uses_persistent_worker_profile(tmp_path, monkeypatch) -> 
     calls: list[list[str]] = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr(config, "get_apply_browser", lambda browser: browser)
+    monkeypatch.setattr(config, "get_apply_browser", lambda browser=None: browser or "chromium")
     monkeypatch.setattr(chrome, "setup_worker_profile", lambda worker, browser: tmp_path / f"{browser}-{worker}")
 
     class Result:
@@ -305,7 +305,7 @@ def test_browser_login_with_chrome_uses_direct_chrome_not_playwright(tmp_path, m
     calls: list[list[str]] = []
 
     monkeypatch.setattr(cli, "_bootstrap", lambda: None)
-    monkeypatch.setattr(config, "get_apply_browser", lambda browser: browser)
+    monkeypatch.setattr(config, "get_apply_browser", lambda browser=None: browser or "chromium")
     monkeypatch.setattr(config, "get_chrome_path", lambda: "C:/Program Files/Google/Chrome/Application/chrome.exe")
     monkeypatch.setattr(chrome, "setup_worker_profile", lambda worker, browser: tmp_path / f"{browser}-{worker}")
 
@@ -329,6 +329,36 @@ def test_browser_login_with_chrome_uses_direct_chrome_not_playwright(tmp_path, m
     assert "playwright" not in cmd
     assert f"--user-data-dir={tmp_path / 'chrome-0'}" in cmd
     assert "https://accounts.google.com/" in cmd
+
+
+def test_apply_uses_configured_browser_when_option_omitted(tmp_path, monkeypatch) -> None:
+    from divapply.apply import launcher
+
+    captured: dict[str, str | None] = {}
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text("{}", encoding="utf-8")
+    prompt_path = tmp_path / "prompt.txt"
+    prompt_path.write_text("prompt", encoding="utf-8")
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(config, "PROFILE_PATH", profile_path)
+    monkeypatch.setenv("DIVAPPLY_BROWSER", "chrome")
+    monkeypatch.setattr(config, "get_apply_backend", lambda backend=None: "codex")
+    monkeypatch.setattr(config, "get_apply_backend_label", lambda backend: "Codex CLI")
+    monkeypatch.setattr(config, "get_chrome_path", lambda: "C:/Program Files/Google/Chrome/Application/chrome.exe")
+    monkeypatch.setattr(config, "check_tier", lambda *args, **kwargs: None)
+
+    def fake_gen_prompt(*args, **kwargs):
+        captured["browser"] = kwargs["browser"]
+        return prompt_path
+
+    monkeypatch.setattr(launcher, "gen_prompt", fake_gen_prompt)
+    monkeypatch.setattr(launcher, "get_manual_command", lambda *args, **kwargs: "codex exec")
+
+    result = runner.invoke(app, ["apply", "--gen", "--url", "https://example.com/job"])
+
+    assert result.exit_code == 0
+    assert captured["browser"] == "chrome"
 
 
 def test_add_url_metadata_prefers_jobposting_schema_over_hidden_inactive(monkeypatch) -> None:
