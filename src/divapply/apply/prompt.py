@@ -1084,8 +1084,10 @@ GOLDEN RULES â€” every action costs tokens, every screenshot costs tokens:
   STEP 1: Click "Add supplemental attachment". A dropdown "Choose attachment type" appears.
   STEP 2: Set dropdown to "Resume" via JS: browser_evaluate: () => {{ const s = document.querySelector('select[name*="attach"], select[id*="attach"], select'); const opt = [...s.options].find(o => o.text.trim() === 'Resume'); if(opt) {{ s.value = opt.value; s.dispatchEvent(new Event('change',{{bubbles:true}})); }} }}
   STEP 3: Click the "Upload" button that appears. browser_file_upload with exact resume path.
-  STEP 4: Wait for filename to confirm. Then repeat steps 1-3 for Cover Letter if available.
-  STEP 5: Click Next.
+  STEP 4: Wait for filename to confirm. If Cover Letter PDF is not N/A, click "Add supplemental attachment" again.
+  STEP 5: Set dropdown to "Cover Letter" via JS: browser_evaluate: () => {{ const s = document.querySelector('select[name*="attach"], select[id*="attach"], select'); const opt = [...s.options].find(o => o.text.trim().toLowerCase().includes('cover letter')); if(opt) {{ s.value = opt.value; s.dispatchEvent(new Event('change',{{bubbles:true}})); }} }}
+  STEP 6: Click the "Upload" button that appears. browser_file_upload with exact cover letter path.
+  STEP 7: Wait for filename to confirm, then click Next.
   If browser_file_upload fails: browser_evaluate: () => {{ const i=document.querySelector('input[type=file]'); if(i) i.style.display='block'; }} then retry.
 - File upload not working? Unhide the input: browser_evaluate function: () => {{ const i=document.querySelector('input[type=file]'); if(i) i.style.display='block'; }} then browser_file_upload again.
 - Dropdown won't fill? Try browser_select first. If that fails: browser_click to open, then browser_click the option. If that fails: use browser_evaluate to set .value and fire a change event.

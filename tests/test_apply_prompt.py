@@ -92,7 +92,11 @@ def test_apply_prompt_uploads_cover_pdf_when_text_intermediate_was_removed(tmp_p
     )
 
     assert "cover pdf text" in prompt
-    assert (tmp_path / "workers" / "current" / "Example_Person_Cover_Letter.pdf").exists()
+    staged_cover = tmp_path / "workers" / "current" / "Example_Person_Cover_Letter.pdf"
+    assert staged_cover.exists()
+    assert f"Cover Letter PDF (upload if asked): {staged_cover}" in prompt
+    assert 'Set dropdown to "Cover Letter"' in prompt
+    assert "browser_file_upload with exact cover letter path" in prompt
 
 
 def test_apply_prompt_ignores_credentials_saved_in_profile(tmp_path, monkeypatch) -> None:
