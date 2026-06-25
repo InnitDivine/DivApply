@@ -29,6 +29,7 @@ base_urls:
   "Cache County": "https://cachecounty.applicantpro.com"
   "Utah State University": "https://careers-usu.icims.com"
   "Bridgerland Technical College": "https://btech.edu"
+  "City of Roseville": "https://www.governmentjobs.com/careers/rosevilleca"
 
 sites:
   - name: "GovernmentJobs.com"
@@ -55,12 +56,11 @@ sites:
     url: "https://btech.edu/job-board/"
     type: static
 
-  # California / Sacramento-area targets. Kept for later move back.
-  #
-  # - name: "City of Roseville"
-  #   url: "https://www.governmentjobs.com/careers/rosevilleca"
-  #   type: static
-  #
+  # California / Sacramento-area targets.
+  - name: "City of Roseville"
+    url: "https://www.governmentjobs.com/careers/rosevilleca"
+    type: static
+
   # - name: "Placer County"
   #   url: "https://www.jobapscloud.com/Placer/JobBoard.asp"
   #   type: static
