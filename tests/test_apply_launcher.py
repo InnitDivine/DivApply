@@ -160,6 +160,24 @@ def test_extract_result_reports_unsupported_agent_model_before_prompt_examples(m
     assert status == "failed:agent_model_unsupported"
 
 
+def test_extract_result_reports_out_of_credits_before_prompt_examples(monkeypatch) -> None:
+    monkeypatch.setattr(launcher, "add_event", lambda message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
+
+    status, _ = launcher._extract_result(
+        "\n".join([
+            "user",
+            "RESULT:FAILED:reason -- any other failure (brief reason)",
+            "ERROR: Your workspace is out of credits. Add credits to continue.",
+        ]),
+        worker_id=0,
+        job={"title": "Support Role"},
+        duration_ms=1000,
+    )
+
+    assert status == "failed:agent_out_of_credits"
+
+
 def test_extract_result_requires_explicit_applied_result(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "add_event", lambda message: None)
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
@@ -469,6 +487,37 @@ def test_acquire_job_honors_max_score(monkeypatch) -> None:
     assert skipped["apply_status"] is None
     assert claimed["apply_status"] == "in_progress"
     assert claimed["agent_id"] == "worker-6"
+
+
+def test_worker_loop_stops_on_agent_infrastructure_failure(monkeypatch) -> None:
+    events: list[str] = []
+    states: list[dict] = []
+    released: list[str] = []
+    job = {"url": "https://jobs.example/credit", "title": "Credit Blocked"}
+
+    launcher._stop_event.clear()
+    monkeypatch.setattr(launcher, "add_event", events.append)
+    monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: states.append(kwargs))
+    monkeypatch.setattr(
+        launcher,
+        "acquire_job",
+        lambda **kwargs: job if not released else None,
+    )
+    monkeypatch.setattr(
+        launcher,
+        "run_job",
+        lambda *args, **kwargs: ("failed:agent_out_of_credits", 1000),
+    )
+    monkeypatch.setattr(launcher, "release_lock", lambda url: released.append(url))
+    monkeypatch.setattr(launcher, "cleanup_worker", lambda *args, **kwargs: None)
+
+    applied, failed = launcher.worker_loop(limit=1)
+
+    assert (applied, failed) == (0, 0)
+    assert released == ["https://jobs.example/credit"]
+    assert launcher._stop_event.is_set()
+    assert any("agent_out_of_credits" in event for event in events)
+    launcher._stop_event.clear()
 
 
 def test_acquire_job_skips_unsafe_apply_url_and_claims_next_job(monkeypatch) -> None:

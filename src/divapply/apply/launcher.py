@@ -504,9 +504,18 @@ def _last_explicit_result(output: str) -> str | None:
 def _agent_setup_failure(output: str) -> str | None:
     """Return a normalized setup failure when the backend exits before acting."""
     output_lower = output.lower()
+    if "out of credits" in output_lower or "add credits to continue" in output_lower:
+        return "agent_out_of_credits"
     if "invalid_request_error" in output_lower and "model" in output_lower and "not supported" in output_lower:
         return "agent_model_unsupported"
     return None
+
+
+def _is_agent_infrastructure_failure(result: str) -> bool:
+    return result in {
+        "failed:agent_model_unsupported",
+        "failed:agent_out_of_credits",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1053,6 +1062,11 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 release_lock(job["url"])
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
                 continue
+            if _is_agent_infrastructure_failure(result):
+                release_lock(job["url"])
+                _stop_event.set()
+                add_event(f"[W{worker_id}] Stopping queue: {result.split(':', 1)[1]}")
+                break
             if dry_run:
                 mark_dry_run(job["url"], duration_ms=duration_ms, result=result)
                 add_event(f"[W{worker_id}] Dry run result: {result} - {job['title'][:30]}")
