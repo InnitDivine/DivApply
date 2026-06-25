@@ -28,7 +28,7 @@ VOLUME ["/data"]
 STOPSIGNAL SIGINT
 
 HEALTHCHECK --interval=5m --timeout=30s --start-period=30s --retries=3 \
-    CMD divapply selfcheck >/tmp/divapply-health.log 2>&1 || exit 1
+    CMD python -m divapply selfcheck >/tmp/divapply-health.log 2>&1 || exit 1
 
-ENTRYPOINT ["divapply"]
+ENTRYPOINT ["python", "-m", "divapply"]
 CMD ["--help"]

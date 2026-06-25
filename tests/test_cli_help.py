@@ -67,6 +67,13 @@ def test_pyproject_uses_plain_script_launchers_for_windows_device_guard() -> Non
     assert (ROOT / "scripts" / "divapply.cmd").read_text(encoding="utf-8").startswith("@echo off")
 
 
+def test_dockerfile_uses_module_entrypoint_not_script_launcher() -> None:
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert 'ENTRYPOINT ["python", "-m", "divapply"]' in dockerfile
+    assert "CMD python -m divapply selfcheck" in dockerfile
+
+
 def test_readme_common_commands_match_registered_cli_commands() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     common_commands = re.search(r"## Common Commands\s+```powershell\n(?P<body>.*?)\n```", readme, re.S)
