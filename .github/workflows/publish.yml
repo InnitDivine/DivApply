@@ -129,15 +129,30 @@ jobs:
       - name: Build package
         run: uv run python -m build --no-isolation
 
+      - name: Reject unsafe distribution contents
+        run: uv run python tools/check_distribution_contents.py --dist-dir dist
+
       - name: Check package metadata
         run: uv run python -m twine check dist/*
 
+      - name: Assemble SBOM and checksum evidence
+        run: uv run --locked python tools/build_release_evidence.py --dist-dir dist --out-dir release
+
+      - name: Verify release evidence before smoke
+        run: uv run --locked python tools/build_release_evidence.py --out-dir release --verify
+
+      - name: Prepare isolated smoke wheel
+        run: |
+          mkdir -p "$RUNNER_TEMP/divapply-smoke-wheel"
+          cp release/packages/*.whl "$RUNNER_TEMP/divapply-smoke-wheel/"
+
       - name: Smoke test built wheel
         run: |
-          python -m venv .venv-smoke
-          . .venv-smoke/bin/activate
+          python -m venv "$RUNNER_TEMP/divapply-smoke-venv"
+          . "$RUNNER_TEMP/divapply-smoke-venv/bin/activate"
           python -m pip install --upgrade pip
-          WHEEL="$(ls dist/*.whl)"
+          WHEEL="$(find "$RUNNER_TEMP/divapply-smoke-wheel" -maxdepth 1 -type f -name '*.whl' -print -quit)"
+          test -n "$WHEEL"
           python -m pip install "$WHEEL"
           divapply --version
           python -m divapply --version
@@ -155,10 +170,7 @@ jobs:
           python -m divapply --version
           divapply selfcheck
 
-      - name: Assemble SBOM and checksum evidence
-        run: uv run --locked python tools/build_release_evidence.py --dist-dir dist --out-dir release
-
-      - name: Verify release evidence
+      - name: Verify release evidence after smoke
         run: uv run --locked python tools/build_release_evidence.py --out-dir release --verify
 
       - name: Upload verified release bundle
@@ -184,6 +196,87 @@ jobs:
           name: release-bundle
           path: release
 
+      - name: Verify exact release subject set and checksums
+        shell: python
+        run: |
+          import hashlib
+          import os
+          import re
+          import stat
+          from pathlib import Path, PurePosixPath
+
+          root = Path("release")
+          root_mode = root.lstat().st_mode
+          if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+              raise SystemExit("release root is not a regular directory")
+          manifest = root / "SHA256SUMS"
+          manifest_mode = manifest.lstat().st_mode
+          if stat.S_ISLNK(manifest_mode) or not stat.S_ISREG(manifest_mode):
+              raise SystemExit("checksum manifest is not a regular file")
+
+          pattern = re.compile(r"^(?P<digest>[0-9a-f]{64})  (?P<name>[^\r\n]+)$")
+          entries = {}
+          ordered_names = []
+          for line in manifest.read_text(encoding="utf-8").splitlines():
+              match = pattern.fullmatch(line)
+              if match is None:
+                  raise SystemExit("invalid checksum manifest line")
+              name = match.group("name")
+              relative = PurePosixPath(name)
+              if (
+                  name == "SHA256SUMS"
+                  or "\\" in name
+                  or relative.is_absolute()
+                  or relative.as_posix() != name
+                  or any(part in {"", ".", ".."} for part in relative.parts)
+                  or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in name)
+              ):
+                  raise SystemExit("unsafe checksum subject")
+              if name in entries:
+                  raise SystemExit("duplicate checksum subject")
+              entries[name] = match.group("digest")
+              ordered_names.append(name)
+          if not entries or ordered_names != sorted(ordered_names):
+              raise SystemExit("checksum subjects must be nonempty and sorted")
+
+          expected_dirs = set()
+          for name in entries:
+              parent = PurePosixPath(name).parent
+              while parent != PurePosixPath("."):
+                  expected_dirs.add(parent.as_posix())
+                  parent = parent.parent
+
+          actual_files = set()
+          actual_dirs = set()
+          for current, dirs, files in os.walk(root, followlinks=False):
+              current_path = Path(current)
+              for directory in dirs:
+                  candidate = current_path / directory
+                  mode = candidate.lstat().st_mode
+                  if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+                      raise SystemExit("unsafe release directory entry")
+                  actual_dirs.add(candidate.relative_to(root).as_posix())
+              for filename in files:
+                  candidate = current_path / filename
+                  mode = candidate.lstat().st_mode
+                  if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                      raise SystemExit("unsafe release file entry")
+                  relative_name = candidate.relative_to(root).as_posix()
+                  if relative_name != "SHA256SUMS":
+                      actual_files.add(relative_name)
+          if actual_dirs != expected_dirs:
+              raise SystemExit("release directories do not match checksum subjects")
+          if actual_files != set(entries):
+              raise SystemExit("release files do not match checksum subjects")
+
+          for name, expected in entries.items():
+              digest = hashlib.sha256()
+              with (root / Path(*PurePosixPath(name).parts)).open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              if digest.hexdigest() != expected:
+                  raise SystemExit(f"checksum mismatch: {name}")
+
       - name: Attest release checksums
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
         with:
@@ -207,9 +300,86 @@ jobs:
           name: release-bundle
           path: release
 
-      - name: Verify release checksums
-        working-directory: release
-        run: sha256sum --check SHA256SUMS
+      - name: Verify exact release subject set and checksums
+        shell: python
+        run: |
+          import hashlib
+          import os
+          import re
+          import stat
+          from pathlib import Path, PurePosixPath
+
+          root = Path("release")
+          root_mode = root.lstat().st_mode
+          if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+              raise SystemExit("release root is not a regular directory")
+          manifest = root / "SHA256SUMS"
+          manifest_mode = manifest.lstat().st_mode
+          if stat.S_ISLNK(manifest_mode) or not stat.S_ISREG(manifest_mode):
+              raise SystemExit("checksum manifest is not a regular file")
+
+          pattern = re.compile(r"^(?P<digest>[0-9a-f]{64})  (?P<name>[^\r\n]+)$")
+          entries = {}
+          ordered_names = []
+          for line in manifest.read_text(encoding="utf-8").splitlines():
+              match = pattern.fullmatch(line)
+              if match is None:
+                  raise SystemExit("invalid checksum manifest line")
+              name = match.group("name")
+              relative = PurePosixPath(name)
+              if (
+                  name == "SHA256SUMS"
+                  or "\\" in name
+                  or relative.is_absolute()
+                  or relative.as_posix() != name
+                  or any(part in {"", ".", ".."} for part in relative.parts)
+                  or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in name)
+              ):
+                  raise SystemExit("unsafe checksum subject")
+              if name in entries:
+                  raise SystemExit("duplicate checksum subject")
+              entries[name] = match.group("digest")
+              ordered_names.append(name)
+          if not entries or ordered_names != sorted(ordered_names):
+              raise SystemExit("checksum subjects must be nonempty and sorted")
+
+          expected_dirs = set()
+          for name in entries:
+              parent = PurePosixPath(name).parent
+              while parent != PurePosixPath("."):
+                  expected_dirs.add(parent.as_posix())
+                  parent = parent.parent
+
+          actual_files = set()
+          actual_dirs = set()
+          for current, dirs, files in os.walk(root, followlinks=False):
+              current_path = Path(current)
+              for directory in dirs:
+                  candidate = current_path / directory
+                  mode = candidate.lstat().st_mode
+                  if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+                      raise SystemExit("unsafe release directory entry")
+                  actual_dirs.add(candidate.relative_to(root).as_posix())
+              for filename in files:
+                  candidate = current_path / filename
+                  mode = candidate.lstat().st_mode
+                  if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                      raise SystemExit("unsafe release file entry")
+                  relative_name = candidate.relative_to(root).as_posix()
+                  if relative_name != "SHA256SUMS":
+                      actual_files.add(relative_name)
+          if actual_dirs != expected_dirs:
+              raise SystemExit("release directories do not match checksum subjects")
+          if actual_files != set(entries):
+              raise SystemExit("release files do not match checksum subjects")
+
+          for name, expected in entries.items():
+              digest = hashlib.sha256()
+              with (root / Path(*PurePosixPath(name).parts)).open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              if digest.hexdigest() != expected:
+                  raise SystemExit(f"checksum mismatch: {name}")
 
       - name: Publish package to PyPI
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # v1.14.0
@@ -230,9 +400,86 @@ jobs:
           name: release-bundle
           path: release
 
-      - name: Verify release checksums
-        working-directory: release
-        run: sha256sum --check SHA256SUMS
+      - name: Verify exact release subject set and checksums
+        shell: python
+        run: |
+          import hashlib
+          import os
+          import re
+          import stat
+          from pathlib import Path, PurePosixPath
+
+          root = Path("release")
+          root_mode = root.lstat().st_mode
+          if stat.S_ISLNK(root_mode) or not stat.S_ISDIR(root_mode):
+              raise SystemExit("release root is not a regular directory")
+          manifest = root / "SHA256SUMS"
+          manifest_mode = manifest.lstat().st_mode
+          if stat.S_ISLNK(manifest_mode) or not stat.S_ISREG(manifest_mode):
+              raise SystemExit("checksum manifest is not a regular file")
+
+          pattern = re.compile(r"^(?P<digest>[0-9a-f]{64})  (?P<name>[^\r\n]+)$")
+          entries = {}
+          ordered_names = []
+          for line in manifest.read_text(encoding="utf-8").splitlines():
+              match = pattern.fullmatch(line)
+              if match is None:
+                  raise SystemExit("invalid checksum manifest line")
+              name = match.group("name")
+              relative = PurePosixPath(name)
+              if (
+                  name == "SHA256SUMS"
+                  or "\\" in name
+                  or relative.is_absolute()
+                  or relative.as_posix() != name
+                  or any(part in {"", ".", ".."} for part in relative.parts)
+                  or any(ord(char) < 32 or 127 <= ord(char) <= 159 for char in name)
+              ):
+                  raise SystemExit("unsafe checksum subject")
+              if name in entries:
+                  raise SystemExit("duplicate checksum subject")
+              entries[name] = match.group("digest")
+              ordered_names.append(name)
+          if not entries or ordered_names != sorted(ordered_names):
+              raise SystemExit("checksum subjects must be nonempty and sorted")
+
+          expected_dirs = set()
+          for name in entries:
+              parent = PurePosixPath(name).parent
+              while parent != PurePosixPath("."):
+                  expected_dirs.add(parent.as_posix())
+                  parent = parent.parent
+
+          actual_files = set()
+          actual_dirs = set()
+          for current, dirs, files in os.walk(root, followlinks=False):
+              current_path = Path(current)
+              for directory in dirs:
+                  candidate = current_path / directory
+                  mode = candidate.lstat().st_mode
+                  if stat.S_ISLNK(mode) or not stat.S_ISDIR(mode):
+                      raise SystemExit("unsafe release directory entry")
+                  actual_dirs.add(candidate.relative_to(root).as_posix())
+              for filename in files:
+                  candidate = current_path / filename
+                  mode = candidate.lstat().st_mode
+                  if stat.S_ISLNK(mode) or not stat.S_ISREG(mode):
+                      raise SystemExit("unsafe release file entry")
+                  relative_name = candidate.relative_to(root).as_posix()
+                  if relative_name != "SHA256SUMS":
+                      actual_files.add(relative_name)
+          if actual_dirs != expected_dirs:
+              raise SystemExit("release directories do not match checksum subjects")
+          if actual_files != set(entries):
+              raise SystemExit("release files do not match checksum subjects")
+
+          for name, expected in entries.items():
+              digest = hashlib.sha256()
+              with (root / Path(*PurePosixPath(name).parts)).open("rb") as handle:
+                  for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                      digest.update(chunk)
+              if digest.hexdigest() != expected:
+                  raise SystemExit(f"checksum mismatch: {name}")
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3.0.1

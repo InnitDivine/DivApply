@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
 from divapply.scoring.embedding import embedding_score
@@ -13,6 +15,7 @@ from divapply.scoring.keywords import (
 )
 from divapply.scoring import scorer
 from divapply.scoring.scorer import _build_profile_evidence_context, _build_search_evidence_context
+from divapply.search_policy import job_has_schedule_exception, market_policy_for_job
 
 
 def test_keyword_score_reports_hits_and_misses() -> None:
@@ -29,6 +32,15 @@ def test_keyword_score_reports_hits_and_misses() -> None:
 def test_keyword_present_matches_meaningful_phrase_parts() -> None:
     assert keyword_present("customer support", "support specialist with customer-facing work")
     assert not keyword_present("customer support", "customer records only")
+
+
+def test_keyword_present_accepts_explicit_resume_evidence_equivalents() -> None:
+    resume = "Workstation setup, PC building, user assistance, troubleshooting, and discrepancy research."
+
+    assert keyword_present("device setup", resume.casefold())
+    assert keyword_present("end-user support", resume.casefold())
+    assert keyword_present("problem-solving", resume.casefold())
+    assert not keyword_present("asset inventory", resume.casefold())
 
 
 def test_keyword_score_weights_preferred_certifications_lightly() -> None:
@@ -102,6 +114,56 @@ def test_keyword_extraction_captures_admin_service_bullets_without_marker_repeti
     assert preferred["score"] >= 0.75
 
 
+def test_keyword_extraction_ignores_company_copy_and_application_boilerplate() -> None:
+    jd = "\n".join(
+        [
+            "About Attain",
+            "We bring our best thinking and unique skills to advance every client.",
+            "Job Responsibilities",
+            "- Troubleshoot Microsoft 365 and Windows devices",
+            "- Maintain asset inventory and technical documentation",
+            "Qualifications",
+            "- Associate degree in IT or equivalent experience",
+            "Additional Information",
+            "Hourly rate: $15-$20 plus benefits",
+            "We are an equal opportunity and affirmative action employer.",
+            "Apply for this job",
+            "First Name",
+            "Voluntary Self-Identification of Disability",
+            "Cancer",
+        ]
+    )
+
+    keywords = extract_requirement_keywords(jd)
+
+    assert any("microsoft" in keyword for keyword in keywords)
+    assert any("troubleshooting" in keyword or "troubleshoot" in keyword for keyword in keywords)
+    assert not any("attain" in keyword for keyword in keywords)
+    assert not any("best" in keyword for keyword in keywords)
+    assert not any("hourly" in keyword for keyword in keywords)
+    assert not any("disability" in keyword or "cancer" in keyword for keyword in keywords)
+    assert "qualifications" not in keywords
+    assert "qualifications & education" not in keywords
+    assert "e.g" not in keywords
+
+
+def test_keyword_extraction_ignores_truncation_pay_and_location_fragments() -> None:
+    jd = """Minimum Qualifications
+- Bachelor's degree and two years of technical consulting experience required.
+...[middle omitted]...
+Pay $28.40 - $34.20 per hour
+Location: Remote, U.S.
+Benefits include medical and retirement.
+"""
+
+    keywords = extract_requirement_keywords(jd)
+
+    assert not any("middle omitted" in keyword for keyword in keywords)
+    assert not any("pay $" in keyword or "per hour" in keyword for keyword in keywords)
+    assert not any(keyword in {"location remote", "u.s", "u.s."} for keyword in keywords)
+    assert not any("benefits include" in keyword for keyword in keywords)
+
+
 def test_embedding_score_is_bounded() -> None:
     score = embedding_score("python sql reporting", "python sql analytics")
     assert 0.0 <= score <= 1.0
@@ -141,6 +203,53 @@ def test_format_job_context_preserves_tail_work_arrangement_caveat() -> None:
     assert "requires onsite training in Los Angeles" in text
 
 
+def test_format_job_context_strips_application_self_id_boilerplate() -> None:
+    text = format_job_context(
+        {
+            "title": "IT Support Specialist",
+            "company": "Example Employer",
+            "full_description": """Job Responsibilities
+- Troubleshoot Windows devices
+Qualifications
+- Associate degree or equivalent experience
+Equal Opportunity/Affirmative Action employer.
+Apply for this job
+Voluntary Self-Identification of Disability
+Cancer
+Veteran Status
+""",
+        },
+        description_limit=3000,
+    )
+
+    assert "Troubleshoot Windows devices" in text
+    assert "equivalent experience" in text
+    assert "Self-Identification" not in text
+    assert "Cancer" not in text
+    assert "Veteran Status" not in text
+
+
+def test_format_job_context_preserves_middle_minimum_qualifications() -> None:
+    description = (
+        "Role overview and technical consulting duties.\n"
+        + ("opening detail " * 80)
+        + "\nMinimum Qualifications\n"
+        + "Bachelor's degree completed and two years of technical consulting experience required.\n"
+        + ("later detail " * 80)
+        + "\nApplications close Friday."
+    )
+
+    text = format_job_context(
+        {"title": "Systems Analyst", "company": "Example", "full_description": description},
+        description_limit=420,
+    )
+
+    assert "Role overview" in text
+    assert "Minimum Qualifications" in text
+    assert "two years of technical consulting experience required" in text
+    assert "Applications close Friday" in text
+
+
 def test_composite_score_returns_breakdown_json() -> None:
     result = composite_score(
         job_description="Required: Python, SQL, Kubernetes.",
@@ -155,6 +264,35 @@ def test_composite_score_returns_breakdown_json() -> None:
     breakdown = json.loads(result["score_breakdown"])
     assert "keyword" in breakdown
     assert "skill_gaps" in breakdown
+
+
+def test_composite_renormalizes_when_keyword_modality_has_no_evidence(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "divapply.scoring.composite.score_keywords",
+        lambda *args, **kwargs: {
+            "score": 0.0,
+            "keywords": [],
+            "hits": [],
+            "misses": [],
+            "required_keywords": [],
+            "preferred_keywords": [],
+            "preferred_hits": [],
+            "preferred_misses": [],
+        },
+    )
+    monkeypatch.setattr("divapply.scoring.composite.embedding_score", lambda *args, **kwargs: 0.5)
+
+    result = composite_score(
+        job_description="Plain-language role description without requirement headings.",
+        resume_text="Relevant transferable experience.",
+        llm_result={"score": 6, "target_priority": "1", "reasoning": "Moderate fit."},
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert breakdown["keyword_modality_available"] is False
+    assert breakdown["weights"]["keyword"] == 0.0
+    assert sum(breakdown["weights"].values()) == pytest.approx(1.0)
+    assert result["composite_score"] == pytest.approx(5.57)
 
 
 def test_composite_score_caps_non_substitutable_requirement_gap() -> None:
@@ -205,6 +343,95 @@ def test_composite_score_does_not_cap_preferred_only_certificate_gap() -> None:
 
     breakdown = json.loads(result["score_breakdown"])
     assert breakdown["hard_mismatch_cap"] is False
+
+
+def test_composite_score_accepts_degree_or_equivalent_experience() -> None:
+    result = composite_score(
+        job_description=(
+            "Part-time IT support. Associate degree in IT or equivalent experience. "
+            "Troubleshoot Microsoft 365, Windows, accounts, and devices."
+        ),
+        resume_text=(
+            "IT certificate in progress. Microsoft 365, Windows, account administration, "
+            "device troubleshooting, documentation, and public-sector experience."
+        ),
+        llm_result={
+            "score": 7,
+            "target_priority": "1",
+            "risk_flags": "No completed IT associate degree; equivalent experience is accepted.",
+            "missing_skills": "Completed IT associate degree, but experience may substitute.",
+            "apply_or_skip_reason": "Apply - the posting accepts equivalent experience.",
+            "reasoning": "Strong entry-level IT fit despite the degree alternative.",
+        },
+        weights={"keyword": 0.45, "embedding": 0.45, "llm": 0.1},
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["hard_mismatch_cap"] is False
+    assert breakdown["positive_apply_floor"] is True
+
+
+def test_score_prompt_does_not_invent_paid_experience_requirement() -> None:
+    assert "Do not invent a paid, professional, same-title" in scorer.SCORE_PROMPT
+    assert 'Never turn "equivalent experience accepted" into "paid IT experience required"' in scorer.SCORE_PROMPT
+
+
+def test_substitutable_degree_narrative_keeps_real_gaps_without_calling_degree_mandatory() -> None:
+    reasoning, risks = scorer._sanitize_substitution_narrative(
+        "Strong support fit, but the candidate lacks a completed IT associate degree and asset ownership.",
+        "Remote role; IT degree is in progress; onboarding ownership not clear",
+        "Associate degree in IT or related field; equivalent experience accepted.",
+        "asset inventory",
+    )
+
+    assert "explicitly accepts equivalent experience" in reasoning
+    assert "Remaining evidence gap: asset inventory" in reasoning
+    assert "lacks a completed IT associate" not in reasoning
+    assert "fit. The posting" in reasoning
+    assert "degree" not in risks.casefold()
+    assert "Remote role" in risks
+    assert "onboarding ownership" in risks
+
+
+def test_persisted_score_reasoning_is_built_only_from_bounded_evidence() -> None:
+    reasoning = scorer._build_evidence_reasoning(
+        {
+            "score": 7,
+            "keyword_hits": "support, troubleshooting, windows, device setup, microsoft 365",
+            "missing_skills": "asset inventory",
+        },
+        "Associate degree in IT or related field; equivalent experience accepted.",
+    )
+
+    assert reasoning.startswith("Fit 7/10 based on verified candidate-to-posting evidence")
+    assert "troubleshooting, windows, device setup, microsoft 365" in reasoning
+    assert "support," not in reasoning
+    assert "explicitly accepts equivalent experience" in reasoning
+    assert "Remaining evidence gap: asset inventory" in reasoning
+
+
+def test_composite_uses_posting_substitution_when_llm_reason_omits_it() -> None:
+    result = composite_score(
+        job_description=(
+            "Associate degree in Information Technology or related field; "
+            "equivalent experience accepted. Troubleshoot Windows and Microsoft 365."
+        ),
+        resume_text="Windows and Microsoft 365 troubleshooting plus three years of IT projects.",
+        llm_result={
+            "score": 7,
+            "target_priority": "1",
+            "risk_flags": "No completed IT associate degree.",
+            "missing_skills": "Completed IT associate degree.",
+            "apply_or_skip_reason": "Apply - strong entry-level support fit.",
+            "reasoning": "The candidate lacks an IT degree but meets most support duties.",
+        },
+        weights={"keyword": 0.45, "embedding": 0.45, "llm": 0.1},
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["positive_apply_floor"] is True
 
 
 def test_composite_score_preserves_positive_llm_apply_signal() -> None:
@@ -269,6 +496,8 @@ def test_composite_score_lifts_configured_schedule_only_referral_exception() -> 
             "apply_or_skip_reason": "Apply because this is a configured referral exception.",
             "reasoning": "Only concern is full-time schedule against a part-time search filter.",
         },
+        require_part_time=True,
+        schedule_exception=True,
     )
 
     breakdown = json.loads(result["score_breakdown"])
@@ -316,6 +545,8 @@ def test_composite_score_keeps_hard_gap_cap_for_configured_referral_exception() 
             "apply_or_skip_reason": "Skip; not eligible without RN license.",
             "reasoning": "Referral does not substitute for the required RN license.",
         },
+        require_part_time=True,
+        schedule_exception=True,
     )
 
     breakdown = json.loads(result["score_breakdown"])
@@ -360,6 +591,74 @@ def test_score_job_prompt_uses_company_separate_from_source(monkeypatch) -> None
     assert "SOURCE: Indeed" in user_prompt
 
 
+def test_score_job_overrides_apply_wording_for_discovery_only(monkeypatch) -> None:
+    class FakeClient:
+        def chat(self, messages, **kwargs):
+            return "\n".join(
+                [
+                    "FIT_SCORE: 8",
+                    "TARGET_PRIORITY: 1",
+                    "MATCHED_SKILLS: application support",
+                    "MISSING_SKILLS: none",
+                    "KEYWORD_HITS: support",
+                    "RISK_FLAGS: none",
+                    "APPLY_OR_SKIP_REASON: Apply now.",
+                    "SCORE_REASONING: Strong fit.",
+                ]
+            )
+
+    monkeypatch.setattr(scorer, "get_client_for_stage", lambda stage: FakeClient())
+
+    result = scorer.score_job(
+        resume_text="Application support projects.",
+        job={
+            "title": "Systems Analyst",
+            "company": "Example",
+            "location": "Sample City, ZZ",
+            "full_description": "Full-time application support. Benefits include medical and retirement.",
+        },
+        application_mode="discovery_only",
+        preferred_schedule="full_time",
+        require_benefits=True,
+    )
+
+    assert result["score"] >= 7
+    assert result["apply_or_skip_reason"].startswith("Discovery only")
+    assert "Apply now" not in result["apply_or_skip_reason"]
+
+
+def test_score_job_does_not_store_unverified_or_implied_llm_matches(monkeypatch) -> None:
+    class FakeClient:
+        def chat(self, messages, **kwargs):
+            return "\n".join(
+                [
+                    "FIT_SCORE: 7",
+                    "TARGET_PRIORITY: 1",
+                    "MATCHED_SKILLS: VoIP not verified, ticketing implied",
+                    "MISSING_SKILLS: VoIP, ticketing",
+                    "KEYWORD_HITS: support",
+                    "RISK_FLAGS: none",
+                    "APPLY_OR_SKIP_REASON: Apply.",
+                    "SCORE_REASONING: Transferable support fit.",
+                ]
+            )
+
+    monkeypatch.setattr(scorer, "get_client_for_stage", lambda stage: FakeClient())
+
+    result = scorer.score_job(
+        resume_text="User support and device troubleshooting projects.",
+        job={
+            "title": "Support Technician",
+            "company": "Example",
+            "full_description": "Required: user support and device troubleshooting.",
+        },
+    )
+
+    assert "not verified" not in result["matched_skills"].casefold()
+    assert "implied" not in result["matched_skills"].casefold()
+    assert "support" in result["matched_skills"].casefold()
+
+
 def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     prompt = scorer.SCORE_PROMPT
 
@@ -373,7 +672,7 @@ def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     assert "required/minimum/must have" in prompt
     assert "equivalent experience is accepted" in prompt
     assert "Coursework and in-progress education can support skills" in prompt
-    assert "referral or priority-employer exceptions" in prompt
+    assert "explicit schedule exception for the current employer" in prompt
 
 
 def test_profile_evidence_context_includes_verified_facts_without_secrets() -> None:
@@ -535,17 +834,33 @@ def test_search_evidence_context_includes_schedule_filters() -> None:
     assert "Exampletown, UT" in context
 
 
-def test_search_evidence_context_includes_referral_priority_schedule_exceptions() -> None:
+def test_search_evidence_context_includes_only_exact_current_job_schedule_exception() -> None:
     context = _build_search_evidence_context(
         {
             "require_part_time": True,
             "referral_employers": ["Sutter Health"],
             "priority_employers": [{"name": "Cache Employer"}],
-        }
+        },
+        job={"company": "Sutter Health"},
     )
 
     assert "Search schedule filter: part-time roles required" in context
-    assert "Referral/priority employer schedule exception: Sutter Health; Cache Employer" in context
+    assert "Explicit schedule exception: current employer matched configured schedule/referral policy." in context
+    assert "Cache Employer" not in context
+
+
+def test_schedule_exception_requires_exact_employer_and_ignores_priority() -> None:
+    config = {
+        "referral_employers": ["Example Health"],
+        "schedule_exception_employers": [{"name": "Exact Systems"}],
+        "priority_employers": [{"name": "Priority Only"}],
+    }
+
+    assert job_has_schedule_exception(config, {"company": "Example Health"})
+    assert job_has_schedule_exception(config, {"company": "exact systems"})
+    assert not job_has_schedule_exception(config, {"company": "Example Health Partners"})
+    assert not job_has_schedule_exception(config, {"company": "Priority Only"})
+    assert not job_has_schedule_exception(config, {"company": "Unrelated"})
 
 
 def test_search_evidence_context_includes_priority_policy_and_every_query() -> None:
@@ -587,12 +902,113 @@ def test_search_evidence_context_marks_full_time_preference_and_priority_semanti
     assert "Search schedule preference: full-time professional roles" in context
 
 
+def test_search_context_uses_job_market_policy_instead_of_global_schedule() -> None:
+    search_config = {
+        "preferred_schedule": "any",
+        "require_part_time": False,
+        "default_market_label": "Current market",
+        "locations": [
+            {"label": "Current market", "location": "Exampletown, YY"},
+            {"label": "Future market", "location": "Sample City, ZZ"},
+        ],
+        "market_policies": {
+            "Current market": {
+                "preferred_schedule": "part_time",
+                "require_part_time": True,
+                "application_mode": "active",
+            },
+            "Future market": {
+                "preferred_schedule": "full_time",
+                "require_part_time": False,
+                "application_mode": "discovery_only",
+                "require_benefits": True,
+            },
+        },
+        "queries": [
+            {"query": "part time help desk", "tier": 1, "location_labels": ["Current market"]},
+            {"query": "IT technician", "tier": 1, "location_labels": ["Future market"]},
+        ],
+    }
+
+    context = _build_search_evidence_context(
+        search_config,
+        job={"location": "Sample City, ZZ"},
+    )
+
+    assert "Active market policy: Future market" in context
+    assert "Search schedule preference: full-time professional roles" in context
+    assert "Application mode: discovery only" in context
+    assert "Benefits required before recommendation" in context
+    assert "IT technician" in context
+    assert "part time help desk" not in context
+    assert "part-time roles required" not in context
+
+
+def test_concrete_remote_tag_does_not_inherit_default_market_policy() -> None:
+    config = {
+        "default_market_label": "Current market",
+        "locations": [{"label": "Current market", "location": "Exampletown, YY"}],
+        "market_policies": {"Current market": {"application_mode": "active"}},
+    }
+
+    assert market_policy_for_job(config, {"location": "Other City, ZZ (Remote)"}) == ("", {})
+    assert market_policy_for_job(config, {"location": "Remote, US"})[0] == "Current market"
+    assert market_policy_for_job(config, {"location": ""}) == ("", {})
+
+
+def test_remote_job_uses_valid_persisted_query_market_without_accepting_conflicts() -> None:
+    config = {
+        "default_market_label": "Current market",
+        "locations": [
+            {"label": "Current market", "location": "Exampletown, YY"},
+            {"label": "Future market", "location": "Sample City, ZZ"},
+        ],
+        "market_policies": {
+            "Current market": {"application_mode": "active", "require_part_time": True},
+            "Future market": {"application_mode": "discovery_only", "require_benefits": True},
+        },
+    }
+
+    label, policy = market_policy_for_job(
+        config,
+        {"location": "Remote, US", "market_label": "Future market"},
+    )
+    assert label == "Future market"
+    assert policy["application_mode"] == "discovery_only"
+    assert policy["require_benefits"] is True
+    assert market_policy_for_job(
+        config,
+        {"location": "Sample City, ZZ", "market_label": "Current market"},
+    ) == ("", {})
+
+
+def test_market_policy_resolves_state_qualified_nearby_match_patterns() -> None:
+    config = {
+        "default_market_label": "Current market",
+        "locations": [
+            {"label": "Current market", "location": "Exampletown, YY"},
+            {
+                "label": "Future market",
+                "location": "Sample City, ZZ",
+                "match_patterns": ["Neighbor City, ZZ"],
+            },
+        ],
+        "market_policies": {
+            "Current market": {"application_mode": "active"},
+            "Future market": {"application_mode": "discovery_only"},
+        },
+    }
+
+    assert market_policy_for_job(config, {"location": "Neighbor City, ZZ, US"})[0] == "Future market"
+
+
 def test_score_prompt_keeps_fallback_and_low_hour_roles_out_of_primary_queue() -> None:
     prompt = scorer.SCORE_PROMPT
 
     assert "Priority 3 or outside all named target families: maximum score 6" in prompt
     assert "part-time, per-diem, temporary, or seasonal role: maximum score 6" in prompt
     assert "TARGET_PRIORITY: [1, 2, 3, or outside]" in prompt
+    assert "Do not say a degree level is absent" in prompt
 
 
 def test_composite_score_deterministically_caps_fallback_priority() -> None:
@@ -644,8 +1060,162 @@ def test_composite_score_deterministically_caps_low_hour_full_time_preference_co
             "apply_or_skip_reason": "Apply.",
             "reasoning": "Qualified for the work.",
         },
+        preferred_schedule="full_time",
     )
 
     breakdown = json.loads(result["score_breakdown"])
     assert result["score"] <= 6
     assert breakdown["schedule_preference_cap"] is True
+
+
+def test_composite_score_caps_unknown_current_part_time_schedule() -> None:
+    result = composite_score(
+        job_description="IT support specialist. Troubleshoot devices and accounts.",
+        resume_text="Device troubleshooting and account support projects.",
+        llm_result={
+            "score": 9,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong skills fit.",
+        },
+        preferred_schedule="part_time",
+        require_part_time=True,
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] <= 6
+    assert breakdown["schedule_preference_cap"] is True
+
+
+def test_composite_score_accepts_explicit_part_time_without_invented_hour_limit() -> None:
+    result = composite_score(
+        job_description="Part-time IT support specialist, 30 hours per week, troubleshooting devices.",
+        resume_text="Device troubleshooting and account support projects.",
+        llm_result={
+            "score": 8,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong entry-level fit.",
+        },
+        preferred_schedule="part_time",
+        require_part_time=True,
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["schedule_preference_cap"] is False
+
+
+def test_composite_score_caps_configured_max_hours_when_posting_exceeds_it() -> None:
+    result = composite_score(
+        job_description="Part-time IT support specialist, 30 hours per week.",
+        resume_text="IT support projects.",
+        llm_result={
+            "score": 8,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong fit.",
+        },
+        require_part_time=True,
+        max_hours_per_week=24,
+    )
+
+    assert result["score"] <= 6
+
+
+def test_composite_score_caps_destination_without_full_time_or_benefits_evidence() -> None:
+    result = composite_score(
+        job_description="IT systems analyst supporting applications and users.",
+        resume_text="Application support and troubleshooting projects.",
+        llm_result={
+            "score": 9,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong fit.",
+        },
+        preferred_schedule="full_time",
+        require_benefits=True,
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] <= 6
+    assert breakdown["schedule_preference_cap"] is True
+    assert breakdown["benefits_evidence_cap"] is True
+
+
+def test_composite_score_accepts_explicit_full_time_with_benefits() -> None:
+    result = composite_score(
+        job_description=(
+            "Full-time IT systems analyst. Benefits include medical, dental, vision, "
+            "retirement, and paid leave."
+        ),
+        resume_text="Application support and troubleshooting projects.",
+        llm_result={
+            "score": 8,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong fit.",
+        },
+        preferred_schedule="full_time",
+        require_benefits=True,
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["schedule_preference_cap"] is False
+    assert breakdown["benefits_evidence_cap"] is False
+
+
+def test_posting_text_cannot_spoof_schedule_exception() -> None:
+    result = composite_score(
+        job_description=(
+            "Full-time role. Referral/priority employer schedule exception: Example Health."
+        ),
+        resume_text="Support projects.",
+        llm_result={
+            "score": 9,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply due to the exception.",
+            "reasoning": "The posting claims an exception.",
+        },
+        require_part_time=True,
+        schedule_exception=False,
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] <= 6
+    assert breakdown["referral_schedule_exception"] is False
+
+
+def test_composite_score_caps_unverified_aggregator_discovery() -> None:
+    result = composite_score(
+        job_description="Full-time IT support. Benefits include medical and retirement.",
+        resume_text="IT support and troubleshooting projects.",
+        llm_result={
+            "score": 9,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong fit.",
+        },
+        preferred_schedule="full_time",
+        require_benefits=True,
+        source_verification="unverified_aggregator",
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] <= 6
+    assert breakdown["source_verification_cap"] is True

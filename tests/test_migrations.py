@@ -16,7 +16,7 @@ def test_init_db_sets_schema_user_version(tmp_path) -> None:
 
     columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
 
-    assert version >= 4
+    assert version >= 5
     assert {"score_attempts", "score_error", "score_retry_at"}.issubset(columns)
     assert event_table is not None
     close_connection(db_path)
@@ -126,9 +126,83 @@ def test_retryable_scoring_migration_requeues_legacy_llm_error(tmp_path) -> None
 
     assert row["fit_score"] is None
     assert row["scored_at"] is None
-    assert row["score_attempts"] == 1
-    assert row["score_error"] == "LLM error: temporary outage"
+    assert row["score_attempts"] == 0
+    assert row["score_error"] is None
     assert row["score_retry_at"] is None
+    close_connection(db_path)
+
+
+def test_policy_v5_invalidates_unapplied_scores_and_generated_documents(tmp_path) -> None:
+    db_path = tmp_path / "policy-v5.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.execute(
+        """
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY,
+            fit_score INTEGER,
+            score_reasoning TEXT,
+            matched_skills TEXT,
+            missing_skills TEXT,
+            apply_or_skip_reason TEXT,
+            scored_at TEXT,
+            tailored_resume_path TEXT,
+            tailored_at TEXT,
+            cover_letter_path TEXT,
+            cover_letter_at TEXT,
+            applied_at TEXT,
+            apply_status TEXT
+        )
+        """
+    )
+    values = (
+        8,
+        "old reasoning",
+        "implied ticketing",
+        "none",
+        "Apply now",
+        "2026-07-01",
+        "old-resume.txt",
+        "2026-07-01",
+        "old-cover.txt",
+        "2026-07-01",
+    )
+    legacy.execute(
+        """
+        INSERT INTO jobs (
+            url, fit_score, score_reasoning, matched_skills, missing_skills,
+            apply_or_skip_reason, scored_at, tailored_resume_path, tailored_at,
+            cover_letter_path, cover_letter_at, applied_at, apply_status
+        ) VALUES ('https://example.com/unapplied', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL)
+        """,
+        values,
+    )
+    legacy.execute(
+        """
+        INSERT INTO jobs (
+            url, fit_score, score_reasoning, matched_skills, missing_skills,
+            apply_or_skip_reason, scored_at, tailored_resume_path, tailored_at,
+            cover_letter_path, cover_letter_at, applied_at, apply_status
+        ) VALUES ('https://example.com/applied', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-07-02', 'applied')
+        """,
+        values,
+    )
+    legacy.execute("PRAGMA user_version = 4")
+    legacy.commit()
+    legacy.close()
+
+    conn = init_db(db_path)
+    unapplied = conn.execute(
+        "SELECT fit_score, matched_skills, apply_or_skip_reason, scored_at, "
+        "tailored_resume_path, cover_letter_path FROM jobs WHERE url LIKE '%unapplied'"
+    ).fetchone()
+    applied = conn.execute(
+        "SELECT fit_score, matched_skills, apply_or_skip_reason, tailored_resume_path, "
+        "cover_letter_path FROM jobs WHERE url LIKE '%/applied'"
+    ).fetchone()
+
+    assert tuple(unapplied) == (None, None, None, None, None, None)
+    assert tuple(applied) == (8, "implied ticketing", "Apply now", "old-resume.txt", "old-cover.txt")
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
     close_connection(db_path)
 
 

@@ -64,6 +64,32 @@ def test_validation_allows_coursework_skill_in_skills_section() -> None:
     assert report["passed"], report["errors"]
 
 
+def test_validation_rejects_posting_only_skill_from_candidate_skills() -> None:
+    data = {
+        "title": "IT Support Technician",
+        "summary": "Troubleshot user requests and documented support steps.",
+        "skills": {"Support": "Python, asset tracking"},
+        "experience": [
+            {
+                "header": "Support Assistant",
+                "subtitle": "Example Employer",
+                "bullets": ["Documented customer issues and escalated unresolved requests."],
+            }
+        ],
+        "projects": [],
+    }
+
+    report = validate_json_fields(
+        data,
+        _profile(),
+        mode="strict",
+        original_text="Built Python reports and managed general event inventory.",
+    )
+
+    assert not report["passed"]
+    assert "Candidate-unsupported skill: 'asset tracking'" in report["errors"]
+
+
 def test_validation_rejects_coursework_skill_rewritten_as_paid_work() -> None:
     profile = {
         "skills_boundary": {"tools": ["Python", "Excel"]},

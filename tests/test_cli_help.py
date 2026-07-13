@@ -156,13 +156,19 @@ def test_install_docs_use_full_editable_and_entrypoint_parity_checks() -> None:
     contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     operations = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
     migration = (ROOT / "docs" / "MIGRATION.md").read_text(encoding="utf-8")
+    cli_source = (ROOT / "src" / "divapply" / "cli.py").read_text(encoding="utf-8")
 
     assert 'python -m pip install -e ".[dev,full]"' in contributing
     assert "python -m divapply --version" in contributing
     assert "ruff check ." in contributing
 
-    assert 'python -m pip install "divapply[full]"' in operations
+    assert 'python -m pip install --upgrade "divapply[full]"' in operations
     assert "python -m divapply --version" in operations
+
+    assert 'python -m pip install --upgrade "divapply[full]"' in readme
+    assert 'pip install --upgrade "divapply[full]"' in publishing
+    assert 'pip install --upgrade "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"' in publishing
+    assert "pip install --upgrade 'divapply[full]'" in cli_source
 
     assert 'pip install ".[full]"' in migration
     assert 'pip install -e ".[dev,full]"' in migration
@@ -170,6 +176,28 @@ def test_install_docs_use_full_editable_and_entrypoint_parity_checks() -> None:
         assert "python_jobspy-1.1.82-py3-none-any.whl" in document
         assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in document
         assert "pip install --no-deps python-jobspy==1.1.82" not in document
+
+
+def test_import_coursework_preserves_json_status(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "coursework.json"
+    source.write_text(
+        '[{"school":"Example University","course_title":"Networking",'
+        '"status":"Completed","credits":3}]',
+        encoding="utf-8",
+    )
+    captured: list[dict] = []
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(
+        database,
+        "append_coursework",
+        lambda entries: captured.extend(entries) or {"inserted": len(entries), "skipped": 0},
+    )
+
+    result = runner.invoke(app, ["import-coursework", str(source)])
+
+    assert result.exit_code == 0
+    assert captured[0]["status"] == "Completed"
 
 
 def test_short_help_flag_works_for_run_command() -> None:
@@ -414,6 +442,52 @@ def test_apply_uses_configured_browser_when_option_omitted(tmp_path, monkeypatch
 
     assert result.exit_code == 0
     assert captured["browser"] == "chrome"
+
+
+def test_add_url_is_manual_review_until_official_source_refresh(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = database.init_db(db_path)
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        config,
+        "load_search_config",
+        lambda: {
+            "default_market_label": "Current market",
+            "locations": [{"label": "Current market", "location": "Exampletown, YY"}],
+            "market_policies": {"Current market": {"application_mode": "active"}},
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "add-url",
+            "https://example.com/jobs/it-assistant",
+            "--no-fetch",
+            "--title",
+            "IT Assistant",
+            "--company",
+            "Example Employer",
+            "--location",
+            "Exampletown, YY",
+        ],
+    )
+
+    assert result.exit_code == 0
+    row = conn.execute(
+        "SELECT market_label, search_query, application_mode, source_verification, "
+        "official_url_verified_at FROM jobs"
+    ).fetchone()
+    assert dict(row) == {
+        "market_label": "Current market",
+        "search_query": "manual_url",
+        "application_mode": "manual_review",
+        "source_verification": "unknown",
+        "official_url_verified_at": None,
+    }
+    assert "official source verifies it" in result.output
+    database.close_connection(db_path)
 
 
 def test_add_url_metadata_prefers_jobposting_schema_over_hidden_inactive(monkeypatch) -> None:

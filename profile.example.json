@@ -32,6 +32,7 @@
   },
   "compensation": {
     "target_hourly_rate": "15",
+    "part_time_hourly_floor": "15",
     "salary_expectation": "15600",
     "salary_currency": "USD",
     "salary_range_min": "15600",
@@ -101,6 +102,7 @@
     }
   ],
   "eeo_voluntary": {
+    "submit_voluntary_eeo": false,
     "gender": "Decline to self-identify",
     "race_ethnicity": "Decline to self-identify",
     "veteran_status": "Decline to self-identify",

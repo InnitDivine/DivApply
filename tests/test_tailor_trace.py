@@ -40,7 +40,12 @@ def test_assemble_resume_ignores_llm_education_and_injects_profile_education() -
         "education": "Invented University | Completed Degree",
     }
     profile = {
-        "personal": {"full_name": "Jane Doe", "email": "jane@example.com"},
+        "personal": {
+            "full_name": "Jane Doe",
+            "email": "jane@example.com",
+            "city": "Exampletown",
+            "province_state": "YY",
+        },
         "education_schools": [
             {
                 "degree": "A.A.S. Information Technology",
@@ -60,6 +65,7 @@ def test_assemble_resume_ignores_llm_education_and_injects_profile_education() -
     assert "A.A.S. Information Technology (in progress)" in text
     assert "Invented University" not in text
     assert "Completed Degree" not in text
+    assert "\nExampletown, YY\n" in text
 
 
 def test_assemble_resume_labels_major_transfer_and_selective_verified_gpa() -> None:

@@ -11,10 +11,12 @@ blocked:
   sites:
     - "glassdoor"
     - "google"
+    - "simplyhired"
   url_patterns:
     - "%glassdoor%"
     - "%google.com/about/careers%"
     - "%google.jobs%"
+    - "%simplyhired%"
 
 blocked_sso:
   - "accounts.google.com"
@@ -24,13 +26,9 @@ blocked_sso:
 
 base_urls:
   "GovernmentJobs.com": "https://www.governmentjobs.com"
-  "SimplyHired": "https://www.simplyhired.com"
 
 sites:
   - name: "GovernmentJobs.com"
     url: "https://www.governmentjobs.com/jobs?keyword={query_encoded}&location={location_encoded}&radius=15"
     type: search
-
-  - name: "SimplyHired"
-    url: "https://www.simplyhired.com/search?q={query_encoded}&l={location_encoded}"
-    type: search
+    source_verification: official

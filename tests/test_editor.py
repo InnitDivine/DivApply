@@ -119,6 +119,129 @@ def test_render_editor_escapes_profile_search_values_and_csrf_token() -> None:
     assert "token&quot; autofocus onfocus=&quot;alert(1)" in html
 
 
+def test_editor_round_trip_preserves_scopes_labels_schedule_and_skill_authority(tmp_path, monkeypatch) -> None:
+    profile_path = tmp_path / "profile.json"
+    search_path = tmp_path / "searches.yaml"
+    profile = {
+        "personal": {"full_name": "Jordan Example"},
+        "compensation": {"target_hourly_rate": "25"},
+        "skills": ["stale flat skill"],
+        "skills_boundary": {
+            "technical_support": ["Windows troubleshooting"],
+            "systems": ["Linux"],
+        },
+    }
+    search = {
+        "locations": [
+            {"label": "Current market", "location": "Exampletown, ZZ", "remote": False},
+            {"label": "Future market", "location": "Sample City, YY", "remote": False},
+        ],
+        "queries": [
+            {
+                "query": "part time help desk",
+                "tier": 1,
+                "location_labels": ["Current market"],
+            },
+            {
+                "query": "IT technician",
+                "tier": 1,
+                "location_labels": ["Future market"],
+            },
+        ],
+        "boards": ["indeed"],
+        "preferred_schedule": "full_time",
+        "require_part_time": False,
+        "defaults": {"results_per_site": 25, "hours_old": 72},
+    }
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+    search_path.write_text(yaml.safe_dump(search, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(editor, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(editor, "SEARCH_CONFIG_PATH", search_path)
+
+    values = editor._profile_values(profile, search)
+
+    assert values["skills"] == "Windows troubleshooting\nLinux"
+    assert values["schedule_type"] == "full_time"
+    assert values["locations"] == (
+        "Current market | Exampletown, ZZ | onsite\n"
+        "Future market | Sample City, YY | onsite"
+    )
+    assert values["queries"] == (
+        "part time help desk | 1 | Current market\n"
+        "IT technician | 1 | Future market"
+    )
+
+    editor.save_editor_settings({key: str(value) for key, value in values.items()})
+    saved_profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    saved_search = yaml.safe_load(search_path.read_text(encoding="utf-8"))
+
+    assert saved_profile["skills"] == ["Windows troubleshooting", "Linux"]
+    assert saved_profile["skills_boundary"] == profile["skills_boundary"]
+    assert saved_search["locations"] == search["locations"]
+    assert saved_search["queries"] == search["queries"]
+    assert saved_search["preferred_schedule"] == "full_time"
+    assert saved_search["require_part_time"] is False
+
+    values["skills"] = "Windows troubleshooting\nPython"
+    values["schedule_type"] = "either"
+    editor.save_editor_settings({key: str(value) for key, value in values.items()})
+    edited_profile = json.loads(profile_path.read_text(encoding="utf-8"))
+    edited_search = yaml.safe_load(search_path.read_text(encoding="utf-8"))
+
+    assert edited_profile["skills"] == ["Windows troubleshooting", "Python"]
+    assert edited_profile["skills_boundary"] == {
+        "skills": ["Windows troubleshooting", "Python"]
+    }
+    assert edited_search["preferred_schedule"] == "any"
+    assert edited_search["require_part_time"] is False
+
+
+def test_editor_round_trip_normalizes_legacy_schedule_and_escaped_scope_delimiters(tmp_path, monkeypatch) -> None:
+    profile_path = tmp_path / "profile.json"
+    search_path = tmp_path / "searches.yaml"
+    profile = {"personal": {}, "compensation": {"target_hourly_rate": 20}}
+    search = {
+        "locations": [
+            {
+                "label": "Future | market; cohort",
+                "location": "Sample | City, ZZ",
+                "remote": False,
+            }
+        ],
+        "queries": [
+            {
+                "query": "IT | support",
+                "tier": 1,
+                "location_labels": ["Future | market; cohort"],
+            }
+        ],
+        "customer_service_require_part_time": True,
+        "customer_service_max_hours_per_week": 24,
+        "max_hours_per_week": 24,
+    }
+    profile_path.write_text(json.dumps(profile), encoding="utf-8")
+    search_path.write_text(yaml.safe_dump(search, sort_keys=False), encoding="utf-8")
+    monkeypatch.setattr(editor, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(editor, "SEARCH_CONFIG_PATH", search_path)
+
+    values = editor._profile_values(profile, search)
+
+    assert values["schedule_type"] == "part_time"
+    assert "%7C" in values["locations"] and "%3B" in values["locations"]
+    assert "%7C" in values["queries"] and "%3B" in values["queries"]
+
+    editor.save_editor_settings({key: str(value) for key, value in values.items()})
+    saved = yaml.safe_load(search_path.read_text(encoding="utf-8"))
+
+    assert saved["locations"] == search["locations"]
+    assert saved["queries"] == search["queries"]
+    assert saved["require_part_time"] is True
+    assert saved["preferred_schedule"] == "part_time"
+    assert "customer_service_require_part_time" not in saved
+    assert "customer_service_max_hours_per_week" not in saved
+    assert "max_hours_per_week" not in saved
+
+
 def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) -> None:
     profile_path = tmp_path / "profile.json"
     search_path = tmp_path / "searches.yaml"
@@ -266,6 +389,7 @@ def test_save_editor_settings_updates_profile_and_search(tmp_path, monkeypatch) 
     assert search["defaults"]["results_per_site"] == 75
     assert search["defaults"]["hours_old"] == 120
     assert search["require_part_time"] is True
+    assert search["preferred_schedule"] == "part_time"
     assert "customer_service_require_part_time" not in search
     assert "customer_service_max_hours_per_week" not in search
 
@@ -401,3 +525,4 @@ def test_save_editor_settings_clamps_invalid_numbers_and_query_tiers(tmp_path, m
     assert search["defaults"]["results_per_site"] == 1
     assert search["defaults"]["hours_old"] == 168
     assert search["require_part_time"] is True
+    assert search["preferred_schedule"] == "part_time"

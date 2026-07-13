@@ -181,6 +181,81 @@ Example College | 2024
     assert "Education" in html
 
 
+def test_additional_experience_renders_as_distinct_compact_entries() -> None:
+    resume = parse_resume("""Example Person
+IT Support
+person@example.com
+
+EXPERIENCE
+Support Assistant | Example Employer | 2025 - Present
+- Documented support requests.
+
+ADDITIONAL EXPERIENCE
+Substitute Teacher | Example School District | 2023 - 2024
+Equipment Operator | Example Mine | 2020 - 2021
+
+EDUCATION
+Associate Degree
+Example College | 2024
+""")
+
+    assert "ADDITIONAL EXPERIENCE" in resume["sections"]
+    html = build_html(resume)
+    assert "Additional Experience" in html
+    assert "Substitute Teacher" in html
+    assert "Equipment Operator" in html
+    assert html.index(">Additional Experience<") < html.index(">Education<")
+
+
+def test_parse_resume_keeps_all_contact_lines_after_title_and_location() -> None:
+    resume = parse_resume(
+        """Example Person
+IT Support Candidate
+Exampletown, ZZ | Open to relocation
+(555) 010-0100 | person@example.com
+LinkedIn: https://linkedin.example/person
+GitHub: https://github.com/example-person
+Website: https://example-person.invalid
+
+SUMMARY
+Entry-level support candidate.
+"""
+    )
+
+    assert resume["title"] == "IT Support Candidate"
+    assert resume["location"] == "Exampletown, ZZ | Open to relocation"
+    assert resume["contact"] == (
+        "(555) 010-0100 | person@example.com | "
+        "LinkedIn: https://linkedin.example/person | "
+        "GitHub: https://github.com/example-person | "
+        "Website: https://example-person.invalid"
+    )
+    html = build_html(resume)
+    assert "Exampletown, ZZ" in html
+    assert "person@example.com" in html
+    assert "github.com/example-person" in html
+    assert "example-person.invalid" in html
+
+
+def test_parse_resume_keeps_contact_links_after_blank_header_separator() -> None:
+    resume = parse_resume(
+        """Example Person
+IT Support Candidate
+Exampletown, ZZ | person@example.com
+
+LinkedIn: https://linkedin.example/person
+GitHub: https://github.com/example-person
+
+SUMMARY
+Entry-level support candidate.
+"""
+    )
+
+    assert "person@example.com" in resume["contact"]
+    assert "linkedin.example/person" in resume["contact"]
+    assert "github.com/example-person" in resume["contact"]
+
+
 def test_render_pdf_blocks_external_network_resources(monkeypatch, tmp_path) -> None:
     calls: list[str] = []
 

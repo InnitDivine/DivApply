@@ -19,6 +19,8 @@ def _insert_job(conn, url: str, description: str, **overrides) -> None:
         "cover_letter_path": None,
         "archived_at": None,
         "discovered_at": "2026-06-23",
+        "application_mode": "active",
+        "source_verification": "official",
     }
     values.update(overrides)
     conn.execute(
@@ -26,8 +28,9 @@ def _insert_job(conn, url: str, description: str, **overrides) -> None:
         INSERT INTO jobs (
             url, title, site, fit_score, full_description,
             tailored_resume_path, cover_letter_path, archived_at, discovered_at
+            , application_mode, source_verification
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             url,
@@ -39,6 +42,8 @@ def _insert_job(conn, url: str, description: str, **overrides) -> None:
             values["cover_letter_path"],
             values["archived_at"],
             values["discovered_at"],
+            values["application_mode"],
+            values["source_verification"],
         ),
     )
 
@@ -98,7 +103,6 @@ def test_cover_letters_skip_short_metadata_descriptions(tmp_path, monkeypatch) -
     conn.commit()
     monkeypatch.setattr(cover_letter, "get_connection", lambda: conn)
     monkeypatch.setattr(cover_letter, "load_profile", lambda: {})
-    monkeypatch.setattr(cover_letter, "RESUME_PATH", resume_path)
     monkeypatch.setattr(
         cover_letter,
         "generate_cover_letter",
@@ -129,12 +133,44 @@ def test_targeted_tailor_and_cover_skip_archived_jobs(tmp_path, monkeypatch) -> 
     for module in (tailor, cover_letter):
         monkeypatch.setattr(module, "get_connection", lambda: conn)
         monkeypatch.setattr(module, "load_profile", lambda: {})
-        monkeypatch.setattr(module, "RESUME_PATH", resume_path)
+    monkeypatch.setattr(tailor, "RESUME_PATH", resume_path)
 
     cover_result = cover_letter.run_cover_letters(target_url="https://example.com/archived")
     conn.execute("UPDATE jobs SET tailored_resume_path = NULL WHERE url = ?", ("https://example.com/archived",))
     conn.commit()
     tailor_result = tailor.run_tailoring(target_url="https://example.com/archived")
+
+    assert cover_result == {"generated": 0, "errors": 0, "elapsed": 0.0}
+    assert tailor_result == {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}
+    close_connection(db_path)
+
+
+def test_targeted_tailor_and_cover_reject_unverified_discovery_job(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    resume_path = tmp_path / "resume.txt"
+    resume_path.write_text("Resume text", encoding="utf-8")
+    url = "https://aggregator.example/job"
+    _insert_job(
+        conn,
+        url,
+        LONG_DESCRIPTION,
+        fit_score=8,
+        tailored_resume_path=str(tmp_path / "resume.pdf"),
+        cover_letter_path="",
+        application_mode="discovery_only",
+        source_verification="unverified_aggregator",
+    )
+    conn.commit()
+    for module in (tailor, cover_letter):
+        monkeypatch.setattr(module, "get_connection", lambda: conn)
+        monkeypatch.setattr(module, "load_profile", lambda: {})
+    monkeypatch.setattr(tailor, "RESUME_PATH", resume_path)
+
+    cover_result = cover_letter.run_cover_letters(target_url=url)
+    conn.execute("UPDATE jobs SET tailored_resume_path = NULL WHERE url = ?", (url,))
+    conn.commit()
+    tailor_result = tailor.run_tailoring(target_url=url)
 
     assert cover_result == {"generated": 0, "errors": 0, "elapsed": 0.0}
     assert tailor_result == {"approved": 0, "failed": 0, "errors": 0, "elapsed": 0.0}

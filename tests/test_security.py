@@ -45,7 +45,7 @@ def test_validate_external_url_rejects_localhost_by_default() -> None:
 
 
 def test_validate_external_url_rejects_non_http_and_embedded_credentials() -> None:
-    for value in ("file:///C:/Users/Dearr/.ssh/id_rsa", "https://user:pass@jobs.example.com/apply"):
+    for value in ("file:///C:/Users/ExampleUser/.ssh/id_rsa", "https://user:pass@jobs.example.com/apply"):
         with pytest.raises(UnsafeUrlError):
             validate_external_url(value)
 

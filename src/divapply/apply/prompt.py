@@ -11,11 +11,49 @@ import re
 import shutil
 import tempfile
 from datetime import datetime
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
 from divapply import config
+from divapply.search_policy import effective_search_config
 
 logger = logging.getLogger(__name__)
+
+
+def _voluntary_eeo_answers(profile: dict) -> dict[str, str]:
+    """Return EEO answers only after explicit per-profile submission consent."""
+    eeo = profile.get("eeo_voluntary", {})
+    if not isinstance(eeo, dict) or eeo.get("submit_voluntary_eeo") is not True:
+        return {
+            "gender": "Decline to self-identify",
+            "preferred_pronoun": "Decline to self-identify",
+            "race_ethnicity": "Decline to self-identify",
+            "veteran_status": "Decline to self-identify",
+            "disability_status": "Decline to self-identify",
+        }
+    return {
+        "gender": str(eeo.get("gender") or "Decline to self-identify"),
+        "preferred_pronoun": str(
+            eeo.get("preferred_pronoun") or eeo.get("pronouns") or "Decline to self-identify"
+        ),
+        "race_ethnicity": str(eeo.get("race_ethnicity") or "Decline to self-identify"),
+        "veteran_status": str(eeo.get("veteran_status") or "Decline to self-identify"),
+        "disability_status": str(eeo.get("disability_status") or "Decline to self-identify"),
+    }
+
+
+def _numeric_salary(value: object) -> str | None:
+    """Return a normalized whole-dollar amount, or None for prose/missing values."""
+    text = str(value or "").strip().replace(",", "").removeprefix("$")
+    if len(text) > 32 or not re.fullmatch(r"\d+(?:\.\d+)?", text):
+        return None
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        return None
+    if not amount.is_finite() or amount < 0 or amount > Decimal("10000000"):
+        return None
+    return str(int(amount.quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
 
 
 def _job_text_for_location(job: dict, *, include_description: bool = False) -> str:
@@ -42,6 +80,36 @@ def _read_pdf_text(path: Path) -> str:
         return ""
 
 
+def _education_summary_lines(schools: list[dict]) -> list[str]:
+    if not schools:
+        return []
+    lines = ["\n== EDUCATION (list ALL schools in this order on forms) =="]
+    for index, school in enumerate(schools, 1):
+        status = str(school.get("status", "")).strip().lower()
+        degree_status = (
+            "Transferred"
+            if status in {"transferred", "transfer"}
+            else "Yes"
+            if school.get("degree_received")
+            else "No (in progress)"
+            if school.get("end_year") == "present"
+            else "No"
+        )
+        lines.append(
+            f"School {index}: {school['school']} | {school['city_state']} | "
+            f"Major: {school['major']} | Minor: {school.get('minor', 'N/A')} | "
+            f"Degree: {school['degree']} | Received: {degree_status} | "
+            f"Units: {school['units']} {school.get('units_type', 'Semester')} | GPA: {school.get('gpa', 'N/A')} | "
+            f"{school['start_year']}â€“{school['end_year']}"
+        )
+    school_names = ", ".join(school["school"] for school in schools)
+    lines.append(
+        f"IMPORTANT: Always enter ALL {len(schools)} schools ({school_names}). "
+        "Add schools if needed using 'Add Another School'."
+    )
+    return lines
+
+
 def _build_profile_summary(profile: dict) -> str:
     """Format the applicant profile section of the prompt.
 
@@ -53,7 +121,7 @@ def _build_profile_summary(profile: dict) -> str:
     work_auth = p.get("work_authorization", {})
     comp = p.get("compensation", {})
     exp = p.get("experience", {})
-    eeo = p.get("eeo_voluntary", {})
+    eeo = _voluntary_eeo_answers(p)
     standard = p.get("standard_answers", {})
 
     lines = [
@@ -89,7 +157,11 @@ def _build_profile_summary(profile: dict) -> str:
 
     # Compensation
     currency = comp.get("salary_currency", "USD")
-    lines.append(f"Salary Expectation: ${comp['salary_expectation']} {currency}")
+    salary_floor = _numeric_salary(comp.get("salary_expectation"))
+    if salary_floor:
+        lines.append(f"Salary Expectation: ${salary_floor} {currency}")
+    else:
+        lines.append("Salary Expectation: use the posted range; human review if a numeric answer is required")
 
     # Experience
     if exp.get("years_of_experience_total"):
@@ -115,31 +187,7 @@ def _build_profile_summary(profile: dict) -> str:
     lines.append(f"Disability: {eeo.get('disability_status', 'I do not wish to answer')}")
 
     # Education schools
-    edu_schools = p.get("education_schools", [])
-    if edu_schools:
-        lines.append("\n== EDUCATION (list ALL schools in this order on forms) ==")
-        for i, sch in enumerate(edu_schools, 1):
-            status = str(sch.get("status", "")).strip().lower()
-            degree_status = (
-                "Transferred"
-                if status in {"transferred", "transfer"}
-                else "Yes"
-                if sch.get("degree_received")
-                else "No (in progress)"
-                if sch.get("end_year") == "present"
-                else "No"
-            )
-            lines.append(
-                f"School {i}: {sch['school']} | {sch['city_state']} | "
-                f"Major: {sch['major']} | Minor: {sch.get('minor', 'N/A')} | "
-                f"Degree: {sch['degree']} | Received: {degree_status} | "
-                f"Units: {sch['units']} {sch.get('units_type', 'Semester')} | GPA: {sch.get('gpa', 'N/A')} | "
-                f"{sch['start_year']}â€“{sch['end_year']}"
-            )
-        school_names = ", ".join(s["school"] for s in edu_schools)
-        lines.append(
-            f"IMPORTANT: Always enter ALL {len(edu_schools)} schools ({school_names}). Add schools if needed using 'Add Another School'."
-        )
+    lines.extend(_education_summary_lines(p.get("education_schools", [])))
 
     # Employer addresses
     emp_addrs = p.get("employer_addresses", {})
@@ -172,19 +220,24 @@ def _build_profile_summary(profile: dict) -> str:
 def _build_location_check(profile: dict, search_config: dict) -> str:
     """Build the location eligibility check section of the prompt.
 
-    Uses the accept_patterns from search config to determine which cities
-    are acceptable for hybrid/onsite roles.
+    Uses only the resolved market locations from the effective search config.
+    Global acceptance patterns may span multiple markets and are unsafe here.
     """
     personal = profile["personal"]
     location_cfg = search_config.get("location", {})
-    accept_patterns = location_cfg.get("accept_patterns", [])
     primary_city = personal.get("city", location_cfg.get("primary", "your city"))
+    accepted_locations: list[str] = []
+    for item in search_config.get("locations", []) or []:
+        if not isinstance(item, dict):
+            continue
+        values = [item.get("location"), *(item.get("match_patterns") or [])]
+        for value in values:
+            normalized = str(value or "").strip()
+            if normalized and normalized not in accepted_locations:
+                accepted_locations.append(normalized)
 
     # Build the list of acceptable cities for hybrid/onsite
-    if accept_patterns:
-        city_list = ", ".join(accept_patterns)
-    else:
-        city_list = primary_city
+    city_list = ", ".join(accepted_locations) if accepted_locations else primary_city
 
     relocation_lines: list[str] = []
     for item in search_config.get("relocation_exception_employers", []) or []:
@@ -212,7 +265,7 @@ Read the job page. Determine the work arrangement. Then decide:
 - "Hybrid" or "onsite" in another city BUT the posting also says "remote OK" or "remote option available" -> ELIGIBLE. Apply.
 - "Onsite only" or "hybrid only" in any city outside the list above with NO remote option -> NOT ELIGIBLE. Stop immediately. Output RESULT:FAILED:not_eligible_location
 - City is overseas (India, Philippines, Europe, etc.) with no remote option -> NOT ELIGIBLE. Output RESULT:FAILED:not_eligible_location
-- Cannot determine location -> Continue applying. If a screening question reveals it's non-local onsite, answer honestly and let the system reject if needed.
+- Cannot determine the work location -> STOP for human review. Output RESULT:FAILED:manual_review_location
 Do NOT fill out forms for jobs that are clearly onsite in a non-acceptable location. Check EARLY, save time."""
 
 
@@ -232,28 +285,55 @@ def _build_salary_section(profile: dict, search_config: dict | None = None) -> s
 
     Adapts floor, range, and currency from the profile's compensation section.
     """
-    comp = profile["compensation"]
+    comp = profile.get("compensation", {})
     currency = comp.get("salary_currency", "USD")
-    floor = comp["salary_expectation"]
-    range_min = comp.get("salary_range_min", floor)
-    range_max = comp.get("salary_range_max", str(int(floor) + 20000) if floor.isdigit() else floor)
+    floor = _numeric_salary(comp.get("salary_expectation"))
+    range_min = _numeric_salary(comp.get("salary_range_min")) or floor
+    range_max = _numeric_salary(comp.get("salary_range_max"))
+    if range_max is None and floor is not None:
+        range_max = str(int(floor) + 20000)
     part_time_hourly = comp.get(
         "part_time_hourly_expectation",
         "Use the employer's posted hourly range when available.",
     )
+    hourly_target = _numeric_salary(comp.get("target_hourly_rate"))
+    hourly_floor = _numeric_salary(comp.get("part_time_hourly_floor"))
     conversion_note = comp.get("currency_conversion_note", "")
 
     if _search_requires_part_time(search_config):
+        target_rule = (
+            f"Target hourly answer: ${hourly_target} {currency}."
+            if hourly_target
+            else "No numeric hourly target is configured; follow the written profile guidance."
+        )
+        floor_rule = (
+            f"Hard hourly floor: ${hourly_floor} {currency}. A posted maximum or single rate below this "
+            "requires human review; never answer below it automatically."
+            if hourly_floor
+            else "No numeric hourly floor is configured; stop for human review if posted pay conflicts with the written guidance."
+        )
         return f"""== PAY (think, don't just copy) ==
 The active searches.yaml filters target low-hour part-time work.
+{target_rule}
+{floor_rule}
 
 Decision tree:
-1. Hourly part-time job with posted pay range? -> Use the MIDPOINT of the posted hourly range.
-2. Hourly part-time job with one posted rate? -> Accept the posted rate if it does not contradict the profile.
-3. Hourly part-time job with no posted pay and a free-text answer? -> Answer: "{part_time_hourly}"
-4. Hourly part-time job with no posted pay and a required number? -> Use the lowest reasonable hourly number already shown by the employer/site if available; otherwise stop for human review.
-5. Full-time salaried job? -> Do not apply unless the user explicitly selected it. If continuing by explicit instruction, use ${range_min}-${range_max} {currency}.
+1. Hourly part-time job with a posted range? -> Use the configured target clamped inside that range. If the target is above the maximum, use the maximum only when it remains at or above the configured floor. If the posted maximum is below the floor, stop for human review.
+2. Hourly part-time job with one posted rate? -> Use it only when it is at or above the configured floor and does not contradict the profile; otherwise stop for human review.
+3. Hourly part-time job with no posted pay and a free-text answer? -> Answer from this profile guidance: "{part_time_hourly}"
+4. Hourly part-time job with no posted pay and a required number? -> Use the configured hourly target when present; otherwise stop for human review.
+5. Full-time salaried job? -> Do not apply unless the user explicitly selected it. If continuing by explicit instruction, use the posted range; if absent, stop for human review.
 6. Contractor marketplace, freelance profile, or "set your rate" flow? -> Stop as not_a_job_application."""
+
+    if floor is None:
+        return f"""== SALARY (human review boundary) ==
+The profile does not contain a numeric salary floor in {currency}.
+
+Decision tree:
+1. Job posting shows a pay range? -> Use its midpoint only when the form requires a number.
+2. Job posting shows one rate? -> Use that posted rate if it does not contradict other profile facts.
+3. No salary information or a mandatory number without source evidence? -> Stop for human review.
+4. Never prefix profile prose with `$`, invent a floor, or convert "negotiable" into a number."""
 
     # Compute example hourly rates at 3 salary levels
     try:
@@ -367,7 +447,7 @@ def _build_screening_section(profile: dict, search_config: dict | None = None) -
             "Use only profile/resume-backed experience; do not infer years or seniority from the search target."
         )
     work_auth = profile["work_authorization"]
-    eeo = profile.get("eeo_voluntary", {})
+    eeo = _voluntary_eeo_answers(profile)
     background_block = _build_application_context(profile)
     education_rules = _build_education_rules(profile)
     schedule_line = (
@@ -375,10 +455,31 @@ def _build_screening_section(profile: dict, search_config: dict | None = None) -
         if _search_requires_part_time(search_config)
         else "Active searches.yaml schedule filter does not require part-time only; answer schedule questions from the job posting and verified facts."
     )
+    relocation = profile.get("relocation_preferences")
+    relocation_line = f"lives in {city}; relocation is not verified, so do not guess"
+    if isinstance(relocation, dict):
+        status = str(relocation.get("status") or "").strip()
+        target_area = str(relocation.get("target_area") or "").strip()
+        address_policy = str(relocation.get("application_address_policy") or "").strip()
+        explicit_open = relocation.get("open_to_relocation") is True or bool(
+            re.search(r"\b(?:open|willing) to relocat", status, re.IGNORECASE)
+        )
+        explicit_closed = relocation.get("open_to_relocation") is False or bool(
+            re.search(r"\b(?:cannot|not willing to) relocat", status, re.IGNORECASE)
+        )
+        if explicit_open:
+            details = [f"lives in {city}", status or "open to relocation"]
+            if target_area:
+                details.append(f"target area: {target_area}")
+            if address_policy:
+                details.append(address_policy)
+            relocation_line = "; ".join(details)
+        elif explicit_closed:
+            relocation_line = f"lives in {city}; cannot relocate"
 
     return f"""== SCREENING QUESTIONS (be strategic) ==
 Hard facts -> answer truthfully from the profile. No guessing. This includes:
-  - Location/relocation: lives in {city}, cannot relocate
+  - Location/relocation: {relocation_line}
   - Work authorization: {work_auth.get("legally_authorized_to_work", "see profile")}
   - Citizenship, clearance, licenses, certifications: answer from profile only
   - Criminal/background: answer from profile only
@@ -430,7 +531,7 @@ COMMON RADIO ANSWERS for government applications:
   - Shift availability checkboxes -> select only options consistent with active searches.yaml schedule filters
   - "Where did you hear about this position?" -> choose the closest truthful source, usually online job board
 
-EEO / Voluntary Self-Identification / Agency Questions -> Use the profile's real voluntary answers. Do not guess:
+EEO / Voluntary Self-Identification / Agency Questions -> Submit stored attributes only when the profile explicitly consents; otherwise decline. Do not guess:
   - Gender: {eeo.get("gender", "Decline to self-identify")}
   - Preferred Pronoun: {eeo.get("preferred_pronoun", eeo.get("pronouns", "Decline to self-identify"))}
   - Race/Ethnicity: {eeo.get("race_ethnicity", "Decline to self-identify")}
@@ -582,7 +683,18 @@ def build_prompt(
 
     profile = config.load_profile()
     profile = _profile_for_job_address(profile, job)
-    search_config = config.load_search_config()
+    search_config = effective_search_config(config.load_search_config(), job)
+    application_mode = str(search_config.get("application_mode") or "active").strip().casefold()
+    if application_mode == "discovery_only":
+        raise ValueError("This job's market policy is discovery-only; automated application is disabled")
+    if application_mode == "manual_review":
+        raise ValueError("This job's market policy requires manual review; automated application is disabled")
+    persisted_mode = str(job.get("application_mode") or "").strip().casefold()
+    if persisted_mode != "active":
+        raise ValueError("This stored job is not active; automated application is disabled")
+    source_verification = str(job.get("source_verification") or "").strip().casefold()
+    if source_verification != "official":
+        raise ValueError("This job does not have a verified official source; automated application is disabled")
     personal = profile["personal"]
 
     # --- Resolve resume PDF path ---

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from divapply.scoring.context import format_job_context
-from divapply.scoring.cover_letter import _build_cover_letter_prompt, _strip_preamble
+from divapply.scoring.cover_letter import _build_cover_letter_prompt, _read_tailored_resume_text, _strip_preamble
 from divapply.scoring import cover_letter
 from divapply.scoring.validator import validate_cover_letter
 
@@ -40,6 +40,31 @@ def test_strip_preamble_removes_leaked_intro() -> None:
     text = "Here is the cover letter:\n\nDear Hiring Manager,\nI built reports.\nJane"
 
     assert _strip_preamble(text).startswith("Dear Hiring Manager,")
+
+
+def test_cover_reads_exact_owned_tailored_text(tmp_path, monkeypatch) -> None:
+    tailored_dir = tmp_path / "tailored"
+    tailored_dir.mkdir()
+    artifact = tailored_dir / "role.txt"
+    artifact.write_text("Exact tailored evidence", encoding="utf-8")
+    monkeypatch.setattr(cover_letter, "TAILORED_DIR", tailored_dir)
+
+    assert _read_tailored_resume_text({"tailored_resume_path": str(artifact)}) == "Exact tailored evidence"
+
+
+def test_cover_rejects_missing_or_outside_tailored_artifact(tmp_path, monkeypatch) -> None:
+    import pytest
+
+    tailored_dir = tmp_path / "tailored"
+    tailored_dir.mkdir()
+    outside = tmp_path / "master.txt"
+    outside.write_text("Master resume", encoding="utf-8")
+    monkeypatch.setattr(cover_letter, "TAILORED_DIR", tailored_dir)
+
+    with pytest.raises(FileNotFoundError):
+        _read_tailored_resume_text({"tailored_resume_path": str(tailored_dir / "missing.txt")})
+    with pytest.raises(ValueError, match="outside"):
+        _read_tailored_resume_text({"tailored_resume_path": str(outside)})
 
 
 def test_validate_cover_letter_blocks_generic_ai_phrase() -> None:
@@ -127,6 +152,14 @@ def test_cover_prompt_keeps_transferable_work_and_availability_truthful() -> Non
     assert "Do not claim phone, call, email, chat, training, or follow-up experience" in prompt
     assert 'Do not say the candidate has solved "the same problems from both sides"' in prompt
     assert "Do not promise relocation, commute, immediate on-site presence, or schedule availability" in prompt
+    assert 'Never say a list of IT skills was used "across" paid/public-sector and lab/project settings' in prompt
+    assert "Name the exact target job title once" in prompt
+    assert "Never turn the target job title into the name of training" in prompt
+    assert "never put a paid/public-sector setting and a home-lab/project setting in the same sentence" in prompt
+    assert "Never merge separate projects" in prompt
+    assert "client-sector list is company context, not candidate experience" in prompt
+    assert "Keep each paid employer or paid-work setting in its own sentence" in prompt
+    assert "Known projects to reference" not in prompt
 
 
 def test_cover_validator_rejects_paid_it_relabel_when_profile_says_zero() -> None:
@@ -205,6 +238,116 @@ def test_cover_validator_rejects_paid_role_and_it_skill_context_joins() -> None:
         )
         assert not report["passed"], body
         assert any("professional IT experience boundary" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_ambiguous_cross_setting_skill_attribution() -> None:
+    report = validate_cover_letter(
+        _valid_letter(
+            "Microsoft 365, Windows troubleshooting, and written procedures match work I have done "
+            "across public-sector and lab settings."
+        ),
+        mode="strict",
+        profile=_profile() | {"experience": {"years_of_professional_it_experience": "0"}},
+        resume_text="Public-sector Microsoft 365 procedures; separate home-lab Windows troubleshooting.",
+        job=_job(),
+    )
+
+    assert not report["passed"]
+    assert any("across paid-work and lab settings" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_target_title_recast_as_training() -> None:
+    job = _job() | {"title": "IT Support Specialist (Part-Time)"}
+    report = validate_cover_letter(
+        _valid_letter(
+            "The IT Support Specialist (Part-Time) role fits my goals. "
+            "My current IT Support Specialist training gives me a direct base for this role."
+        ),
+        mode="strict",
+        profile=_profile(),
+        resume_text=(
+            "IT Support Specialist\nInformation Technology Certificate Program (in progress)\n"
+            "Built a Windows home lab."
+        ),
+        job=job,
+    )
+
+    assert not report["passed"]
+    assert any("target job title as unsupported training" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_mixed_paid_and_lab_it_sentence() -> None:
+    report = validate_cover_letter(
+        _valid_letter(
+            "My Windows troubleshooting, PC hardware, Microsoft 365, and basic networking were built "
+            "through home lab work and structured public-sector roles."
+        ),
+        mode="strict",
+        profile=_profile() | {"experience": {"years_of_professional_it_experience": "0"}},
+        resume_text="Public-sector records work. Separate home lab with Windows troubleshooting.",
+        job=_job(),
+    )
+
+    assert not report["passed"]
+    assert any("paid-work and lab evidence" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_project_domain_absent_from_tailored_resume() -> None:
+    report = validate_cover_letter(
+        _valid_letter("I built candidate.example.com with Nginx and Docker."),
+        mode="strict",
+        profile=_profile() | {"resume_facts": {"preserved_projects": ["candidate.example.com", "Docker lab"]}},
+        resume_text="Home lab: Docker services. Separate portfolio project omitted from this tailored resume.",
+        job=_job(),
+    )
+
+    assert not report["passed"]
+    assert any("anchor absent from tailored resume" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_employer_sectors_as_candidate_experience() -> None:
+    report = validate_cover_letter(
+        _valid_letter(
+            "Example Health serves education, nonprofit, healthcare, and government clients, and that mix "
+            "fits the settings where I have already worked."
+        ),
+        mode="strict",
+        profile=_profile() | {"experience": {"years_of_professional_healthcare_experience": "0"}},
+        resume_text="Municipal work, school-district work, and public-health education.",
+        job=_job(),
+    )
+
+    assert not report["passed"]
+    assert any("sector context" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_recorded_gap_punctuation_alias() -> None:
+    report = validate_cover_letter(
+        _valid_letter("Accurate municipal records fit the asset-tracking discipline this role needs."),
+        mode="strict",
+        profile=_profile(),
+        resume_text="Municipal records and separate general theatre inventory.",
+        job=_job() | {"missing_skills": "asset inventory"},
+    )
+
+    assert not report["passed"]
+    assert any("recorded candidate evidence gap" in error for error in report["errors"])
+
+
+def test_cover_validator_rejects_city_and_county_duty_aggregation() -> None:
+    report = validate_cover_letter(
+        _valid_letter(
+            "I bring public-sector support from the City front desk and county accounting work that required "
+            "structured procedures, records handling, and escalation."
+        ),
+        mode="strict",
+        profile=_profile() | {"experience": {"years_of_professional_it_experience": "0"}},
+        resume_text="City front desk issue escalation. County accounting records and ERP procedures.",
+        job=_job(),
+    )
+
+    assert not report["passed"]
+    assert any("distinct paid-work settings" in error for error in report["errors"])
 
 
 def test_cover_validator_rejects_client_relabel_without_resume_evidence() -> None:

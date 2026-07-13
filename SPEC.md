@@ -8,7 +8,7 @@
 - G4: bind every generated application artifact to one stable job identity; ⊥ wrong-job upload/delete.
 - G5: preserve recoverability: transient provider failure remains retryable; backup captures active committed DB state.
 - G6: bound network retry cost; make Windows/release/container paths reproducible + least privilege.
-- G7: maximize truthful career-fit yield: IT support primary; health-IT/public-sector/education bridges; admin/banking fallback.
+- G7: current market → part-time career-building IT/health-data/public-sector systems; destination markets → well-paid benefited full-time IT/health-tech/public-sector systems.
 
 ## §C
 
@@ -29,6 +29,8 @@
 - C15: search priority + location scope explicit/configurable; absent new keys preserves old behavior.
 - C16: current transcript rows all eligible for bounded scoring context; selection deterministic + recent/relevant-first.
 - C17: résumé/tailor language may position target fit; ⊥ imply prior target-role employment or invent metrics.
+- C18: food/retail/hospitality/warehouse/sales/generic customer service ∉ target/fallback; ⊥ active recommendation.
+- C19: in-progress Public Health B.S. + IT training inform target fit; ⊥ earned/completed wording before conferral.
 
 ## §I
 
@@ -61,6 +63,12 @@
 - I27: tailor presentation → model selects allowlisted technical/core skills heading; code owns current-program date/GPA/credit rendering.
 - I28: public package consumes private address/employer/site selectors; no candidate geography/employer constants in generic scoring/config.
 - I29: pending-work catalog → one DB-owned predicate builder feeds selection + count for score/tailor/cover; forced target/rescore remain explicit.
+- I30: typed market resolver maps concrete `City, ST` to one location label; scorer/apply overlay that market's schedule, benefits, + application mode; unknown concrete city gets no guessed default.
+- I31: private source registry → curated official employer/agency feeds by current/destination market; noisy disabled source absent from crawl targets.
+- I32: `job_has_schedule_exception(search_config,job) -> bool`; `composite_score(...,schedule_exception=False)` + `score_job(...,application_mode="active")` accept only trusted structured policy.
+- I33: structured score policy carries `preferred_schedule`, `require_part_time`, optional `max_hours_per_week`, `require_benefits`, + `application_mode`; posting-derived evidence cannot override config.
+- I34: each discovered job persists `market_label`, `search_query`, `application_mode`, normalized schedule/hours, + `source_verification`; unresolved aggregators stay non-actionable.
+- I35: release cleanup helper validates containment + every link/reparse boundary before recursive mutation.
 
 ## §R
 
@@ -81,8 +89,14 @@
 - R15: BLS support duties = diagnose/document issues, guide users, setup/repair/install/training; EHR app support is recognized specialization. https://www.bls.gov/ooh/computer-and-information-technology/computer-support-specialists.htm
 - R16: health-info technologists support EHR/clinical data/privacy; 15% 2024–34; medical-records specialists 7%; entry requirements vary. https://www.bls.gov/ooh/healthcare/health-information-technologists-and-medical-registrars.htm https://www.bls.gov/ooh/healthcare/medical-records-and-health-information-technicians.htm
 - R17: RHIT eligibility requires CAHIIM-accredited HIM associate-level academic requirements/reciprocity; public-health BS alone ≠ eligible. https://www.ahima.org/certification-careers/certifications-overview/rhit/
-- R18: Roseville IT Technician I = entry level, little/no related work, hardware/software customer support + desktop/peripheral install/config; validates public-sector bridge. https://www.governmentjobs.com/careers/rosevilleca/classspecs/newprint/1512986
+- R18: municipal IT Technician I class = entry level, little/no related work, hardware/software support + desktop/peripheral install/config; validates public-sector bridge. https://www.governmentjobs.com/careers/rosevilleca/classspecs/newprint/1512986
 - R19: Playwright MCP `--init-page` can install context routes; built-in origin lists explicitly ≠ security boundary/redirect control. https://github.com/microsoft/playwright-mcp/blob/main/README.md
+- R20: Attain official board lists remote part-time IT Support Specialist; valid current-market career-building lead @ 2026-07-13. https://job-boards.greenhouse.io/attainpartnershidden
+- R21: iWorQ official careers = Cache Valley SaaS/public-sector software employer + health/dental/vision/life/retirement benefits. https://iworq.com/careers/
+- R22: SDL official board lists current-market Information Systems/student technical roles; student work = paid career pathway. https://spacedynamicslaboratory.applytojob.com/ https://www.sdl.usu.edu/careers/internships/
+- R23: destination official IT feeds expose Sacramento technology/system roles. https://careers.smud.org/go/Information-TechnologyTelecommunications/9107600/ https://careers.csus.edu/en-us/listing/
+- R24: CPython 3.12 ZIP constructor reads the declared central directory into memory before exposing `infolist`; TAR PAX/GNU handlers read extension payloads before yielding the logical member. Raw EOCD/header budgets must precede stdlib construction. https://github.com/python/cpython/blob/v3.12.13/Lib/zipfile/__init__.py https://github.com/python/cpython/blob/v3.12.13/Lib/tarfile.py
+- R25: `setup-uv` adds uv—not a synced project venv—to PATH by default; project tools run via `uv run` or explicit environment activation/path. https://github.com/astral-sh/setup-uv https://github.com/astral-sh/uv/blob/main/docs/guides/integration/github.md
 
 ## §V
 
@@ -126,7 +140,7 @@
 - V38: cover letter cannot relabel transferable front-desk/project work as paid IT/healthcare/field/ticket work or promise unverified location/schedule availability.
 - V39: when structured transcript school facts exist, generated/scored education uses institutional GPA + earned-credit totals; stale profile values never reach documents.
 - V40: validated cover mode never persists an exhausted failing draft; PDF failure persists a protected `.txt` fallback or increments stage errors.
-- V41: configured California-target jobs use the verified California application address consistently in forms and cover headers; other jobs retain base address.
+- V41: every application uses current verified legal residence until moved; planned relocation may be stated only from explicit profile policy and never substitutes a former/planned address.
 - V42: apply browser blocks document/XHR/fetch/websocket/event-source requests outside validated job/application origins; MCP config accepts only its sibling owned guard.
 - V43: profile/resume/search/env/credential/SQLite(+WAL/SHM) files receive strict user-only permissions before read/write; failure is explicit without locking a nested source workspace.
 - V44: strict tailor mode never promotes a judge-rejected résumé; review text/report remain private for manual inspection and DB path stays NULL.
@@ -141,6 +155,47 @@
 - V53: ∀ tag release → `GITHUB_SHA` = fetched `origin/main` tip; stale ancestor tag ⊥ publish.
 - V54: ∀ published dependency paths → no selectable extra resolves a known-vulnerable package; compatibility-only unsafe extras ⊥ ship.
 - V55: ∀ supported JobSpy setup → exact hashed `1.1.82`; non-Markdownify requirements stay inside upstream bounds; metadata/import surface smoke passes; retired extra absent from project+lock.
+- V56: editor load→save preserves query `location_labels`, location `label`, and schedule semantics (`part_time|full_time|any`); edited skills become runtime-authoritative without stale `skills_boundary` override.
+- V57: resume parser retains every nonempty header contact line after optional title/location and before first body section; phone/email/social/portfolio data cannot vanish from PDF.
+- V58: ∀ public pip install/update example → `--upgrade`; rerun over older DivApply cannot silently retain stale version.
+- V59: nonnumeric/missing compensation cannot render as `$<prose>` or authorize numeric form entry; posted range preferred, else human review.
+- V60: transcript DB retains all source facts; scoring/tailor coursework + inferred-skill context includes only completed positive-credit rows selected by active career relevance and explicit include/exclude policy.
+- V61: positive apply signal cannot be blocked by bare degree/credential mention; hard mismatch iff explicit ineligibility or unmet non-substitutable required gap; preferred/substitutable alternatives remain eligible.
+- V62: keyword extraction starts only on explicit requirement/preference signal and excludes compensation/benefit/EEO/application/self-ID boilerplate from required/preferred terms.
+- V63: release build starts clean; wheel/sdist/release archives contain no runtime/build artifacts or nested distributions; private scan recursively inspects bounded nested archives.
+- V64: per-market schedule/benefits/application policy cannot bleed across labels; current-market part-time gating cannot cap destination full-time fit, and `discovery_only` cannot auto-submit.
+- V65: master résumé `ADDITIONAL EXPERIENCE` parses/renders as its own section; chronology lines cannot merge into another job or spill a lone education entry to page 2.
+- V66: LLM job context ends before application/EEO/veteran/disability self-ID forms; protected-condition text cannot appear as matched/missing qualification evidence.
+- V67: requirement headings/filler never become skill gaps; posting-declared equivalent experience plus LLM `Apply`/7+ remains 7+ even when reasoning omits the substitution phrase.
+- V68: score reasoning preserves degree level + field separately; completed associate cannot be described as absent when only an IT-specific associate is absent.
+- V69: dist gate binds exact project-version wheel+sdist; rejects every extra/symlink, unsafe/duplicate/case-colliding path, nonregular member, nested archive by name/magic, + bounded outer/member/count/expanded sizes; diagnostics redact member names.
+- V70: release-evidence assembly re-runs V69 before copying any package; checksum/SBOM generation cannot bless invalid archive bytes.
+- V71: release SBOM covers locked package graph + exact manual JobSpy runtime component/version/SHA-256 contract.
+- V72: ∀ active recommendation → career-building target priority 1/2; food/retail/hospitality/warehouse/sales/generic customer-service title/keyword → reject/archive regardless score.
+- V73: private direct-source crawl → official employer/agency registry; removed noisy source produces 0 targets; URLs remain validated HTTPS external targets.
+- V74: schedule exception iff current job company exact-matches explicit `schedule_exception_employers|referral_employers`; `priority_employers`, posting text, résumé, + LLM output cannot create exception.
+- V75: `application_mode=discovery_only` may preserve fit score but stored action reason ! state discovery-only + ⊥ immediate Apply recommendation.
+- V76: `require_part_time` or `preferred_schedule=full_time` needs positive matching schedule evidence for score 7+; explicit conflict/unknown → cap 6 unless V74 exception; configured max-hours enforced iff present. `require_benefits` needs positive benefit evidence for 7+; V74 never bypasses qualifications/benefits.
+- V77: bounded job context preserves opening + requirement-bearing middle windows + tail within limit after V66 stripping; truncation markers/compensation/location fragments ∉ keyword gaps.
+- V78: aggregator discovery without verified direct employer/ATS URL → `source_verification=unverified_aggregator`, `application_mode=discovery_only`, score ≤6, ⊥ tailor/cover/apply; official feed/direct URL may become `official` only by deterministic origin evidence.
+- V79: current-market part-time means employer-classified part-time; ⊥ invented default hour ceiling. Explicit `max_hours_per_week=N` requires posting evidence ≤N or manual review.
+- V80: ∀ recursive release cleanup target/ancestor/descendant: symlink or Windows reparse point → fail before mutation; target remains repo-contained.
+- V81: private/archive scanners enforce outer-size/member-count/expanded-byte budgets before materialization; tracked + nonignored untracked publishable files covered.
+- V82: dist validator rejects file/ancestor conflicts, C0/C1 controls, + missing/unreadable project metadata fail closed.
+- V83: each promotion download exactly equals checksum subject set; checksum verification precedes attestation/publish; post-build smoke cannot mutate attested bytes.
+- V84: manual runtime SBOM component has stable `bom-ref` + root dependency edge.
+- V85: stored matched skills are evidence-backed; negated/unverified/implied claims ∉ matches; all pre-V76 scores invalidated before use.
+- V86: official trust/content transition atomically invalidates every unapplied score/evidence/document derivative before actionability; lower-trust outputs cannot survive promotion.
+- V87: supported official ATS public API → deterministic validated adapter, no browser/CAPTCHA/LLM dependency; every redirect/job URL revalidated.
+- V88: unavailable scoring modality has weight 0; remaining evidence weights renormalize to 1; absence ≠ negative evidence.
+- V89: substitutable credential cannot persist as mandatory/missing in narrative/risk; equivalency stays human-reviewed; real evidence gaps retained.
+- V90: tailored resume skill/claim must have candidate evidence; job-only requirement or recorded missing skill cannot enter candidate text. Cover generation reads exact persisted tailored artifact; missing/unreadable artifact fails closed.
+- V91: generated resume header preserves verified current city/state when available; no street address or planned destination substituted.
+- V92: untrusted ZIP EOCD/central-directory + decompressed TAR raw headers/pseudo-members pass bounded streaming preflight before `ZipFile`/`TarFile`; parser metadata cannot outrun configured count/byte caps.
+- V93: distribution raw preflight + stdlib parse consume same continuously open verified file handle; path replacement cannot swap unchecked bytes into parser.
+- V94: fresh-install audit invokes locked developer `pip-audit` by explicit project-venv path against smoke site-packages; runtime extra need not/shall not supply audit tooling.
+- V95: 0.5.2 changed-method complexity check has no CodeFactor `Complex Method`/`Very Complex Method` finding; helper extraction preserves public behavior + V74-V94 gates.
+- V96: bounded integer config accepts only non-bool integers/base-10 integer strings within range; Linux + Windows mypy gates pass.
 
 ## §T
 
@@ -174,12 +229,34 @@
 |T26|close public release/privacy configuration gaps|artifact/ACL/config/release workflow regressions; V46,I28|x|
 |T27|deepen pending-stage policy into DB boundary|selection/count parity + pipeline/cover migration; V47,I29|x|
 |T28|replace copied location fixtures + add fictional-address guard|fixture regression + local profile-collision scan; V48|x|
-|T29|retire contaminated distribution line + reserve clean `0.5.0`|version parity/retired-version test + PyPI/GitHub removal verification; V49|~|
+|T29|retire contaminated distribution line + reserve clean `0.5.0`|version parity/retired-version test + PyPI/GitHub removal verification; V49|x|
 |T30|add redacted tree/distribution private-value preflight|synthetic tree+wheel test + live private-profile scan; V50|x|
 |T31|make launcher DB + symlink-retention regressions hermetic on Linux/Windows|focused launcher/maintenance tests + full OS matrix; V51,V52|x|
 |T32|require tag release = current `main` tip|`test_v53_release_requires_exact_main_tip`; V53|x|
 |T33|remove vulnerable JobSpy compatibility extra|secure-install contract + lock/audit checks; V54|x|
 |T34|close residual JobSpy metadata/install drift|installer/CLI/lock/constraint + smoke checks; V55|x|
+|T35|harden editor/profile-document/install boundaries|focused editor/PDF/prompt/docs regressions + full suite; V56-V59|x|
+|T36|separate complete academic evidence from career-scoring context|selection/skill-map regressions + live transcript prompt audit; V60|x|
+|T37|calibrate hard-gap + JD keyword boundaries|focused hybrid-scoring regressions + live IT canary; V61,V62|x|
+|T38|close adversarial release-review drift|focused regressions + full preflight; V56-V60|x|
+|T39|eliminate nested release/privacy artifact path|artifact-content + recursive-collision regressions; V46,V50,V63|x|
+|T40|enforce market scopes across every discovery backend|SmartExtract/Workday scoped-target regressions; V28|x|
+|T41|separate current-market apply policy from destination-market fit|typed resolver/config/prompt regressions + live rescore; V41,V64|x|
+|T42|render compact prior-work chronology without layout corruption|parser/HTML regression + full-page PDF inspection; V65|x|
+|T43|strip application self-ID boilerplate before all LLM document/scoring stages|shared-context regression + live Attain rescore; V62,V66|x|
+|T44|calibrate Attain-style equivalent-degree + keyword headings|extractor/composite regression + targeted rescore; V61,V62,V67|x|
+|T45|make score credential-gap wording field-precise|prompt contract + targeted rescore; V39,V68|x|
+|T46|make release archive validator fully fail-closed|adversarial path/type/budget/version/nesting suite + canary; V63,V69|x|
+|T47|include manual JobSpy runtime in CycloneDX evidence|SBOM component/hash regression; V24,V71|x|
+|T48|enforce no-service career policy + refresh official source registry|config validation + target audit + active DB audit; V31,V64,V72,V73|x|
+|T49|make score action policy structured + exact-employer scoped|spoof/priority/unrelated-employer/discovery-action regressions + live rescore; V33,V64,V74,V75,I32|x|
+|T50|enforce deterministic schedule/benefit evidence + preserve middle requirements|focused context/composite/scorer regressions; V76,V77,V79,V85,I33|x|
+|T51|persist discovery provenance + gate unresolved aggregators|schema/backend/stage regressions + live refresh audit; V73,V78,I34|x|
+|T52|close recursive cleanup/release-evidence hardening gaps|Windows reparse/budget/path-set/SBOM regressions; V69-V71,V80-V84,V92-V94,I35|x|
+|T53|retire stale score/action data + refresh official sources|verified backup, full active rescore/source audit, 0 stale actionable rows; V72,V73,V78,V85|x|
+|T54|add deterministic official ATS adapters|Greenhouse API extraction/live refresh + URL/provenance regressions; V73,V78,V86,V87|x|
+|T55|bind packet generation to candidate evidence + exact tailored artifact|job-only skill rejection, artifact-read, strict packet regeneration/visual QA; V38,V40,V85,V90|x|
+|T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|x|
 
 ## §B
 
@@ -293,3 +370,88 @@
 |B106|Unix installer + doctor suggest mutable JobSpy|exact hashed contract covered PowerShell/CI only|V24,V55|T34|all install-surface pin/hash regression|
 |B107|fresh `full` may resolve pandas 3/regex 2025+|secure floor omitted upstream non-Markdownify upper bounds|V55|T34|metadata bound + callable JobSpy smoke regression|
 |B108|runtime validator passes broken JobSpy import|metadata-only validator replaced prior import smoke|V55|T34|public API import success/failure regressions|
+|B109|`divapply edit` drops scoped-market labels + leaves schedule contradictory + skill edits inert|text codecs omit advanced fields; schedule derives from one legacy bool; runtime prefers untouched `skills_boundary`|V56|T35|round-trip fixtures + synchronized representations|
+|B110|master PDF omits phone/email/GitHub/site when title precedes multiline contacts|parser keeps only one contact line in titled header|V57|T35|multiline-header parse/render regression|
+|B111|user follows published install commands but remains on 0.4.8|pip examples omit `--upgrade`; satisfied installed package is not refreshed|V58|T35|public-install contract regression|
+|B112|application prompt emits `$Use the employer's posted range...`|prompt assumes salary field is numeric and prefixes raw profile prose|V59|T35|numeric/prose compensation prompt regressions|
+|B113|scoring context injects Swimming/Music/orientation + broad inferred skills|newest-course half and all-row skill aggregation ignore career relevance/exclusion policy|V60|T36|shared selected-row filter; live context audit|
+|B114|0.5.2 private-collision preflight finds candidate/education locality in public editor test|new scoped-search fixture copied live market names|V48,V50|fictionalize fixture|tree+wheel+sdist collision scan|
+|B115|LLM says apply/7 but composite gives 5 for equivalent-experience IT role|bare `degree` token classified as hard mismatch despite accepted substitute|V61|T37|hard-gap evidence model + equivalency regression/live rescore|
+|B116|EEO/disability/form text becomes required keyword misses|generic `skills` starts sticky required bucket; no non-job boundary|V62|T37|explicit section signals + boilerplate reset/stop regressions|
+|B117|unknown/unfinished coursework enters career context; importer drops status|completion accepts missing/non-finite facts; import omits status|V60|T36,T38|strict completion predicate + status import regressions|
+|B118|doctor can preserve stale installed release|runtime remediation omits `--upgrade`|V58|T35,T38|upgrade command regression|
+|B119|editor saves legacy part-time policy as full-time while runtime stays constrained|schedule codec omits legacy bool/hour aliases|V56|T35,T38|legacy round-trip regressions|
+|B120|blank-separated social links vanish from PDF|header scan stops at first blank before known body section|V57|T35,T38|blank-tolerant contact regression|
+|B121|malformed coursework policy silently disables filter|validator omits coursework policy types/ranges|V60|T36,T38|fail-closed validation regressions|
+|B122|huge numeric compensation crashes prompt|unbounded float/round conversion overflows|V59|T35,T38|bounded finite parse regression|
+|B123|scope labels containing codec delimiters do not round-trip|editor uses unescaped `|`/`;` serialization|V56|T35,T38|escape/validation round-trip regression|
+|B124|local sdist contains `.coverage`, release bundle, and nested stale sdist with private fixtures|build reuses dirty output; sdist has no explicit excludes; scanner decodes nested archive as text only|V46,V50,V63|T39|clean build + explicit excludes + bounded recursive scan regression|
+|B125|recursive scanner test fails during dynamic module import|`dataclass` resolves postponed annotations through absent `sys.modules` entry|V63|T39|dependency-free budget class; focused regression|
+|B126|fictional-user guard flags its own prefix assertion|sentinel path omitted terminal separator required by guard|V48|T39|use complete fictional path prefix; focused regression|
+|B127|preflight cleanup deletes fresh evidence after validation|helper insertion matched late block instead of pre-build boundary|V63|T39|order assertion + move cleanup before build; erase coverage after report|
+|B128|blank-separated LinkedIn line is mistaken for body heading|header scan uses permissive all-caps heuristic whose normalized input is always uppercase|V57|T35,T38|recognized-heading-only header boundary; focused regression|
+|B129|destination queries search current market; scoped queries run across unrelated Workday employers|SmartExtract uses first location; Workday drops query labels|V28|T40|shared scoped pairs + employer market labels; focused/live target audit|
+|B130|destination fit inherits current-market part-time gate; prompt says candidate cannot relocate|one global schedule + hardcoded relocation text|V41,V64|T41|typed market overlay + explicit relocation/application-mode regressions|
+|B131|additional-experience lines merge into one malformed job and push one school to page 2|section alias/render path missing|V65|T42|dedicated compact-section regression + re-render|
+|B132|Attain score is 7 but disability conditions appear as missing skills|LLM context still carries ATS self-ID tail after local keyword extractor stops|V62,V66|T43|shared context truncation + targeted live rescore|
+|B133|sanitized Attain rescore falls to 6 and emits `qualifications & education`, `e.g` as gaps|posting substitution invisible to hard-gap detector; headings/filler enter keyword candidates|V61,V62,V67|T44|job-text-aware substitution + heading/filler regressions|
+|B134|Attain risk says `no completed associate/IT degree` despite completed general-studies associate|prompt does not separate credential level from field|V39,V68|T45|degree-field precision instruction + targeted rescore|
+|B135|clean canary passes checker that accepts archive bombs, path collisions, ZIP devices, stale pairs, + renamed nested archives|validator normalizes/ignores unsafe state and lacks budgets/project binding|V63,V69|T46|fail-closed validator rewrite + adversarial suite|
+|B136|evidence assembler accepts invalid wheel/sdist bytes when standalone gate is skipped|assembly validates names/counts/checksums only|V69,V70|T46|invoke content validator before bundle mutation|
+|B137|CycloneDX evidence omits maintained manually installed JobSpy runtime|uv export sees only declared package graph|V24,V71|T47|supplement exact component/version/hash before validation|
+|B138|noisy aggregator remains enabled after service-job cleanup|broad source outruns title policy + consumes crawl budget|V72,V73|T48|remove source; add verified official current/destination feeds|
+|B139|full preflight stops before tests on 3 mypy errors|optional `Any` passed to numeric constructors + education local shadows header string|V14|T38,T42|normalize through string boundary + rename local; Linux/Windows mypy|
+|B140|cover address integration expects unverified destination address|legacy fixture omits required current-legal-residence evidence|V41|T41|mark alternate fixture verified; focused/full suite|
+|B141|private collision gate blocks 2 SPEC city references|career-policy research reintroduced candidate geography into tracked docs|V46,V50|T48|replace with market-neutral terms; tree+dist scan|
+|B142|priority employer can weaken current-market part-time gate|LLM context conflates ranking preference with schedule exception; exception inferred from untrusted text|V33,V64,V74|T49|trusted exact-employer bool into context/composite; rescore|
+|B143|destination score-7 rows say Apply despite discovery-only market|action wording left to LLM while only apply stage enforces mode|V64,V75|T49|deterministic discovery-only action reason after fit scoring; rescore|
+|B144|current full-time/unknown + destination low-hour/no-benefit roles reach 7|schedule/benefits exist only in prompt prose|V76,V79|T50|structured evidence caps; remove invented private hour limit; rescore|
+|B145|middle minimum qualifications disappear (false Jobot 7)|head/tail truncation discards requirement section|V77|T50|bounded requirement windows + keyword cleanup|
+|B146|aggregator rows become actionable from partial text|DB lacks origin market/query/mode/official verification|V78|T51|persist provenance; stage/actionability gates|
+|B147|release cleanup can cross NTFS junction|lexical containment rejects symlink only, not Windows reparse points|V80|T52|reject reparse target/tree before recursive delete|
+|B148|scanner/promotion/SBOM evidence still trusts unbounded/unlisted bytes|resource/path-set/graph checks incomplete|V81-V84|T52|bounded iteration + exact subjects + SBOM edge|
+|B149|LLM matched fields claim implied/negated skills; all 15 active scores stale|free-text matches persisted without evidence boundary + changed context|V85|T50,T53|sanitize matches + invalidate/full rescore|
+|B150|0.5.1 upgrades retain stale scores/documents after V76|private cleanup only; no versioned policy invalidation|V85|T53|v5 migration clears unapplied score/document pointers; preserves application history|
+|B151|actionability regression test reports zero official documents|fixture accepts path overrides but omits them from INSERT; cleanup call unqualified|V78|T51|persist all fixture fields; rerun focused gate|
+|B152|blank-location role can auto-apply; destination remote inherits current schedule|market resolver conflates missing with broad remote and ignores persisted query market|V64,V76,V78|T50,T51|fail blank/conflicts closed; exact persisted remote-market regression|
+|B153|part-time agent answers below target from range midpoint|pay prompt ignores numeric hourly target/floor|V41,V76|T50|clamp target to posted range; below-floor human-review regression|
+|B154|stored voluntary EEO attributes are auto-submitted without consent|storage conflated with disclosure authorization|V40,V41|T51|explicit opt-in flag default false; prompt redaction regression|
+|B155|official Greenhouse refresh hits anti-bot page then needs LLM key|generic browser extractor ignores public jobs API|V73,V87|T54|deterministic API adapter; live refresh|
+|B156|official refresh can inherit stale manual score/documents|trust promotion updates provenance but not derived fields|V78,V85,V86|T51,T54|atomic invalidation on unapplied promotion regression|
+|B157|official refresh can erase unchanged score/packet or trust cross-host API URL|unconditional invalidation + board token not bound to returned URL|V86,V87|T54|null-safe change gate + same-board URL regression|
+|B158|official role gets keyword 0 + markup-truncated context|Greenhouse description is HTML-escaped HTML; adapter parses only once|V77,V85,V87|T50,T54|entity decode before HTML-to-text; live rescore|
+|B159|unparseable/no-keyword posting gets artificial 30% zero penalty|composite weights missing modality as negative evidence|V85,V88|T50|availability-aware weight renormalization regression|
+|B160|verified setup/user-assistance/troubleshooting appear missing; model invents paid requirement|literal phrase matching + weak equivalency instruction|V61,V68,V85|T50|bounded evidence synonyms + no-unstated-requirement prompt regression|
+|B161|score narrative still calls accepted degree alternative unmet|free-form LLM text bypasses substitution-aware composite|V68,V85,V89|T50|deterministic narrative sanitizer + real-gap preservation regression|
+|B162|persisted explanation contradicts deterministic hit/gap evidence|free-form LLM still authors dashboard reasoning|V85,V89|T50|derive stored reasoning only from bounded hits/gaps/score/substitution|
+|B163|strict cover exhausts retries; batch uses master resume despite persisted tailored artifact|stochastic high-temperature draft + wrong evidence input|V38,V40,V90|T55|low-variance retry + exact tailored-artifact reader regressions|
+|B164|tailored resume inserts posting-only `asset tracking`, the recorded gap|validator authorizes job vocabulary without candidate evidence|V85,V90|T55|reject candidate-unsupported/job-only skill claims; regenerate packet|
+|B165|remote tailored resume drops current city/state|assembler intentionally omits verified location|V41,V91|T55|inject current city/state only; render regression|
+|B166|cover lifecycle tests patch removed master-resume input|fixtures bypass exact tailored-artifact contract|V90|T55|owned artifact fixtures/helper patch; focused rerun|
+|B167|pending-stage fixtures vanish after actionability gate|fixtures omit official/active provenance|V47,V78|T51|persist trusted provenance in eligible rows; parity rerun|
+|B168|tailored text has city/state but PDF header drops it|renderer ignores parsed `location` field|V91|T55|render location with contact; PDF regression/regenerate|
+|B169|cover says technical skills apply `across public-sector and lab settings`|validator misses ambiguous cross-setting aggregation|V38,V90|T55|reject aggregated attribution; explicit paid-vs-lab prompt/regenerate|
+|B170|cover relabels target title as `IT Support Specialist training`|job-title context leaks into education claim|V27,V90|T55|exact program-name rule + target-title-as-training rejection/regenerate|
+|B171|cover groups IT skills as built through lab + public-sector roles|guard covers `across` wording, not mixed-setting sentence structure|V38,V90|T55|zero-IT mixed-setting sentence rejection + regenerate|
+|B172|cover fuses Docker home-lab fact into separate website project|profile project names/tools lack association boundaries|V38,V90|T55|exact-tailored project anchors only; unseen-domain rejection|
+|B173|employer sector list becomes claimed healthcare/nonprofit work context|company context leaks backward into candidate experience|V27,V38,V90|T55|sector-evidence guard + separate-company-context prompt|
+|B174|cover maps City records work to `asset-tracking discipline`|known missing skill re-enters as transferable claim + hyphen evades exact check|V85,V90|T55|persisted-gap alias guard + gap block in prompt|
+|B175|one cover sentence assigns escalation to City + county work|duties aggregate across distinct paid roles|V38,V90|T55|one paid setting/employer per sentence; mixed-setting rejection|
+|B176|6 release-hardening regressions fail: untracked files skipped, outer archives read unbounded, TAR members materialized, C1 paths accepted, file/ancestor conflicts accepted, missing project version ignored|V81/V82 contracts were specified before scanner enforcement|V81,V82|T52|bound/read incrementally; scan cached+nonignored untracked; reject unsafe path graph/metadata absence; rerun focused gates|
+|B177|expanded V81/V82 suite exposes 9 more unsafe paths: extensionless files skipped; ignored distinction absent; directory floods uncounted; ZIP/TAR payloads read after aggregate failure; reverse/casefold conflicts accepted; non-string/nonregular metadata accepted|scanner validation is sequential and name-only instead of atomic metadata preflight + typed path graph|V81,V82|T52|preflight bounded metadata before extraction; enumerate publishable set; typed casefold graph; strict string metadata|
+|B178|7 release-evidence tests fail before SBOM assertions after V82 closes missing-metadata path|isolated distribution fixture relied on implicit absent `pyproject.toml` acceptance|V82,V84|T52|fixture writes exact project version; retain one explicit missing-metadata regression; rerun SBOM tests|
+|B179|5 V83/V84 regressions fail: JobSpy lacks stable ref/root edge; rootless graph passes; semantic tamper + duplicate manifest subject pass verification|supplementer returns on component match and checksum verifier validates only digest-set equality|V83,V84|T52|normalize component+graph; semantic SBOM verification; reject duplicate manifest keys|
+|B180|rootless-SBOM regression raises generic supplement error instead of typed root-component failure|metadata lookup is inside broad parse exception|V84|T52|parse base payload first; validate root metadata separately|
+|B181|release assurance test loses `pip-audit --path` contract after smoke-venv relocation|absolute executable spelling bypasses existing policy assertion despite active isolated venv|V24,V83|T52|invoke activated `pip-audit --path`; rerun workflow assurance|
+|B182|ad-hoc clean-install smoke stops at `pip check` after JobSpy runtime succeeds|upstream 1.1.82 metadata deliberately pins vulnerable Markdownify; supported secure install overrides it via hashed `--no-deps`|V24,V54,V55|T34|retain documented intentional warning; verify with runtime-bound validator + path audit, not `pip check`|
+|B183|V81 re-audit finds ZIP central directory + TAR PAX/GNU payload can allocate before logical budget loop|stdlib constructors parse metadata before `infolist`/iteration returns control|V81,V92|T52|raw EOCD/CD + streaming TAR header preflight; constructor-not-called regressions|
+|B184|8 constructor-level V92 regressions fail across private + distribution scanners|no raw ZIP/TAR metadata preflight or metadata-byte cap exists|V92|T52|implement fixed-header streaming preflight; reject extension pseudo-members; rerun gates|
+|B185|V92 focused suite fails during scanner import|`BinaryIO` imported from `collections.abc`, where Python 3.12 does not expose it|V92|T52|import typing-only protocol from `typing`; rerun same focused suite|
+|B186|V92 adversarial re-audit swaps distribution after preflight and bypasses ZIP metadata/TAR extension rejection|scanner closes verified handle then reopens mutable path for stdlib parser|V93|T52|swap-on-close ZIP/TAR regressions; one handle from preflight through parse|
+|B187|2 V93 swap-on-close regressions parse replacement ZIP/TAR contents|stdlib constructors still receive mutable path after verified handle closes|V93|T52|rewind + parse same live handle; rerun release gates|
+|B188|local fresh-install smoke cannot find `pip-audit` inside clean runtime venv; release workflow also invokes it bare|auditor is dev-only + `setup-uv` does not activate synced `.venv` by default|V94|T52|assert/use `.venv/bin/pip-audit --path` in release smoke; rerun assurance|
+|B189|V94 workflow regression fails|publish smoke references unqualified auditor absent from clean runtime venv|V94|T52|invoke locked `.venv/bin/pip-audit` against smoke path; rerun release tests|
+|B190|V93 re-audit swaps archive after path `lstat` but before open; oversized replacement passes|regular/reparse/outer-size checks are not repeated/bound on live descriptor|V93|T52|live `fstat` + post-open path/descriptor identity; lstat-to-open ZIP/TAR regressions|
+|B191|2 live-handle V93 regressions accept oversized replacement ZIP/TAR|opened descriptor metadata is unchecked|V93|T52|shared descriptor verifier before raw preflight; rerun release gates|
+|B192|PR #11 CodeFactor fails with 12 complex + 1 very-complex changed method|policy/scoring/discovery/release logic accumulated multi-branch orchestration|V95|T56|extract cohesive helpers; preserve tests/security gates; rerun CodeFactor|
+|B193|release preflight stops on `_bounded_integer(object)` mypy error|helper annotation exposed unchecked numeric coercion + float acceptance|V96|T56|fail-closed scalar narrowing + named regression; rerun both mypy gates|

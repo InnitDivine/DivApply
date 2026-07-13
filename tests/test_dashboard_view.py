@@ -34,6 +34,9 @@ def _dashboard_db() -> sqlite3.Connection:
             applied_at TEXT,
             apply_error TEXT,
             verification_confidence TEXT,
+            application_mode TEXT,
+            source_verification TEXT,
+            market_label TEXT,
             archived_at TEXT
         )
         """
@@ -43,8 +46,8 @@ def _dashboard_db() -> sqlite3.Connection:
         INSERT INTO jobs (
             url, title, salary, description, location, site, strategy,
             full_description, application_url, detail_error, fit_score, score_reasoning,
-            apply_status, applied_at, archived_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            apply_status, applied_at, application_mode, source_verification, archived_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             "https://example.com/job",
@@ -61,6 +64,8 @@ def _dashboard_db() -> sqlite3.Connection:
             "Python, accessibility\nStrong local fit.",
             None,
             None,
+            "active",
+            "official",
             None,
         ),
     )
@@ -283,7 +288,10 @@ def test_dashboard_renders_generated_doc_and_apply_states(tmp_path, monkeypatch)
             verification_confidence = 'high'
         WHERE url = 'https://example.com/job'
         """,
-        ("C:/Users/Dearr/.divapply/tailored/private.pdf", "C:/Users/Dearr/.divapply/cover/private.pdf"),
+        (
+            "C:/Users/ExampleUser/.divapply/tailored/private.pdf",
+            "C:/Users/ExampleUser/.divapply/cover/private.pdf",
+        ),
     )
     conn.execute(
         """
@@ -357,7 +365,7 @@ def test_dashboard_renders_generated_doc_and_apply_states(tmp_path, monkeypatch)
     assert "Cover ready" in html
     assert "Verify high" in html
     assert "private.pdf" not in html
-    assert "C:/Users/Dearr" not in html
+    assert "C:/Users/ExampleUser/" not in html
     assert "Description unavailable: expired: posting inactive" in html
 
 

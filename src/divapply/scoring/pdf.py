@@ -26,6 +26,8 @@ SECTION_ALIASES = {
     "PROFESSIONAL EXPERIENCE": "EXPERIENCE",
     "WORK EXPERIENCE": "EXPERIENCE",
     "EMPLOYMENT": "EXPERIENCE",
+    "ADDITIONAL EXPERIENCE": "ADDITIONAL EXPERIENCE",
+    "OTHER EXPERIENCE": "ADDITIONAL EXPERIENCE",
     "PROJECTS": "PROJECTS",
     "PROJECT EXPERIENCE": "PROJECTS",
     "PROJECTS & HOME LAB": "PROJECTS",
@@ -96,12 +98,12 @@ def parse_resume(text: str) -> dict:
             found_blank = True
             continue
         # Section headers may be ALL-CAPS or generated as "Summary:"/Markdown.
-        if found_blank and _section_heading(stripped):
+        if found_blank and _section_heading(stripped, allow_styled=True):
             body_start = i
             break
-        # Everything before the first blank gap is header content
-        if not found_blank:
-            header_lines.append(stripped)
+        # Contact/social lines may be separated by blank lines. Keep every
+        # nonempty header line until the first recognized body section.
+        header_lines.append(stripped)
 
     name = header_lines[0] if len(header_lines) > 0 else ""
     title = ""
@@ -119,14 +121,22 @@ def parse_resume(text: str) -> dict:
         else:
             # Tailored-resume format: Name / Title / contact
             title = line1
-            if len(header_lines) > 3:
-                location = header_lines[2]
-                contact = header_lines[3]
-            elif len(header_lines) > 2:
-                if "@" in header_lines[2] or "|" in header_lines[2]:
-                    contact = header_lines[2]
+            if len(header_lines) > 2:
+                first_detail = header_lines[2]
+                detail_lower = first_detail.casefold()
+                looks_like_contact = (
+                    "@" in first_detail
+                    or "http://" in detail_lower
+                    or "https://" in detail_lower
+                    or "linkedin" in detail_lower
+                    or "github" in detail_lower
+                    or ("|" in first_detail and any(c.isdigit() for c in first_detail))
+                )
+                if looks_like_contact:
+                    contact = " | ".join(header_lines[2:])
                 else:
-                    location = header_lines[2]
+                    location = first_detail
+                    contact = " | ".join(header_lines[3:])
 
     if body_start == 0:
         for i, line in enumerate(lines[1:], start=1):
@@ -352,6 +362,19 @@ def build_html(resume: dict) -> str:
         entries = parse_entries(sections[exp_key])
         exp_html = _render_entries(entries, "Experience")
 
+    additional_exp_html = ""
+    additional_text = sections.get("ADDITIONAL EXPERIENCE", "").strip()
+    if additional_text:
+        lines = "".join(
+            f'<div class="compact-exp-line">{_esc(line.strip())}</div>'
+            for line in additional_text.splitlines()
+            if line.strip()
+        )
+        additional_exp_html = (
+            '<div class="section"><div class="section-title">Additional Experience</div>'
+            f'<div class="compact-exp">{lines}</div></div>'
+        )
+
     # Projects
     proj_html = ""
     proj_key = _find_key(sections, "PROJECT")
@@ -382,12 +405,16 @@ def build_html(resume: dict) -> str:
         blocks = _re.split(r"\n{2,}", edu_text)
         edu_items = ""
         for block in blocks:
-            lines = [line.strip() for line in block.strip().split("\n") if line.strip()]
-            if not lines:
+            edu_lines = [line.strip() for line in block.strip().split("\n") if line.strip()]
+            if not edu_lines:
                 continue
-            degree = lines[0]
-            school = lines[1] if len(lines) > 1 else ""
-            details = " &nbsp;&middot;&nbsp; ".join(_esc(line) for line in lines[2:]) if len(lines) > 2 else ""
+            degree = edu_lines[0]
+            school = edu_lines[1] if len(edu_lines) > 1 else ""
+            details = (
+                " &nbsp;&middot;&nbsp; ".join(_esc(line) for line in edu_lines[2:])
+                if len(edu_lines) > 2
+                else ""
+            )
             edu_items += f"""<div class="edu-entry">
   <div class="edu-degree">{_esc(degree)}</div>
   <div class="edu-school">{_esc(school)}</div>
@@ -403,7 +430,11 @@ def build_html(resume: dict) -> str:
 
     # Contact line parsing
     contact = resume["contact"]
-    contact_parts = [_esc(p.strip()) for p in contact.split("|")] if contact else []
+    contact_parts = [p.strip() for p in contact.split("|") if p.strip()] if contact else []
+    location = str(resume.get("location") or "").strip()
+    if location and all(location.casefold() != part.casefold() for part in contact_parts):
+        contact_parts.insert(0, location)
+    contact_parts = [_esc(part) for part in contact_parts]
     contact_html = " &nbsp;|&nbsp; ".join(contact_parts)
 
     display_name = _esc(resume["name"])
@@ -561,6 +592,16 @@ body {{
     font-weight: 500;
     margin-bottom: 1px;
 }}
+.compact-exp {{
+    padding-left: 8px;
+    border-left: 2px solid #e8dcc8;
+}}
+.compact-exp-line {{
+    font-size: 8.2pt;
+    line-height: 1.25;
+    color: #3a2e22;
+    margin-bottom: 1px;
+}}
 ul {{
     margin-left: 11px;
     padding: 0;
@@ -621,6 +662,7 @@ li::marker {{
 {summary_html}
 {skills_html}
 {exp_html}
+{additional_exp_html}
 {proj_html}
 {cert_html}
 {edu_html}

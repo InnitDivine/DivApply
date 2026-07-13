@@ -69,6 +69,7 @@ def test_store_results_uses_external_path_fallback_and_short_description_rules(t
                 "employer_key": "cache",
                 "employer_name": "Cache Employer",
                 "full_description": long_description,
+                "time_type": "Part time",
             },
             {
                 "title": "Duplicate IT Support Technician",
@@ -79,16 +80,35 @@ def test_store_results_uses_external_path_fallback_and_short_description_rules(t
                 "full_description": "Too short",
             },
         ],
-        {"cache": {"base_url": "https://cache.wd1.myworkdayjobs.com", "site_id": "External"}},
+        {
+            "cache": {
+                "base_url": "https://cache.wd1.myworkdayjobs.com",
+                "site_id": "External",
+                "source_verification": "official",
+            }
+        },
+        search_query="part time IT support",
+        market_label="Current market",
+        application_mode="active",
     )
 
-    row = conn.execute("SELECT url, description, full_description, detail_scraped_at FROM jobs").fetchone()
+    row = conn.execute(
+        "SELECT url, description, full_description, detail_scraped_at, market_label, "
+        "search_query, application_mode, employment_type, source_verification, "
+        "official_url_verified_at FROM jobs"
+    ).fetchone()
 
     assert (new, existing) == (1, 1)
     assert row["url"] == "https://cache.wd1.myworkdayjobs.com/External/job/123"
     assert row["description"] == long_description[:500]
     assert row["full_description"] == long_description
     assert row["detail_scraped_at"]
+    assert row["market_label"] == "Current market"
+    assert row["search_query"] == "part time IT support"
+    assert row["application_mode"] == "active"
+    assert row["employment_type"] == "part_time"
+    assert row["source_verification"] == "official"
+    assert row["official_url_verified_at"]
     close_connection(db_path)
 
 
@@ -136,7 +156,7 @@ def test_workday_title_include_filter_keeps_target_roles(monkeypatch) -> None:
     monkeypatch.setattr(workday, "search_employer", lambda *_args, **_kwargs: list(jobs))
     monkeypatch.setattr(workday, "fetch_details", lambda _emp, selected: selected)
 
-    def fake_store(_conn, selected, _employers):
+    def fake_store(_conn, selected, _employers, **_kwargs):
         captured["titles"] = [job["title"] for job in selected]
         return len(selected), 0
 
@@ -158,8 +178,8 @@ def test_workday_title_include_filter_keeps_target_roles(monkeypatch) -> None:
 
 def test_process_one_allows_relocation_employer_to_bypass_location_filter(monkeypatch) -> None:
     employers = {
-        "sutter_health": {
-            "name": "Sutter Health",
+        "example_health": {
+            "name": "Example Health",
             "relocation_ok": True,
         }
     }
@@ -167,14 +187,18 @@ def test_process_one_allows_relocation_employer_to_bypass_location_filter(monkey
 
     def fake_search(_key, _emp, _text, **kwargs):
         captured["location_filter"] = kwargs["location_filter"]
-        return [{"title": "IT Support", "location": "Sacramento, CA", "external_path": "/job"}]
+        return [{"title": "IT Support", "location": "Sample City, ZZ", "external_path": "/job"}]
 
     monkeypatch.setattr(workday, "search_employer", fake_search)
     monkeypatch.setattr(workday, "fetch_details", lambda _emp, selected: selected)
-    monkeypatch.setattr(workday, "store_results", lambda _conn, selected, _employers: (len(selected), 0))
+    monkeypatch.setattr(
+        workday,
+        "store_results",
+        lambda _conn, selected, _employers, **_kwargs: (len(selected), 0),
+    )
 
     result = workday._process_one(
-        "sutter_health",
+        "example_health",
         employers,
         "IT support",
         True,

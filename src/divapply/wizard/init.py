@@ -296,6 +296,7 @@ def _setup_profile() -> dict:
 
     # -- EEO Voluntary (defaults) --
     profile["eeo_voluntary"] = {
+        "submit_voluntary_eeo": False,
         "gender": "Decline to self-identify",
         "race_ethnicity": "Decline to self-identify",
         "veteran_status": "Decline to self-identify",

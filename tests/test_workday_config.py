@@ -56,3 +56,39 @@ def test_workday_employer_loader_treats_empty_yaml_as_empty_registry(tmp_path, m
     monkeypatch.setattr(config, "CONFIG_DIR", tmp_path / "package")
 
     assert workday.load_employers() == {}
+
+
+def test_workday_discovery_scopes_queries_to_labeled_employers(monkeypatch) -> None:
+    employers = {
+        "current_org": {"name": "Current Org", "location_labels": ["Current market"]},
+        "future_org": {"name": "Future Org", "location_labels": ["Future market"]},
+    }
+    monkeypatch.setattr(
+        config,
+        "load_search_config",
+        lambda: {
+            "queries": [
+                {"query": "part time help desk", "tier": 1, "location_labels": ["Current market"]},
+                {"query": "IT technician", "tier": 1, "location_labels": ["Future market"]},
+            ],
+            "locations": [
+                {"label": "Current market", "location": "Exampletown, YY"},
+                {"label": "Future market", "location": "Sample City, ZZ"},
+            ],
+        },
+    )
+    calls: list[tuple[str, list[str]]] = []
+
+    def fake_scrape(*, search_text, employers, **_kwargs):
+        calls.append((search_text, list(employers)))
+        return {"new": 0, "existing": 0, "found": 0}
+
+    monkeypatch.setattr(workday, "scrape_employers", fake_scrape)
+
+    result = workday.run_workday_discovery(employers=employers)
+
+    assert calls == [
+        ("part time help desk", ["current_org"]),
+        ("IT technician", ["future_org"]),
+    ]
+    assert result["queries"] == 2

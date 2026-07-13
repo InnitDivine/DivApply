@@ -16,15 +16,20 @@ def _insert_job(conn, url: str, **overrides) -> None:
         "fit_score": 7,
         "archived_at": None,
         "discovered_at": "2026-01-01",
+        "application_mode": "active",
+        "source_verification": "official",
+        "tailored_resume_path": None,
+        "cover_letter_path": None,
     }
     values.update(overrides)
     conn.execute(
         """
         INSERT INTO jobs (
             url, title, site, full_description, application_url,
-            fit_score, archived_at, discovered_at
+            fit_score, archived_at, discovered_at, application_mode, source_verification,
+            tailored_resume_path, cover_letter_path
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             url,
@@ -35,6 +40,10 @@ def _insert_job(conn, url: str, **overrides) -> None:
             values["fit_score"],
             values["archived_at"],
             values["discovered_at"],
+            values["application_mode"],
+            values["source_verification"],
+            values["tailored_resume_path"],
+            values["cover_letter_path"],
         ),
     )
 
@@ -147,6 +156,35 @@ def test_dashboard_snapshot_ready_requires_description_and_nonempty_application_
         "Short Description",
         "Blank Apply",
     }
+    close_connection(db_path)
+
+
+def test_dashboard_action_metrics_exclude_unverified_and_discovery_only_jobs(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    _insert_job(
+        conn,
+        "https://example.com/aggregator",
+        title="Aggregator",
+        tailored_resume_path="aggregator-resume.pdf",
+        cover_letter_path="aggregator-cover.pdf",
+        application_mode="discovery_only",
+        source_verification="unverified_aggregator",
+    )
+    _insert_job(
+        conn,
+        "https://example.com/official",
+        title="Official",
+        tailored_resume_path="official-resume.pdf",
+        cover_letter_path="official-cover.pdf",
+    )
+    conn.commit()
+
+    snapshot = fetch_dashboard_snapshot(conn)
+
+    assert snapshot.ready == 1
+    assert snapshot.tailored == 1
+    assert snapshot.with_cover_letter == 1
     close_connection(db_path)
 
 
