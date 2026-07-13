@@ -1,85 +1,103 @@
 # DivApply
 
-DivApply is a local-first job application assistant. It can find jobs, enrich postings, score fit, tailor resumes, write cover letters, export PDFs, and optionally help with browser-based applications.
+[![PyPI](https://img.shields.io/pypi/v/divapply.svg)](https://pypi.org/project/divapply/)
+[![Python](https://img.shields.io/pypi/pyversions/divapply.svg)](https://pypi.org/project/divapply/)
+[![CI](https://github.com/InnitDivine/DivApply/actions/workflows/ci.yml/badge.svg)](https://github.com/InnitDivine/DivApply/actions/workflows/ci.yml)
+[![License](https://img.shields.io/github/license/InnitDivine/DivApply.svg)](LICENSE)
 
-It is designed to stay factual: it works from your profile, resume, saved preferences, and optional coursework notes. It should not invent jobs, credentials, degrees, tools, dates, metrics, or experience.
-
-## What It Does
+DivApply is a local-first job application assistant. It discovers jobs, enriches postings, scores fit, tailors resumes, writes cover letters, exports PDFs, and can optionally assist with browser-based applications.
 
 ```text
 discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 ```
 
-- Finds jobs from configured searches and direct sources.
-- Expands postings with full descriptions and application links.
-- Scores jobs against your real experience and required criteria.
-- Separates required qualifications from preferred/nice-to-have items.
-- Generates one-page tailored resumes and cover letters.
-- Exports safe job tracking data.
-- Can run browser apply flows only when you confirm it.
+DivApply works from your profile, resume, search preferences, and optional coursework. It is designed to preserve facts—not invent employers, credentials, degrees, skills, dates, metrics, or experience.
 
-## Quick Start
+## Highlights
 
-Use Python 3.12 for the smoothest setup. The maintained Windows setup for this project currently uses Python 3.12.13. Python 3.14 may be installed on the same PC, but JobSpy-backed discovery is still expected to run from the Python 3.12 environment because of upstream dependency pins.
+- Configurable searches across job boards and direct employer sources.
+- Full-posting enrichment and canonical application links.
+- Hybrid keyword, local-similarity, and optional LLM scoring.
+- Required-versus-preferred qualification handling.
+- Factual, job-specific resumes and cover letters.
+- Local dashboard, lifecycle tracking, analytics, and safe exports.
+- Hidden coursework context without automatic transcript disclosure.
+- Confirmation-gated browser assistance with dedicated worker profiles.
 
-Recommended CLI install with `pip`:
+## Requirements
+
+| Feature | Requirement |
+| --- | --- |
+| Core CLI | Python 3.11+ |
+| Full JobSpy discovery | Python 3.12 recommended; maintained Windows setup uses 3.12.13 |
+| Default browser and PDF workflows | Playwright Chromium; auto-apply can also target supported installed browsers |
+| AI scoring and documents | Gemini, OpenAI, or a compatible local endpoint |
+| Auto-apply | Node.js 20+ and Codex CLI or Claude Code |
+
+Python 3.14 can remain installed for other work, but run DivApply from a Python 3.12 virtual environment while upstream JobSpy pins remain in place.
+
+## Install
+
+Use an isolated virtual environment. This keeps DivApply and its browser dependencies out of your system Python.
+
+### Windows PowerShell
 
 ```powershell
-python --version  # expected on the maintained Windows setup: Python 3.12.13
+$Venv = "$HOME\.venvs\divapply"
+py -3.12 -m venv $Venv
+& "$Venv\Scripts\Activate.ps1"
+
 python -m pip install --upgrade pip
 python -m pip install --upgrade "divapply[full]"
-python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
+
+$JobSpyWheel = "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
+python -m pip install --no-deps $JobSpyWheel
+python -m divapply.jobspy_runtime
 python -m playwright install chromium
+
 divapply init
-divapply edit
 divapply doctor
 ```
 
-Virtualenv install, if you want the dependencies isolated:
+If `py -3.12` is unavailable, install Python 3.12 or use an existing 3.12 interpreter explicitly.
 
-```powershell
-python --version  # expected on the maintained Windows setup: Python 3.12.13
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
+### macOS and Linux
+
+```bash
+python3.12 -m venv ~/.venvs/divapply
+source ~/.venvs/divapply/bin/activate
+
 python -m pip install --upgrade pip
-python -m pip install --upgrade "divapply[full]"
-python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
+python -m pip install --upgrade 'divapply[full]'
+
+JOBSPY_WHEEL='https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9'
+python -m pip install --no-deps "$JOBSPY_WHEEL"
+python -m divapply.jobspy_runtime
 python -m playwright install chromium
+
 divapply init
-divapply edit
 divapply doctor
 ```
 
-Alternative development install from the current GitHub `main` branch:
+### Install choices
+
+| Package | Includes |
+| --- | --- |
+| `divapply` | Core CLI |
+| `divapply[coursework]` | Core CLI plus PDF coursework import |
+| `divapply[jobspy-runtime]` | Secure JobSpy dependency floor, without JobSpy itself |
+| `divapply[full]` | Coursework plus the secure JobSpy runtime dependencies |
+
+#### Why JobSpy uses a separate command
+
+`python-jobspy` 1.1.82 declares `markdownify<0.14.0`, while the patched dependency floor requires `markdownify>=0.14.1`. DivApply therefore installs the secure floor first, then the exact hash-verified JobSpy wheel with `--no-deps`.
+
+Because those published metadata ranges cannot overlap, `pip check` may report an intentional Markdownify conflict. Do not downgrade Markdownify to silence it. Use these supported checks instead:
 
 ```powershell
-python --version  # expected on the maintained Windows setup: Python 3.12.13
-python -m pip install --upgrade "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
-python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
-```
-
-Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for the secure JobSpy runtime dependency floor, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins `markdownify<0.14.0`, which conflicts with the CVE-2025-46656 fix in `markdownify>=0.14.1`, install DivApply's secure dependency floor first, then install the exact hash-verified JobSpy 1.1.82 wheel shown above with `--no-deps`. Run `python -m divapply.jobspy_runtime` to verify every installed JobSpy dependency bound. Until upstream relaxes that pin, `pip check` may still report the intentional Markdownify metadata conflict even when `pip-audit` and DivApply's runtime validator pass.
-
-On Windows, DivApply installs plain `divapply`/`divapply.cmd` launchers instead of relying on a generated `divapply.exe`, so managed PCs that block generated console-script executables can still run `divapply` directly from `cmd`.
-
-Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It uses `DIVAPPLY_BROWSER` when configured, otherwise it defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
-
-## Clone Setup
-
-Use this if you want the repo files locally.
-
-```powershell
-git clone https://github.com/InnitDivine/DivApply.git
-cd DivApply
-.\install.ps1
-```
-
-Update an existing clone:
-
-```powershell
-git pull
-python -m pip install --upgrade -e ".[full]"
-python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
+python -m divapply.jobspy_runtime
+divapply selfcheck
+divapply doctor
 ```
 
 ## First Run
@@ -87,147 +105,96 @@ python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/1
 ```powershell
 divapply init
 divapply edit
+divapply selfcheck
+divapply doctor
 ```
 
-This creates your local app folder and setup files:
+`divapply init` is an interactive setup wizard. `divapply edit` opens the normal local-only editor for your profile and searches.
 
-- `profile.json` - applicant facts such as personal details, compensation, work history, education, and verified skills
-- `resume.txt` - master resume facts
-- `searches.yaml` - job searches and filters
-- `.env` - API keys and runtime settings
-- `divapply.db` - local jobs database
+User data lives under `~/.divapply`:
 
-These files are private and ignored by git.
+- `profile.json` — applicant facts, work history, education, verified skills, and reusable form answers.
+- `resume.txt` / `resume.pdf` — master resume evidence.
+- `searches.yaml` — target roles, markets, schedules, boards, tiers, and filters.
+- `.env` — API keys and runtime settings.
+- `credentials.yaml` — optional job-site login credentials.
+- `divapply.db` — local jobs, coursework, and application history.
 
-Use `divapply edit` as the normal setup screen after initialization. It opens a local-only browser editor for:
+These files are private and ignored by Git. Keep candidate facts in `profile.json`; keep job-search strategy in `searches.yaml` so old preferences do not become resume claims.
 
-- Personal/contact details
-- Compensation and verified skills
-- Work history, education, certifications, references, projects, and real metrics
-- Search roles, schedule/work-type filters, locations, query tiers, job boards, and filters
+## Core Workflow
 
-The editor saves applicant facts to `profile.json` and job-search intent to `searches.yaml`, so most users do not need to hand-edit JSON or YAML.
-
-Keep `profile.json` factual: identity, work authorization, pay answers, work history, education, verified skills, references, and reusable application answers. Do not put preferred job titles, employers, locations, reject lists, or search strategy in the profile; put those in `searches.yaml` so scoring is driven by the current search instead of stale profile prose.
-
-## Daily Workflow
+Run the full non-submitting pipeline:
 
 ```powershell
-divapply doctor
 divapply run
 divapply status
+divapply dashboard
 divapply export jobs --out jobs.csv
 ```
 
-Useful targeted runs:
+Run selected stages or inspect one posting:
 
 ```powershell
 divapply run discover enrich
-divapply run score tailor cover
-divapply explain https://example.com/job
+divapply run score tailor cover pdf
+divapply add-url JOB_URL
+divapply explain JOB_URL
+divapply rescore
 ```
 
-Use dry runs before any real browser submission:
+`divapply run` never submits applications. Submission is a separate, confirmation-gated `divapply apply` command.
 
-```powershell
-divapply apply --dry-run
-divapply apply --gen --url https://example.com/job
-divapply apply --yes
-```
+## Search Configuration
 
-Auto-apply launches a dedicated Chromium browser session for each worker, navigates to application pages, fills supported form fields from your profile and resume facts, uploads generated documents when available, answers screening questions through the selected agent backend, and shows progress in the live terminal dashboard.
-
-The apply agent is launched without host shell access and with an exact browser-tool allowlist. CAPTCHA solving fails closed with `RESULT:CAPTCHA`; DivApply never puts a CAPTCHA-service key or host-command recipe in the agent prompt. Gmail automation is unavailable because the former integration is archived and its latest dependency tree has known High-severity advisories. Email-only applications and email verification therefore fail closed with `RESULT:FAILED:email_required`.
-
-Cost-safe defaults are intentionally conservative: real auto-apply runs default to one job and one worker, and higher limits, multiple workers, unlimited continuous polling, or unbounded runs require `--allow-expensive`. Start with `divapply apply --dry-run --limit 1`, then use `divapply apply --yes --limit 1` for the lowest-cost real run.
-
-Saved job-site logins are local-only and belong in `~/.divapply/credentials.yaml`, not `profile.json` or Git:
-
-```powershell
-divapply credentials --username you@example.com
-divapply credentials --site workdayjobs.com --username you@example.com
-divapply credentials --show
-```
-
-Omit `--password` and DivApply prompts for it without echoing it. Use site-specific entries for employers that need a different login.
-
-To avoid signing in repeatedly, open the same persistent browser profile used by auto-apply, sign in once, complete any two-factor challenge, then close the browser:
-
-```powershell
-divapply browser-login --url https://www.myworkday.com/
-divapply browser-login --url https://imh.wd108.myworkdayjobs.com/IntermountainCareers
-```
-
-Future `divapply apply --workers 1` runs reuse the worker-0 profile cookies for the configured browser. Use the same `--browser` and `--worker` values for login and apply when overriding the configured browser.
-
-DivApply creates blank, dedicated worker profiles; it never copies your personal Chrome profile or another worker's cookies. Chrome worker profiles created by older DivApply releases are intentionally refused because they may contain copied personal browser credentials. Preserve an old profile as a backup, create a fresh dedicated profile, and sign in intentionally:
-
-```powershell
-Move-Item "$HOME\.divapply\chrome-workers\worker-0" "$HOME\.divapply\chrome-workers\worker-0.legacy-backup"
-divapply browser-login --browser chrome --worker 0 --url https://www.myworkday.com/
-```
-
-The apply agent cannot execute page JavaScript or arbitrary browser code. DivApply records `applied` only when the agent's final three nonempty lines provide a matching submission origin, visible confirmation evidence, and exact `RESULT:APPLIED`; this remains a conservative model-reported check, so verify important submissions with the employer.
-
-If Google says "This browser or app may not be secure", use real Chrome for both login and apply:
-
-```powershell
-divapply browser-login --browser chrome --url https://www.myworkday.com/
-divapply apply --browser chrome --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
-```
-
-To make real Chrome the default saved-cookie browser, set `DIVAPPLY_BROWSER=chrome` in `~/.divapply/.env`. Then both `divapply browser-login` and `divapply apply` use the Chrome worker profile unless you explicitly pass a different `--browser`.
-
-Auto-apply has a bounded 45-minute per-job timeout by default, plus a 5-minute no-output timeout. Multi-step ATS flows can take several minutes; for fail-fast testing, set a shorter timeout for that session:
-
-```powershell
-$env:DIVAPPLY_APPLY_TIMEOUT="900"
-divapply apply --backend codex --model gpt-5.4-mini --dry-run --limit 1 --workers 1
-```
-
-## Search Config
-
-`searches.yaml` controls what DivApply looks for.
-
-Example:
+Most users should configure searches through `divapply edit`. The underlying `searches.yaml` remains human-readable:
 
 ```yaml
-queries:
-  - query: "student assistant"
-    tier: 1
-  - query: "front desk"
-    tier: 2
-  - query: "customer service"
-    tier: 3
-locations:
-  - location: "Exampletown, UT"
-    remote: false
-  - location: "Remote"
-    remote: true
-country: "USA"
-boards:
-  - indeed
-  - linkedin
 defaults:
   results_per_site: 50
   hours_old: 168
+
+locations:
+  - label: local
+    location: "Exampletown, UT"
+    remote: false
+  - label: remote
+    location: "Remote"
+    remote: true
+
+queries:
+  - query: "IT Support Specialist"
+    tier: 1
+    location_labels: [local, remote]
+  - query: "Help Desk Technician"
+    tier: 2
+    location_labels: [local, remote]
+  - query: "Health Information Technician"
+    tier: 3
+    location_labels: [local, remote]
+
+boards:
+  - indeed
+  - linkedin
 ```
 
-Tier `1` should be your best, most specific searches. Tier `2` should be strong adjacent matches. Tier `3` should be broad fallback searches. Keep job titles in `queries`, places in `locations`, schedule intent in `require_part_time`, and boards in `boards`. DivApply derives normal location filtering from `locations`; manual filters such as `location.accept_patterns`, `reject_patterns`, `exclude_titles`, `excluded_keywords`, and customer-service-specific hour filters are optional escape hatches only when a board repeatedly returns results that need cleanup before scoring.
+Tier 1 is the strongest target, tier 2 is an adjacent path, and tier 3 is a broader fallback. Titles belong in `queries`; places belong in `locations`; schedule, benefits, market, and application-mode policy should remain structured search configuration.
 
-Older search configs still load, but `divapply selfcheck` warns on legacy aliases so you can migrate gradually:
-`search_terms` -> `queries`, `job_boards` or `sites` -> `boards`, `nearby_locations` -> `locations`, `reject_locations` -> `location.reject_patterns`, `target_titles` -> `include_titles`, `avoid_titles` -> `exclude_titles`, and `avoid_keywords` -> `excluded_keywords`.
+Legacy aliases still load, but `divapply selfcheck` reports migration guidance.
 
-## Resume Rules
+## Scoring and Resume Safety
 
-Treat `resume.txt` as the source of truth.
+DivApply blends required/preferred keyword evidence, local similarity, and optional LLM judgment. Required non-substitutable gaps—such as a mandatory license or clearance—can cap a score. Preferred credentials should not block an otherwise strong match.
 
-- Keep it broad, truthful, and complete.
-- Add only real work, projects, education, certifications, tools, and dates.
-- Generated resumes are job-specific views of the master resume.
-- Coursework can help matching, but it is not copied into resumes unless it belongs there.
+Provider or transport failures remain retryable rather than becoming fake low scores. Inspect score evidence with:
 
-Validation modes:
+```powershell
+divapply explain JOB_URL
+```
+
+Treat `profile.json` and your master resume as factual sources. Imported structured education fields are canonical for their academic values, and coursework may provide additional academic context. Generated documents may rephrase or prioritize supported facts, but must not turn coursework, labs, projects, or in-progress education into paid experience or earned credentials.
+
+Validation modes are available when generating documents:
 
 ```powershell
 divapply run score tailor --validation strict
@@ -235,68 +202,67 @@ divapply run score tailor --validation normal
 divapply run score tailor --validation lenient
 ```
 
-## Scoring
-
-DivApply blends:
-
-- Required/preferred keyword matching
-- Local similarity scoring
-- LLM judgment
-
-Required gaps matter more than preferred gaps. Missing preferred certifications should not block a good job match. Missing required non-substitutable items, such as a required license, degree, or clearance, can cap the score.
-
-Provider and transport failures do not become valid low scores: affected jobs remain retryable. LLM requests use separate network timeouts, at most three attempts, finite retry delays, and a 10-minute default total caller budget; advanced overrides are documented in `docs/OPERATIONS.md` and `.env.example`.
-
-Inspect a job:
-
-```powershell
-divapply explain https://example.com/job
-```
-
-## Exports
-
-```powershell
-divapply export jobs --out jobs.csv
-divapply export jobs --out jobs.json --format json
-```
-
-Exports include safe fields such as title, company, source site, URLs, fit score, lifecycle dates, and redacted apply errors. They do not print your full profile, resume, transcript text, or secrets.
-
-## Answer Bank
-
-Save reusable factual answers for application forms:
-
-```powershell
-divapply answers add "How many years of Python experience do you have?" "2 years."
-divapply answers list
-divapply answers match "Years using Python?"
-```
-
-Answers are local-only and must stay supported by your profile or resume.
-
 ## Coursework
 
-Optional coursework data can improve matching without exposing transcript text.
+Coursework can improve matching without exposing raw transcript text:
 
 ```powershell
 divapply import-coursework path\to\transcript.json
 divapply coursework-summary
 ```
 
-Supported formats: JSON, CSV, text, and PDF if `pypdf` is installed.
+Supported formats are JSON, CSV, text, and PDF when the coursework extra is installed. Raw transcript text stays local. Selected completed-course facts may be included in scoring or tailoring prompts sent to your configured LLM, but coursework is not automatically copied into a resume.
 
-## Safety
+## Browser Login and Auto-Apply
 
-- Real auto-apply requires confirmation.
-- Use `--dry-run` first on new sites.
-- Do not upload private files to git.
-- Review generated resumes before sending them.
-- Do not let the browser agent enter SSNs, bank info, payment details, ID uploads, or biometric verification.
-- Treat Gmail MCP opt-in as account access: enable it only when email application/verification automation is required.
-- CAPTCHA and unsupported authentication challenges stop the run instead of expanding agent permissions.
-- Browser workers use dedicated profiles only; personal or legacy unmarked Chrome profiles are never launched automatically.
+Start with one dry-run job:
 
-Privacy details: [docs/PRIVACY.md](docs/PRIVACY.md)
+```powershell
+divapply apply --dry-run --limit 1
+```
+
+Optional usernames and passwords can be stored in the permission-protected local `credentials.yaml` file. This file is not an encrypted credential vault:
+
+```powershell
+divapply credentials --username you@example.com
+```
+
+Save cookies separately in DivApply's dedicated browser profile by signing in interactively:
+
+```powershell
+divapply browser-login --url https://www.myworkday.com/
+```
+
+Then run the smallest real batch:
+
+```powershell
+divapply apply --yes --limit 1 --workers 1
+```
+
+Safety boundaries:
+
+- Real application runs require explicit confirmation.
+- Worker profiles are blank and dedicated; DivApply never clones your personal Chrome profile.
+- The apply agent receives an allowlisted browser surface, without host shell or arbitrary page-code execution.
+- CAPTCHA, unsupported authentication, and email-only flows fail closed. Gmail automation is unavailable.
+- `RESULT:APPLIED` requires matching submission-origin and visible-confirmation evidence, but remains model-reported; verify important submissions yourself.
+- Do not automate SSNs, banking details, payments, ID uploads, or biometric verification.
+
+If a site rejects Playwright's browser, set `DIVAPPLY_BROWSER=chrome` in `~/.divapply/.env`, then use the same browser for `browser-login` and `apply`.
+
+## Backups, Cleanup, and Privacy
+
+```powershell
+divapply backup
+divapply cleanup
+divapply cleanup --yes
+```
+
+Backups include profile, resume, searches, database, local config, and generated documents. Logs and secrets are excluded unless you explicitly add `--include-logs` or `--include-secrets`.
+
+`divapply cleanup` previews dashboard benchmark/performance files, `.bak` files, and non-PDF sidecars in generated-document folders. Add `--include-backups` only when you intentionally want matching `divapply-backup-*.zip` archives removed.
+
+Apply logs use user-only permissions and expire after 30 days by default. See [Privacy](docs/PRIVACY.md) for data boundaries and Git hygiene.
 
 ## Common Commands
 
@@ -307,7 +273,6 @@ divapply edit
 divapply doctor
 divapply selfcheck
 divapply run
-divapply run -w 4
 divapply credentials --username you@example.com
 divapply browser-login --url https://www.myworkday.com/
 divapply status
@@ -322,17 +287,12 @@ divapply answers list
 divapply backup
 divapply cleanup
 divapply apply --dry-run
-divapply apply --yes
 divapply migrate
 divapply prune --dry-run
 divapply sync --dry-run
 ```
 
-`divapply dashboard` opens an interactive local dashboard. Applied jobs include an Archive button so you can hide submitted applications without deleting their history. Archiving also removes generated resume and cover-letter files for that job. Use `divapply dashboard --static` when you only want to write a standalone HTML file.
-
-`divapply cleanup` previews stale local dashboard benchmark/perf HTML files and backup-style `.bak` files. Run `divapply cleanup --yes` to delete the previewed files, or add `--include-backups` when you also want old `divapply-backup-*.zip` archives removed from the local backups folder.
-
-Apply logs use private user-only files and expire after 30 days by default; set `DIVAPPLY_LOG_RETENTION_DAYS=0` to retain them. Recovery backups exclude logs and credentials by default. Add `--include-logs` and/or `--include-secrets` only when explicitly needed.
+Run `divapply --help` or `divapply COMMAND --help` for full options.
 
 ## Development
 
@@ -340,19 +300,33 @@ Apply logs use private user-only files and expire after 30 days by default; set 
 git clone https://github.com/InnitDivine/DivApply.git
 cd DivApply
 .\install.ps1 -Dev
-python --version  # expected on the maintained Windows setup: Python 3.12.13
-python -m pip install -e .
-divapply --version
-python -m divapply --version
+.\.venv\Scripts\Activate.ps1
+
 python -m pytest -q
 ruff check .
 ```
 
-Release notes: [CHANGELOG.md](CHANGELOG.md)
+On macOS or Linux:
 
-Publishing notes: [PUBLISHING.md](PUBLISHING.md)
+```bash
+./install.sh --dev
+source .venv/bin/activate
 
-Operations notes: [docs/OPERATIONS.md](docs/OPERATIONS.md)
+python -m pytest -q
+ruff check .
+```
 
-AI assistance disclosure: [docs/AI_ASSISTANCE.md](docs/AI_ASSISTANCE.md)
+## Documentation
 
+- [Privacy and factuality](docs/PRIVACY.md)
+- [Operations and recovery](docs/OPERATIONS.md)
+- [Migration notes](docs/MIGRATION.md)
+- [Security audit report](docs/AUDIT_REPORT.md)
+- [Release notes](CHANGELOG.md)
+- [Publishing](PUBLISHING.md)
+- [Contributing](CONTRIBUTING.md)
+- [AI assistance disclosure](docs/AI_ASSISTANCE.md)
+
+## License
+
+DivApply is licensed under [AGPL-3.0-only](LICENSE).
