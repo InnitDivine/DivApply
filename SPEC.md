@@ -138,6 +138,7 @@
 - V50: ∀ local publish with private profile → tracked tree + wheel + sdist exact-collision count `0` for candidate/reference identity, location, employment, education, employer values; diagnostics ⊥ raw private values.
 - V51: ∀ unit test crossing DB-backed orchestration → explicit initialized temp DB or mocked DB boundary; ⊥ default/user DB state.
 - V52: ∀ cross-platform test → optional OS capability checked before use; unsupported symlink metadata operation cannot suppress portable core assertions or leak test artifacts.
+- V53: ∀ tag release → `GITHUB_SHA` = fetched `origin/main` tip; stale ancestor tag ⊥ publish.
 
 ## §T
 
@@ -174,6 +175,7 @@
 |T29|retire contaminated distribution line + reserve clean `0.5.0`|version parity/retired-version test + PyPI/GitHub removal verification; V49|~|
 |T30|add redacted tree/distribution private-value preflight|synthetic tree+wheel test + live private-profile scan; V50|x|
 |T31|make launcher DB + symlink-retention regressions hermetic on Linux/Windows|focused launcher/maintenance tests + full OS matrix; V51,V52|x|
+|T32|require tag release = current `main` tip|`test_v53_release_requires_exact_main_tip`; V53|x|
 
 ## §B
 
@@ -281,3 +283,4 @@
 |B100|pristine CI launcher test errors `no such table: jobs`|test patched app paths but implicitly opened default DB; local private DB masked missing fixture|V51|T31|initialize + inject temp DB; focused/full matrix|
 |B101|Windows retention test raises `NotImplementedError` before assertions|test assumes no-follow symlink `utime` exists; Windows lacks capability|V52|T31|capability-safe optional symlink fixture cleanup; focused/full matrix|
 |B102|artifact-collision integration test silently opens user DB|mocked guard hid eager default `get_connection()` evaluation|V51|T31|inject fixture DB + exercise real collision guard before staging|
+|B103|tag release accepts stale `main` ancestor|guard checks ancestry, not exact current tip|V53|T32|`test_v53_release_requires_exact_main_tip`|

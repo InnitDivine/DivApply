@@ -6,13 +6,13 @@ Audit date: 2026-07-12
 
 The current tree has no open Critical code or current-tree privacy finding. The end-to-end career pipeline now fails closed at strict document gates, uses canonical transcript facts, keeps private runtime data outside Git, and has parity between pending-work counts and worker eligibility.
 
-GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutable legacy branches, tags, releases, Actions artifacts, deployments, and caches were removed or regenerated from that clean root. Two external privacy-response actions remain: permanently delete PyPI releases `0.4.2` through `0.4.8` through the owner UI, and have GitHub Support dereference closed pull-request refs `#2` through `#6` and garbage-collect cached objects. No `0.5.0` package release should be published until both are closed.
+GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutable legacy branches, tags, releases, Actions artifacts, deployments, and caches were removed or regenerated from that clean root. PyPI releases `0.4.2` through `0.4.8` were permanently deleted. GitHub Support ticket `#4557836` remains open to dereference closed pull-request refs `#2` through `#6`, garbage-collect the old objects, and clear cached views. A verified `0.5.0` release may publish from the parentless clean root without restoring those legacy objects; the privacy incident remains open until GitHub Support confirms its server-side purge.
 
 ## Findings and remediation
 
 ### Critical
 
-- Applicant/reference data and rendered application artifacts could enter the public tree and legacy distributions. Fixtures are anonymized, runtime paths are ignored, CI rejects recognized private artifacts, distribution preflight scans private identity/location/employment/education values, and GitHub now has a clean single-root baseline. PyPI deletion and GitHub-managed closed-PR refs remain external incident-response actions.
+- Applicant/reference data and rendered application artifacts could enter the public tree and legacy distributions. Fixtures are anonymized, runtime paths are ignored, CI rejects recognized private artifacts, distribution preflight scans private identity/location/employment/education values, and GitHub now has a clean single-root baseline. Retired PyPI distributions are deleted; GitHub-managed closed-PR refs remain an external incident-response action under ticket `#4557836`.
 - Strict résumé and cover validation could promote exhausted or judge-rejected drafts. Strict mode now preserves private review evidence, leaves database artifact paths empty, and promotes only validated documents.
 
 ### High
@@ -63,7 +63,7 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutabl
 
 ## Security recommendations
 
-1. Permanently delete contaminated PyPI versions `0.4.2` through `0.4.8`; ask GitHub Support to remove closed PR refs `#2` through `#6`, garbage-collect storage, and clear cached views. Preserve the restricted evidence bundles until incident closure.
+1. Keep retired PyPI versions `0.4.2` through `0.4.8` deleted; track GitHub Support ticket `#4557836` until closed PR refs `#2` through `#6` are removed, storage is garbage-collected, and cached views are cleared. Preserve the restricted evidence bundles until incident closure.
 2. Keep private profile, résumé, search, answer, credential, transcript, database, logs, browser profiles, backups, and generated documents outside the repository.
 3. Treat the Playwright origin guard as defense in depth; continue denying arbitrary code/evaluate tools and minimize applicant data included in agent prompts.
 4. Require successful CI, Python/npm audits, SBOM generation, checksums, and attestations before any tag publication.

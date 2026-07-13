@@ -21,7 +21,7 @@ CI runs on pull requests, pushes to `main`, and manual dispatch. It verifies:
 
 CI and release verification/build jobs use read-only repository permissions and disable persisted checkout credentials. Release builds once, uploads the verified distribution, then artifact-only promotion jobs separate PyPI `id-token: write` from GitHub Release `contents: write`; neither privileged job checks out or executes repository build code. Jobs have timeouts so hung tests, builds, audits, or Docker commands do not block the pipeline indefinitely.
 
-Publishing runs only on `v*` tags. Tag releases are blocked when the tagged commit is not already reachable from `main`, or when the tag version does not match `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`. The release workflow runs a pre-publish lint/test gate, builds once under read-only permissions, emits a locked CycloneDX 1.5 SBOM and SHA256 manifest, attests those checksum subjects in a no-checkout job, and promotes the same verified package files to PyPI and a matching GitHub Release.
+Publishing runs only on `v*` tags. Tag releases are blocked when the tagged commit is not the current `main` tip, or when the tag version does not match `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`. The release workflow runs a pre-publish lint/test gate, builds once under read-only permissions, emits a locked CycloneDX 1.5 SBOM and SHA256 manifest, attests those checksum subjects in a no-checkout job, and promotes the same verified package files to PyPI and a matching GitHub Release.
 
 Dependabot opens weekly PRs for GitHub Actions, Python packaging, the bundled npm lock, and Docker image digests so CI/CD drift is visible before a release window.
 
@@ -63,9 +63,9 @@ For PyPI releases:
 4. Add the same version section to `CHANGELOG.md`.
 5. Commit the version change.
 6. Merge or fast-forward the release commit onto `main`.
-7. Tag the `main` commit with the same version, for example `git tag v0.4.6`.
+7. Tag the `main` commit with the same version, for example `git tag v0.5.0`.
 8. Push `main`, then push the tag.
-9. Verify the GitHub `Release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
+9. Verify the GitHub `Publish release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
 
 Clean install smoke test:
 

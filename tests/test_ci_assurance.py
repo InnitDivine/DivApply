@@ -101,6 +101,13 @@ def test_v49_release_version_is_consistent_and_not_retired() -> None:
     assert "tag_version != pyproject_version or tag_version != init_version" in publish
 
 
+def test_v53_release_requires_exact_main_tip() -> None:
+    publish = _workflow_text("publish.yml")
+
+    assert 'test "$GITHUB_SHA" = "$(git rev-parse origin/main)"' in publish
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" origin/main' not in publish
+
+
 def _workflow_text(name: str) -> str:
     return (WORKFLOW_DIR / name).read_text(encoding="utf-8")
 
