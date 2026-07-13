@@ -1,0 +1,12 @@
+{
+  "name": "divapply-mcp-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Integrity-locked MCP dependencies for DivApply",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@playwright/mcp": "0.0.78"
+  }
+}

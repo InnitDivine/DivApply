@@ -1,0 +1,80 @@
+# User data (NEVER commit)
+.divapply/
+.applypilot/
+profile.json
+resume.txt
+resume.pdf
+answers.yaml
+credentials.yaml
+*.env
+.env.*
+!.env.example
+coursework/
+transcripts/
+backups/
+# Local search config can carry personal targeting rules; the example
+# version (src/divapply/config/searches.example.yaml) stays tracked.
+/searches.yaml
+searches.local.yaml
+
+# Runtime artifacts
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+divapply.db*
+applypilot.db*
+tailored_resumes/
+cover_letters/
+chrome-workers/
+apply-workers/
+apply_logs/
+logs/
+*.log
+screenshots/
+social_screenshots/
+/qa-renders/
+/tmp/
+.mcp-apply-*.json
+.venv/
+.vendor/
+academic_progress.txt
+tmcc_transcript.txt
+unr_transcript.txt
+base_import_test.txt
+base_py_test.txt
+module_check.json
+pipeline_result.json
+test_pipeline.py
+
+# MCP configs (per-machine)
+.mcp*.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.coverage
+coverage.xml
+.mypy_cache/
+.pytest_cache/
+node_modules/
+dist/
+release/
+build/
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Claude Code
+.claude/

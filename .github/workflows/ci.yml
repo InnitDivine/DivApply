@@ -1,0 +1,244 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+    tags-ignore: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up uv and Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          python-version: ${{ matrix.python-version }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Validate lockfile
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Test
+        run: uv run pytest -q
+
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up locked quality toolchain
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Validate lockfile
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev --extra full
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check Linux paths
+        run: uv run mypy --platform linux src/divapply
+
+      - name: Type check Windows paths
+        run: uv run mypy --platform win32 src/divapply
+
+      - name: Test with branch coverage
+        run: uv run coverage run -m pytest -q
+
+      - name: Enforce branch coverage
+        run: uv run coverage report
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up locked Windows toolchain
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Validate lockfile
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev --extra full
+
+      - name: Test native Windows paths
+        run: uv run pytest -q
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check Windows paths
+        run: uv run mypy --platform win32 src/divapply
+
+      - name: Smoke test Windows launcher
+        shell: pwsh
+        run: |
+          $env:PATH = "$(Resolve-Path .venv\Scripts);$env:PATH"
+          .\scripts\divapply.cmd --version
+
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up locked Node.js runtime
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: "24.18.0"
+          package-manager-cache: false
+
+      - name: Set up locked audit toolchain
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Validate lockfile
+        run: uv lock --check
+
+      - name: Install locked dependencies
+        run: uv sync --locked --extra dev --extra full
+
+      - name: Audit Python dependencies
+        run: uv run pip-audit --progress-spinner off
+
+      - name: Install and audit locked MCP dependencies
+        working-directory: src/divapply/mcp_runtime_assets
+        run: |
+          npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+          npm audit --omit=dev --audit-level=high
+
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test, quality, windows, dependency-audit]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up locked build toolchain
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Validate lockfile
+        run: uv lock --check
+
+      - name: Install locked build dependencies
+        run: uv sync --locked --extra dev
+
+      - name: Build package
+        run: |
+          uv run python -m build --no-isolation
+          uv run python -m twine check dist/*
+
+      - name: Smoke test wheel install
+        run: |
+          python -m venv .venv-smoke
+          . .venv-smoke/bin/activate
+          python -m pip install --upgrade pip
+          WHEEL="$(ls dist/*.whl)"
+          python -m pip install "$WHEEL"
+          divapply --version
+          python -m divapply --version
+          divapply selfcheck
+          python -m pip uninstall -y divapply
+          python -m pip install "$WHEEL[full]"
+          # Upstream python-jobspy 1.1.82 pins vulnerable markdownify<0.14.0.
+          # DivApply installs the secure runtime floor first, then JobSpy itself
+          # without transitive deps until upstream relaxes that pin.
+          python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
+          python -c "import jobspy"
+          divapply --version
+          python -m divapply --version
+          divapply selfcheck
+
+      - name: Upload distribution artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: python-dist
+          path: dist/*
+          if-no-files-found: error
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test, quality, windows, dependency-audit]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Build image
+        run: docker build -t divapply:ci .
+
+      - name: Smoke test image
+        run: |
+          docker run --rm divapply:ci --version
+          docker run --rm divapply:ci selfcheck

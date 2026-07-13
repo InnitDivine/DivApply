@@ -1,0 +1,679 @@
+"""DivApply Pipeline Orchestrator.
+
+Runs pipeline stages in sequence or concurrently (streaming mode).
+
+Usage (via CLI):
+    DivApply run                        # all stages, sequential
+    DivApply run --stream               # all stages, concurrent
+    DivApply run discover enrich        # specific stages
+    DivApply run score tailor cover     # LLM-only stages
+    DivApply run --dry-run              # preview without executing
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+
+from divapply.config import load_env, ensure_dirs
+from divapply.database import count_jobs_by_stage, get_connection, get_stats, init_db
+
+log = logging.getLogger(__name__)
+console = Console()
+
+
+# ---------------------------------------------------------------------------
+# Individual stage runners
+# ---------------------------------------------------------------------------
+
+
+def _run_discover(workers: int = 4) -> dict:
+    """Stage: Job discovery - JobSpy, Workday, and smart-extract scrapers."""
+    stats: dict = {"jobspy": None, "workday": None, "smartextract": None}
+
+    # JobSpy
+    console.print(f"  [cyan]JobSpy full crawl (workers={workers})...[/cyan]")
+    try:
+        from divapply.discovery.jobspy import run_discovery
+
+        result = run_discovery(workers=workers)
+        stats["jobspy"] = "ok"
+        if result.get("board_stats"):
+            stats["jobspy_board_stats"] = result["board_stats"]
+            for site, board in result["board_stats"].items():
+                console.print(
+                    "    "
+                    f"[dim]{site}: {board['seconds']:.2f}s, "
+                    f"{board['total']} raw, {board['new']} new, "
+                    f"{board['existing']} dupes, {board['errors']} errors[/dim]"
+                )
+    except Exception as e:
+        log.exception("JobSpy crawl failed")
+        console.print(f"  [red]JobSpy error:[/red] {e}")
+        stats["jobspy"] = f"error: {e}"
+
+    # Workday corporate scraper
+    console.print("  [cyan]Workday corporate scraper...[/cyan]")
+    try:
+        from divapply.discovery.workday import run_workday_discovery
+
+        result = run_workday_discovery(workers=workers)
+        stats["workday"] = result.get("status", "ok")
+    except Exception as e:
+        log.exception("Workday scraper failed")
+        console.print(f"  [red]Workday error:[/red] {e}")
+        stats["workday"] = f"error: {e}"
+
+    # Smart extract
+    console.print("  [cyan]Smart extract (AI-powered scraping)...[/cyan]")
+    try:
+        from divapply.discovery.smartextract import run_smart_extract
+
+        run_smart_extract(workers=workers)
+        stats["smartextract"] = "ok"
+    except Exception as e:
+        log.exception("Smart extract failed")
+        console.print(f"  [red]Smart extract error:[/red] {e}")
+        stats["smartextract"] = f"error: {e}"
+
+    return stats
+
+
+def _run_enrich(workers: int = 1) -> dict:
+    """Stage: Detail enrichment - scrape full descriptions and apply URLs."""
+    try:
+        from divapply.enrichment.detail import run_enrichment
+
+        result = run_enrichment(workers=workers)
+        errors = int(result.get("error", 0))
+        successes = int(result.get("ok", 0)) + int(result.get("partial", 0))
+        if errors and not successes:
+            status = f"error: {errors} enrichment item(s) failed"
+        elif errors:
+            status = "partial"
+        else:
+            status = "ok"
+        return {**result, "status": status}
+    except Exception as e:
+        log.exception("Enrichment failed")
+        return {"status": f"error: {e}"}
+
+
+def _run_score(prune_below: int = 0) -> dict:
+    """Stage: hybrid scoring -- assign calibrated fit scores 1-10."""
+    try:
+        from divapply.scoring.scorer import run_scoring
+
+        result = run_scoring(prune_below=prune_below)
+        if result.get("pruned"):
+            log.info("Pruned %d low-score jobs after scoring", result["pruned"])
+        errors = int(result.get("errors", 0))
+        scored = int(result.get("scored", 0))
+        if errors and not scored:
+            status = f"error: {errors} scoring item(s) failed"
+        elif errors:
+            status = "partial"
+        else:
+            status = "ok"
+        return {**result, "status": status}
+    except Exception as e:
+        log.exception("Scoring failed")
+        return {"status": f"error: {e}"}
+
+
+def _run_tailor(min_score: int = 7, validation_mode: str = "normal") -> dict:
+    """Stage: Resume tailoring - generate tailored resumes for high-fit jobs."""
+    try:
+        from divapply.scoring.tailor import run_tailoring
+
+        result = run_tailoring(min_score=min_score, validation_mode=validation_mode, limit=0)
+        approved = int(result.get("approved", 0))
+        failed = int(result.get("failed", 0)) + int(result.get("errors", 0))
+        if failed and not approved:
+            status = f"error: {failed} resume(s) failed"
+        elif failed:
+            status = "partial"
+        else:
+            status = "ok"
+        return {**result, "status": status}
+    except Exception as e:
+        log.exception("Tailoring failed")
+        return {"status": f"error: {e}"}
+
+
+def _run_cover(min_score: int = 7, validation_mode: str = "normal") -> dict:
+    """Stage: Cover letter generation."""
+    try:
+        from divapply.scoring.cover_letter import run_cover_letters
+
+        result = run_cover_letters(min_score=min_score, validation_mode=validation_mode)
+        generated = int(result.get("generated", 0))
+        errors = int(result.get("errors", 0))
+        if errors and not generated:
+            status = f"error: {errors} cover letter(s) failed"
+        elif errors:
+            status = "partial"
+        else:
+            status = "ok"
+        return {**result, "status": status}
+    except Exception as e:
+        log.exception("Cover letter generation failed")
+        return {"status": f"error: {e}"}
+
+
+def _run_pdf() -> dict:
+    """Stage: PDF conversion - convert tailored resumes and cover letters to PDF."""
+    try:
+        from divapply.scoring.pdf import batch_convert
+
+        batch_convert()
+        return {"status": "ok"}
+    except Exception as e:
+        log.exception("PDF conversion failed")
+        return {"status": f"error: {e}"}
+
+
+# ---------------------------------------------------------------------------
+# Stage registry
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class StageSpec:
+    """Declarative execution metadata for one pipeline stage."""
+
+    name: str
+    desc: str
+    runner: Callable[..., dict]
+    upstream: str | None = None
+    accepts_workers: bool = False
+    accepts_min_score: bool = False
+    accepts_validation: bool = False
+    accepts_prune_below: bool = False
+
+    def kwargs(self, *, min_score: int, workers: int, validation_mode: str, prune_below: int) -> dict:
+        """Build runner kwargs from shared pipeline options."""
+        kwargs: dict = {}
+        if self.accepts_workers:
+            kwargs["workers"] = workers
+        if self.accepts_min_score:
+            kwargs["min_score"] = min_score
+        if self.accepts_validation:
+            kwargs["validation_mode"] = validation_mode
+        if self.accepts_prune_below and prune_below > 0:
+            kwargs["prune_below"] = prune_below
+        return kwargs
+
+    def status_from(self, result: dict | None) -> str:
+        """Normalize a runner result into an orchestrator status."""
+        if not isinstance(result, dict):
+            return "ok"
+        status = result.get("status", "ok")
+        if self.name == "discover":
+            sub_errors = [
+                f"{key}: {value}"
+                for key, value in result.items()
+                if isinstance(value, str) and value.startswith("error")
+            ]
+            if sub_errors:
+                return "partial"
+        return status
+
+
+STAGE_SPECS: dict[str, StageSpec] = {
+    "discover": StageSpec(
+        name="discover",
+        desc="Job discovery (JobSpy + Workday + smart extract)",
+        runner=_run_discover,
+        accepts_workers=True,
+    ),
+    "enrich": StageSpec(
+        name="enrich",
+        desc="Detail enrichment (full descriptions + apply URLs)",
+        runner=_run_enrich,
+        upstream="discover",
+        accepts_workers=True,
+    ),
+    "score": StageSpec(
+        name="score",
+        desc="Hybrid scoring (keyword + embedding + LLM)",
+        runner=_run_score,
+        upstream="enrich",
+        accepts_prune_below=True,
+    ),
+    "tailor": StageSpec(
+        name="tailor",
+        desc="Resume tailoring (LLM + validation)",
+        runner=_run_tailor,
+        upstream="score",
+        accepts_min_score=True,
+        accepts_validation=True,
+    ),
+    "cover": StageSpec(
+        name="cover",
+        desc="Cover letter generation",
+        runner=_run_cover,
+        upstream="tailor",
+        accepts_min_score=True,
+        accepts_validation=True,
+    ),
+    "pdf": StageSpec(
+        name="pdf",
+        desc="PDF conversion (tailored resumes + cover letters)",
+        runner=_run_pdf,
+        upstream="cover",
+    ),
+}
+
+STAGE_ORDER = tuple(STAGE_SPECS)
+STAGE_META: dict[str, dict] = {name: {"desc": spec.desc} for name, spec in STAGE_SPECS.items()}
+
+
+# ---------------------------------------------------------------------------
+# Stage resolution
+# ---------------------------------------------------------------------------
+
+
+def _resolve_stages(stage_names: list[str]) -> list[str]:
+    """Resolve 'all' and validate/order stage names."""
+    if "all" in stage_names:
+        return list(STAGE_ORDER)
+
+    resolved = []
+    for name in stage_names:
+        if name not in STAGE_META:
+            console.print(f"[red]Unknown stage:[/red] '{name}'. Available: {', '.join(STAGE_ORDER)}, all")
+            raise SystemExit(1)
+        if name not in resolved:
+            resolved.append(name)
+
+    # Maintain canonical order
+    return [s for s in STAGE_ORDER if s in resolved]
+
+
+# ---------------------------------------------------------------------------
+# Streaming pipeline helpers
+# ---------------------------------------------------------------------------
+
+
+class _StageTracker:
+    """Thread-safe tracker for which stages have finished producing work."""
+
+    def __init__(self):
+        self._events: dict[str, threading.Event] = {stage: threading.Event() for stage in STAGE_ORDER}
+        self._results: dict[str, dict] = {}
+        self._lock = threading.Lock()
+
+    def mark_done(self, stage: str, result: dict | None = None) -> None:
+        with self._lock:
+            self._results[stage] = result or {"status": "ok"}
+        self._events[stage].set()
+
+    def is_done(self, stage: str) -> bool:
+        return self._events[stage].is_set()
+
+    def wait(self, stage: str, timeout: float | None = None) -> bool:
+        return self._events[stage].wait(timeout=timeout)
+
+    def get_results(self) -> dict[str, dict]:
+        with self._lock:
+            return dict(self._results)
+
+
+# How long to sleep between polling loops in streaming mode (seconds)
+_STREAM_POLL_INTERVAL = 10
+
+
+def _count_pending(stage: str, min_score: int = 7) -> int:
+    """Count pending work items for a stage."""
+    conn = get_connection()
+    if stage == "enrich":
+        from divapply.enrichment.detail import SKIP_DETAIL_SITES
+
+        placeholders = ",".join("?" for _ in SKIP_DETAIL_SITES)
+        return int(
+            conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE detail_scraped_at IS NULL "
+                f"AND archived_at IS NULL AND site NOT IN ({placeholders})",
+                tuple(SKIP_DETAIL_SITES),
+            ).fetchone()[0]
+        )
+    if stage == "pdf":
+        rows = conn.execute(
+            "SELECT tailored_resume_path FROM jobs WHERE tailored_resume_path LIKE '%.txt' AND archived_at IS NULL"
+        ).fetchall()
+        return sum(1 for row in rows if not Path(str(row[0])).with_suffix(".pdf").exists())
+    database_stage = {
+        "score": "pending_score",
+        "tailor": "pending_tailor",
+        "cover": "pending_cover",
+    }.get(stage)
+    if database_stage is None:
+        return 0
+    return count_jobs_by_stage(
+        conn=conn,
+        stage=database_stage,
+        min_score=min_score,
+    )
+
+
+def _run_stage_streaming(
+    stage: str,
+    tracker: _StageTracker,
+    stop_event: threading.Event,
+    min_score: int = 7,
+    workers: int = 1,
+    validation_mode: str = "normal",
+    prune_below: int = 0,
+) -> None:
+    """Run a single stage in streaming mode: loop until upstream done + no work.
+
+    For discover: runs once, then marks done.
+    For all others: polls DB for pending work, runs the batch processor,
+    and repeats until upstream is done and no pending work remains.
+    """
+    spec = STAGE_SPECS[stage]
+    kwargs = spec.kwargs(
+        min_score=min_score,
+        workers=workers,
+        validation_mode=validation_mode,
+        prune_below=prune_below,
+    )
+    upstream = spec.upstream
+
+    if stage == "discover":
+        # Discover runs once (its sub-scrapers already do their full crawl)
+        try:
+            result = spec.runner(**kwargs)
+            tracker.mark_done(stage, {"status": spec.status_from(result), "result": result})
+        except Exception as e:
+            log.exception("Stage '%s' crashed", stage)
+            tracker.mark_done(stage, {"status": f"error: {e}"})
+        return
+
+    # For downstream stages: loop until upstream done + no pending work
+    passes = 0
+    final_status = "ok"
+    stagnant_passes = 0
+    while not stop_event.is_set():
+        # Wait for upstream to start producing work (first pass only)
+        if passes == 0 and upstream and not tracker.is_done(upstream):
+            # Wait a bit for upstream to produce some work before first run
+            tracker.wait(upstream, timeout=_STREAM_POLL_INTERVAL)
+
+        pending = _count_pending(stage, min_score)
+
+        if pending > 0:
+            try:
+                result = spec.runner(**kwargs)
+                passes += 1
+                status = spec.status_from(result)
+                if status == "partial":
+                    final_status = "partial"
+                if status not in ("ok", "partial", "skipped"):
+                    tracker.mark_done(stage, {"status": status, "passes": passes, "result": result})
+                    return
+                remaining = _count_pending(stage, min_score)
+                upstream_done = upstream is None or tracker.is_done(upstream)
+                if remaining >= pending:
+                    stagnant_passes += 1
+                    if upstream_done and stagnant_passes >= 2:
+                        tracker.mark_done(
+                            stage,
+                            {
+                                "status": "partial",
+                                "passes": passes,
+                                "result": result,
+                                "reason": "no progress",
+                            },
+                        )
+                        return
+                    if stop_event.wait(timeout=_STREAM_POLL_INTERVAL):
+                        break
+                else:
+                    stagnant_passes = 0
+            except Exception as e:
+                log.exception("Stage '%s' error (pass %d)", stage, passes)
+                passes += 1
+                tracker.mark_done(stage, {"status": f"error: {e}", "passes": passes})
+                return
+        else:
+            # No work right now
+            upstream_done = upstream is None or tracker.is_done(upstream)
+            if upstream_done:
+                # No work and upstream is done - this stage is finished
+                break
+            # Upstream still running, wait and retry
+            if stop_event.wait(timeout=_STREAM_POLL_INTERVAL):
+                break  # Stop requested
+
+    tracker.mark_done(stage, {"status": final_status, "passes": passes})
+
+
+# ---------------------------------------------------------------------------
+# Pipeline orchestrators
+# ---------------------------------------------------------------------------
+
+
+def _run_sequential(
+    ordered: list[str], min_score: int, workers: int = 1, validation_mode: str = "normal", prune_below: int = 0
+) -> dict:
+    """Execute stages one at a time (original behavior)."""
+    results: list[dict] = []
+    errors: dict[str, str] = {}
+    pipeline_start = time.time()
+
+    for name in ordered:
+        meta = STAGE_META[name]
+        console.print(f"\n{'=' * 70}")
+        console.print(f"  [bold]STAGE: {name}[/bold] - {meta['desc']}")
+        console.print(f"  Started: {datetime.now().strftime('%H:%M:%S')}")
+        console.print(f"{'=' * 70}")
+
+        t0 = time.time()
+        spec = STAGE_SPECS[name]
+
+        try:
+            result = spec.runner(
+                **spec.kwargs(
+                    min_score=min_score,
+                    workers=workers,
+                    validation_mode=validation_mode,
+                    prune_below=prune_below,
+                )
+            )
+            elapsed = time.time() - t0
+            status = spec.status_from(result)
+
+        except Exception as e:
+            elapsed = time.time() - t0
+            status = f"error: {e}"
+            log.exception("Stage '%s' crashed", name)
+            console.print(f"\n  [red]STAGE FAILED:[/red] {e}")
+
+        results.append({"stage": name, "status": status, "elapsed": elapsed})
+        if status not in ("ok", "partial"):
+            errors[name] = status
+
+        console.print(f"\n  Stage '{name}' completed in {elapsed:.1f}s - {status}")
+
+    total_elapsed = time.time() - pipeline_start
+    return {"stages": results, "errors": errors, "elapsed": total_elapsed}
+
+
+def _run_streaming(
+    ordered: list[str], min_score: int, workers: int = 1, validation_mode: str = "normal", prune_below: int = 0
+) -> dict:
+    """Execute stages concurrently with DB as conveyor belt."""
+    tracker = _StageTracker()
+    stop_event = threading.Event()
+    pipeline_start = time.time()
+
+    console.print("\n  [bold cyan]STREAMING MODE[/bold cyan] - stages run concurrently")
+    console.print(f"  Poll interval: {_STREAM_POLL_INTERVAL}s\n")
+
+    # Mark stages NOT in `ordered` as done so downstream doesn't wait for them
+    for stage in STAGE_ORDER:
+        if stage not in ordered:
+            tracker.mark_done(stage, {"status": "skipped"})
+
+    # Launch each stage in its own thread
+    threads: dict[str, threading.Thread] = {}
+    start_times: dict[str, float] = {}
+
+    for name in ordered:
+        start_times[name] = time.time()
+        t = threading.Thread(
+            target=_run_stage_streaming,
+            args=(name, tracker, stop_event, min_score, workers, validation_mode, prune_below),
+            name=f"stage-{name}",
+            daemon=True,
+        )
+        threads[name] = t
+        t.start()
+        console.print(f"  [dim]Started thread:[/dim] {name}")
+
+    # Wait for all threads to finish
+    try:
+        for name in ordered:
+            threads[name].join()
+            elapsed = time.time() - start_times[name]
+            console.print(f"  [green]Completed:[/green] {name} ({elapsed:.1f}s)")
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Interrupted - stopping stages...[/yellow]")
+        stop_event.set()
+        for t in threads.values():
+            t.join(timeout=10)
+
+    total_elapsed = time.time() - pipeline_start
+
+    # Build results from tracker
+    all_results = tracker.get_results()
+    results: list[dict] = []
+    errors: dict[str, str] = {}
+
+    for name in ordered:
+        r = all_results.get(name, {"status": "unknown"})
+        elapsed = time.time() - start_times.get(name, pipeline_start)
+        status = r.get("status", "ok")
+
+        results.append({"stage": name, "status": status, "elapsed": elapsed})
+        if status not in ("ok", "partial", "skipped"):
+            errors[name] = status
+
+    return {"stages": results, "errors": errors, "elapsed": total_elapsed}
+
+
+def run_pipeline(
+    stages: list[str] | None = None,
+    min_score: int = 7,
+    dry_run: bool = False,
+    stream: bool = False,
+    workers: int = 1,
+    validation_mode: str = "normal",
+    prune_below: int = 0,
+) -> dict:
+    """Run pipeline stages.
+
+    Args:
+        stages: List of stage names, or None / ["all"] for full pipeline.
+        min_score: Minimum fit score for tailor/cover stages.
+        dry_run: If True, preview stages without executing.
+        stream: If True, run stages concurrently (streaming mode).
+        workers: Number of parallel threads for discovery/enrichment stages.
+        prune_below: If > 0, auto-delete jobs scored at or below this threshold after scoring.
+
+    Returns:
+        Dict with keys: stages (list of result dicts), errors (dict), elapsed (float).
+    """
+    # Bootstrap
+    load_env()
+    ensure_dirs()
+    init_db()
+
+    # Resolve stages
+    if stages is None:
+        stages = ["all"]
+    ordered = _resolve_stages(stages)
+
+    # Banner
+    mode = "streaming" if stream else "sequential"
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[bold]DivApply Pipeline[/bold] ({mode})",
+            border_style="blue",
+        )
+    )
+    console.print(f"  Min score:  {min_score}")
+    console.print(f"  Workers:    {workers}")
+    console.print(f"  Validation: {validation_mode}")
+    console.print(f"  Prune <=:   {prune_below if prune_below > 0 else 'off'}")
+    console.print(f"  Stages:     {' -> '.join(ordered)}")
+
+    # Pre-run stats
+    pre_stats = get_stats()
+    console.print(f"  DB:        {pre_stats['total']} jobs, {pre_stats['pending_detail']} pending enrichment")
+
+    if dry_run:
+        console.print(f"\n  [yellow]DRY RUN[/yellow] - would execute ({mode}):")
+        for name in ordered:
+            meta = STAGE_META[name]
+            console.print(f"    {name:<12s}  {meta['desc']}")
+        console.print("\n  No changes made.")
+        return {"stages": [], "errors": {}, "elapsed": 0.0}
+
+    # Execute
+    if stream:
+        result = _run_streaming(
+            ordered, min_score, workers=workers, validation_mode=validation_mode, prune_below=prune_below
+        )
+    else:
+        result = _run_sequential(
+            ordered, min_score, workers=workers, validation_mode=validation_mode, prune_below=prune_below
+        )
+
+    # Summary table
+    console.print(f"\n{'=' * 70}")
+    summary = Table(title="Pipeline Summary", show_header=True, header_style="bold")
+    summary.add_column("Stage", style="bold")
+    summary.add_column("Status")
+    summary.add_column("Time", justify="right")
+
+    for r in result["stages"]:
+        elapsed_str = f"{r['elapsed']:.1f}s"
+        status_display = r["status"][:30]
+        if r["status"] == "ok":
+            style = "green"
+        elif r["status"] in ("partial", "skipped"):
+            style = "yellow"
+        else:
+            style = "red"
+        summary.add_row(r["stage"], f"[{style}]{status_display}[/{style}]", elapsed_str)
+
+    summary.add_row("", "", "")
+    summary.add_row("[bold]Total[/bold]", "", f"[bold]{result['elapsed']:.1f}s[/bold]")
+    console.print(summary)
+
+    # Final DB stats
+    final = get_stats()
+    console.print("\n  [bold]DB Final State:[/bold]")
+    console.print(f"    Total jobs:     {final['total']}")
+    console.print(f"    With desc:      {final['with_description']}")
+    console.print(f"    Scored:         {final['scored']}")
+    console.print(f"    Tailored:       {final['tailored']}")
+    console.print(f"    Cover letters:  {final['with_cover_letter']}")
+    console.print(f"    Ready to apply: {final['ready_to_apply']}")
+    console.print(f"    Applied:        {final['applied']}")
+    console.print(f"{'=' * 70}\n")
+
+    return result

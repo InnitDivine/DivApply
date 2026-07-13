@@ -1,0 +1,829 @@
+"""DivApply configuration: paths, platform detection, user data."""
+
+import copy
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+# User data directory - all user-specific files live here.
+#
+# New installs default to ~/.divapply, but we still read legacy ~/.applypilot
+# files so existing users can migrate without losing data.
+APP_DIR = Path(os.environ.get("DIVAPPLY_DIR", os.environ.get("APPLYPILOT_DIR", Path.home() / ".divapply")))
+LEGACY_APP_DIR = Path(os.environ.get("APPLYPILOT_DIR", Path.home() / ".applypilot"))
+
+# Core paths
+DB_PATH = APP_DIR / "divapply.db"
+PROFILE_PATH = APP_DIR / "profile.json"
+RESUME_PATH = APP_DIR / "resume.txt"
+RESUME_PDF_PATH = APP_DIR / "resume.pdf"
+SEARCH_CONFIG_PATH = APP_DIR / "searches.yaml"
+ENV_PATH = APP_DIR / ".env"
+ANSWERS_PATH = APP_DIR / "answers.yaml"
+CREDENTIALS_PATH = APP_DIR / "credentials.yaml"
+LEGACY_DB_PATH = LEGACY_APP_DIR / "applypilot.db"
+LEGACY_PROFILE_PATH = LEGACY_APP_DIR / "profile.json"
+LEGACY_SEARCH_CONFIG_PATH = LEGACY_APP_DIR / "searches.yaml"
+LEGACY_ENV_PATH = LEGACY_APP_DIR / ".env"
+
+# Generated output
+TAILORED_DIR = APP_DIR / "tailored_resumes"
+COVER_LETTER_DIR = APP_DIR / "cover_letters"
+LOG_DIR = APP_DIR / "logs"
+
+# Chrome worker isolation
+CHROME_WORKER_DIR = APP_DIR / "chrome-workers"
+APPLY_WORKER_DIR = APP_DIR / "apply-workers"
+
+# Package-shipped config (YAML registries)
+PACKAGE_DIR = Path(__file__).parent
+CONFIG_DIR = PACKAGE_DIR / "config"
+USER_CONFIG_DIR = APP_DIR / "config"
+
+_YAML_CACHE: dict[Path, tuple[int, int, dict[str, Any]]] = {}
+_PRIVATE_USER_FILENAMES = (
+    "profile.json",
+    "resume.txt",
+    "resume.pdf",
+    "searches.yaml",
+    "answers.yaml",
+    "credentials.yaml",
+    ".env",
+    "divapply.db",
+    "divapply.db-wal",
+    "divapply.db-shm",
+)
+
+
+def _protect_private_user_root(root: Path) -> None:
+    """Harden recognized sensitive files without locking nested workspaces."""
+    from divapply.security import protect_file
+
+    for name in _PRIVATE_USER_FILENAMES:
+        path = root / name
+        if path.exists():
+            protect_file(path, strict=True)
+
+
+def resolve_config_file(name: str) -> Path:
+    """Return user-overridden config file if present, otherwise package default."""
+    user_path = USER_CONFIG_DIR / name
+    if user_path.exists():
+        from divapply.security import protect_file
+
+        protect_file(user_path, strict=True)
+        return user_path
+    return CONFIG_DIR / name
+
+
+def ensure_dirs() -> None:
+    """Create all required directories."""
+    for directory in [APP_DIR, TAILORED_DIR, COVER_LETTER_DIR, LOG_DIR, CHROME_WORKER_DIR, APPLY_WORKER_DIR]:
+        directory.mkdir(parents=True, exist_ok=True)
+
+
+def job_matches_application_address(job: dict, address: dict) -> bool:
+    """Return whether a job location matches a profile-defined alternate address."""
+    location = str(job.get("location") or "").casefold()
+    configured_patterns = address.get("match_patterns") or address.get("match_locations") or []
+    if isinstance(configured_patterns, str):
+        configured_patterns = [configured_patterns]
+    if isinstance(configured_patterns, list) and any(
+        str(pattern).strip().casefold() in location for pattern in configured_patterns if str(pattern).strip()
+    ):
+        return True
+
+    city = str(address.get("city") or "").strip().casefold()
+    state = str(address.get("province_state") or "").strip().casefold()
+    return bool((city and city in location) or (state and re.search(rf"\b{re.escape(state)}\b", location)))
+
+
+def profile_for_job_address(profile: dict, job: dict) -> dict:
+    """Return a copy using the verified job-specific application address."""
+    addresses = profile.get("application_addresses", {}) or {}
+    if not isinstance(addresses, dict):
+        return profile
+
+    for address in addresses.values():
+        if not isinstance(address, dict) or not job_matches_application_address(job, address):
+            continue
+        adjusted = copy.deepcopy(profile)
+        personal = adjusted.setdefault("personal", {})
+        for key in ("address", "city", "province_state", "country", "postal_code"):
+            if address.get(key):
+                personal[key] = address[key]
+        return adjusted
+    return profile
+
+
+def _read_text_with_legacy(current: Path, legacy: Path | None = None, *, encoding: str = "utf-8") -> str | None:
+    """Read current user data, falling back to a legacy file."""
+    if current.exists():
+        return current.read_text(encoding=encoding)
+    if legacy is not None and legacy.exists():
+        return legacy.read_text(encoding=encoding)
+    return None
+
+
+def _copy_if_present(source: Path, target: Path, *, overwrite: bool = False) -> str:
+    """Copy a file when available and report the action taken."""
+    if not source.exists():
+        return "missing"
+    try:
+        if source.resolve() == target.resolve():
+            return "skipped"
+    except Exception:
+        pass
+    if target.exists() and not overwrite:
+        return "skipped"
+    from divapply.security import copy_private_file
+
+    copy_private_file(source, target)
+    return "copied"
+
+
+def migrate_legacy_user_data(
+    *,
+    source_dir: Path | None = None,
+    target_dir: Path | None = None,
+    overwrite: bool = False,
+) -> dict[str, str]:
+    """Copy legacy files into the current DivApply layout.
+
+    This intentionally preserves the current files unless overwrite=True.
+    The helper is used by the CLI migrate command and is safe to call on a
+    fresh install or repeatedly during upgrade troubleshooting.
+    """
+    source_root = Path(source_dir or LEGACY_APP_DIR)
+    target_root = Path(target_dir or APP_DIR)
+    results = {
+        "profile": _copy_if_present(source_root / "profile.json", target_root / "profile.json", overwrite=overwrite),
+        "searches": _copy_if_present(source_root / "searches.yaml", target_root / "searches.yaml", overwrite=overwrite),
+        "env": _copy_if_present(source_root / ".env", target_root / ".env", overwrite=overwrite),
+        "resume_txt": _copy_if_present(source_root / "resume.txt", target_root / "resume.txt", overwrite=overwrite),
+        "resume_pdf": _copy_if_present(source_root / "resume.pdf", target_root / "resume.pdf", overwrite=overwrite),
+        "database": _copy_if_present(source_root / "applypilot.db", target_root / "divapply.db", overwrite=overwrite),
+    }
+    return results
+
+
+def load_profile() -> dict:
+    """Load user profile from ~/.divapply/profile.json."""
+    import json
+
+    source_path = PROFILE_PATH if PROFILE_PATH.exists() else LEGACY_PROFILE_PATH
+    if source_path.exists():
+        _protect_private_user_root(source_path.parent)
+    raw = _read_text_with_legacy(PROFILE_PATH, LEGACY_PROFILE_PATH)
+    if raw is None:
+        raise FileNotFoundError(f"Profile not found at {PROFILE_PATH}. Run `divapply init` first.")
+    profile = _normalize_profile(json.loads(raw))
+
+    # Structured transcript facts are canonical for objective academic values.
+    # Keep profile narrative editable, but never allow a stale GPA/credit count
+    # to override a newer imported school record.
+    try:
+        from divapply.database import get_education_records
+
+        profile = _overlay_transcript_education(profile, get_education_records())
+    except Exception:
+        pass
+
+    # Hidden coursework knowledge is stored in SQLite so it can inform
+    # scoring/tailoring without being exposed in the generated resume text.
+    # New installs do not ship with applicant-specific coursework; users add
+    # their own data through `divapply import-coursework`.
+    try:
+        from divapply.database import get_coursework
+
+        coursework = get_coursework()
+    except Exception:
+        coursework = []
+
+    profile["coursework"] = coursework
+    try:
+        search_config = load_search_config()
+    except Exception:
+        search_config = {}
+    profile["coursework_summary"] = _summarize_coursework(coursework, search_config=search_config)
+    profile["coursework_skills"] = _summarize_coursework_skills(coursework)
+    return profile
+
+
+def _academic_number(value: Any) -> str:
+    """Format an imported numeric fact without inventing extra precision."""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value).strip()
+    return f"{number:.3f}".rstrip("0").rstrip(".")
+
+
+def _school_match_key(value: Any) -> str:
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").casefold())
+
+
+def _overlay_transcript_education(profile: dict, records: list[dict]) -> dict:
+    """Overlay canonical GPA/credit facts onto matching profile schools."""
+    schools = profile.get("education_schools")
+    if not isinstance(schools, list) or not records:
+        return profile
+
+    by_name = {
+        _school_match_key(record.get("name")): record
+        for record in records
+        if isinstance(record, dict) and _school_match_key(record.get("name"))
+    }
+    merged_schools: list[Any] = []
+    for school in schools:
+        if not isinstance(school, dict):
+            merged_schools.append(school)
+            continue
+        merged = dict(school)
+        record = by_name.get(_school_match_key(school.get("school")))
+        if record:
+            overlaid = False
+            gpa = record.get("institutional_gpa")
+            earned = record.get("total_earned")
+            units_scope = "total"
+            if earned is None:
+                earned = record.get("institutional_earned")
+                units_scope = "institutional"
+            if gpa is not None:
+                merged["gpa"] = _academic_number(gpa)
+                overlaid = True
+            if earned is not None:
+                merged["units"] = _academic_number(earned)
+                merged["units_scope"] = units_scope
+                overlaid = True
+            if record.get("gpa_as_of"):
+                merged["gpa_as_of"] = str(record["gpa_as_of"])
+                overlaid = True
+            if overlaid:
+                for key in ("degree", "major", "minor"):
+                    if record.get(key):
+                        merged[key] = str(record[key])
+                if record.get("expected_graduation_year"):
+                    merged["expected_graduation_year"] = str(record["expected_graduation_year"])
+                merged["education_record_source"] = "structured transcript"
+        merged_schools.append(merged)
+
+    result = dict(profile)
+    result["education_schools"] = merged_schools
+    return result
+
+
+def _normalize_profile(profile: dict) -> dict:
+    """Normalize applicant facts and discard legacy search-policy fields."""
+    profile = dict(profile or {})
+    profile.pop("job_search", None)
+    profile.pop("availability", None)
+    profile.pop("experience_inference", None)
+
+    exp = profile.get("experience")
+    if isinstance(exp, dict):
+        exp = dict(exp)
+        # Job-search intent belongs in searches.yaml. Keeping it out of the
+        # profile prevents stale role policy from biasing scoring or applying.
+        for key in ("target_role", "target_roles", "years_of_experience_total"):
+            exp.pop(key, None)
+        profile["experience"] = exp
+
+    skills = profile.get("skills")
+    if skills and not profile.get("skills_boundary"):
+        if isinstance(skills, list):
+            profile["skills_boundary"] = {"skills": skills}
+        elif isinstance(skills, dict):
+            profile["skills_boundary"] = skills
+
+    comp = profile.get("compensation")
+    if isinstance(comp, dict) and comp.get("hourly_expectation") and not comp.get("part_time_hourly_expectation"):
+        comp = dict(comp)
+        comp["part_time_hourly_expectation"] = comp["hourly_expectation"]
+        profile["compensation"] = comp
+
+    return profile
+
+
+def profile_skills(profile: dict) -> dict[str, list[str]]:
+    """Return profile skills from either simple `skills` or legacy `skills_boundary`."""
+    boundary = profile.get("skills_boundary")
+    if isinstance(boundary, dict) and boundary:
+        return {
+            str(category): [str(item) for item in items if str(item).strip()]
+            for category, items in boundary.items()
+            if isinstance(items, list)
+        }
+
+    skills = profile.get("skills")
+    if isinstance(skills, list):
+        return {"skills": [str(item) for item in skills if str(item).strip()]}
+    if isinstance(skills, dict):
+        return {
+            str(category): [str(item) for item in items if str(item).strip()]
+            for category, items in skills.items()
+            if isinstance(items, list)
+        }
+    return {}
+
+
+_ACADEMIC_TERM_ORDER = {"winter": 1, "spring": 2, "summer": 3, "fall": 4, "autumn": 4}
+_SEARCH_TERM_STOPWORDS = {
+    "and",
+    "assistant",
+    "associate",
+    "entry",
+    "level",
+    "remote",
+    "specialist",
+    "technician",
+    "the",
+    "with",
+}
+
+
+def _academic_term_key(row: dict) -> tuple[int, int, str]:
+    term = str(row.get("term") or "").casefold()
+    year_match = re.search(r"(?:19|20)\d{2}", term)
+    year = int(year_match.group()) if year_match else 0
+    season = max((order for name, order in _ACADEMIC_TERM_ORDER.items() if name in term), default=0)
+    title = str(row.get("course_title") or row.get("course_code") or "").casefold()
+    return year, season, title
+
+
+def _coursework_relevance_terms(search_config: dict | None) -> set[str]:
+    config = search_config or {}
+    sources: list[str] = []
+    families = config.get("target_families")
+    if isinstance(families, list):
+        sources.extend(str(item.get("name") or "") for item in families if isinstance(item, dict))
+    if not sources:
+        queries = config.get("queries")
+        if isinstance(queries, list):
+            sources.extend(str(item.get("query") or "") for item in queries if isinstance(item, dict))
+    return {
+        token
+        for token in re.findall(r"[a-z0-9+#]+", " ".join(sources).casefold())
+        if len(token) >= 3 and token not in _SEARCH_TERM_STOPWORDS
+    }
+
+
+def _coursework_item(row: dict) -> str:
+    title = str(row.get("course_title") or row.get("course_code") or "").strip()
+    subject = str(row.get("subject_area") or "").strip()
+    if title and subject:
+        return f"{title} [{subject}]"
+    return title or subject
+
+
+def _coursework_relevance_score(row: dict, terms: set[str]) -> int:
+    raw_skills = row.get("skills") or []
+    if isinstance(raw_skills, str):
+        raw_skill_text = raw_skills
+    elif isinstance(raw_skills, list):
+        raw_skill_text = " ".join(str(skill) for skill in raw_skills)
+    else:
+        raw_skill_text = ""
+    haystack = (
+        " ".join(str(row.get(key) or "") for key in ("course_title", "course_code", "subject_area", "notes"))
+        + " "
+        + raw_skill_text
+    )
+    lowered = haystack.casefold()
+    return sum(1 for term in terms if term in lowered)
+
+
+def _summarize_coursework(
+    coursework: list[dict],
+    *,
+    search_config: dict | None = None,
+    max_per_school: int = 12,
+) -> list[str]:
+    """Condense coursework into recent/search-relevant internal-only facts."""
+    if not coursework:
+        return []
+
+    grouped: dict[str, list[dict]] = {}
+    for row in coursework:
+        school = (row.get("school") or "Unknown school").strip()
+        if not _coursework_item(row):
+            continue
+        grouped.setdefault(school, []).append(row)
+
+    relevance_terms = _coursework_relevance_terms(search_config)
+    summary: list[str] = []
+    for school, rows in grouped.items():
+        newest = sorted(rows, key=_academic_term_key, reverse=True)
+        relevant = sorted(
+            (row for row in rows if _coursework_relevance_score(row, relevance_terms) > 0),
+            key=lambda row: (_coursework_relevance_score(row, relevance_terms), _academic_term_key(row)),
+            reverse=True,
+        )
+        selected: list[str] = []
+        for row in [*newest[: max_per_school // 2], *relevant, *newest]:
+            item = _coursework_item(row)
+            if item and item not in selected:
+                selected.append(item)
+            if len(selected) >= max_per_school:
+                break
+        if selected:
+            summary.append(f"{school}: {', '.join(selected)}")
+    return summary
+
+
+def _summarize_coursework_skills(coursework: list[dict]) -> list[str]:
+    """Aggregate coursework skill tags into a compact internal-only summary."""
+    if not coursework:
+        return []
+
+    grouped: dict[str, set[str]] = {}
+    for row in coursework:
+        school = (row.get("school") or "Unknown school").strip()
+        raw_skills = row.get("skills") or []
+        if isinstance(raw_skills, str):
+            try:
+                import json
+
+                raw_skills = json.loads(raw_skills)
+            except Exception:
+                raw_skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
+        if not isinstance(raw_skills, list):
+            continue
+        grouped.setdefault(school, set()).update(str(skill).strip() for skill in raw_skills if str(skill).strip())
+
+    summary: list[str] = []
+    for school, skills in grouped.items():
+        summary.append(f"{school}: {', '.join(sorted(skills))}")
+    return summary
+
+
+def load_search_config() -> dict:
+    """Load search configuration from ~/.divapply/searches.yaml."""
+    import yaml
+
+    source_path = SEARCH_CONFIG_PATH if SEARCH_CONFIG_PATH.exists() else LEGACY_SEARCH_CONFIG_PATH
+    if source_path.exists():
+        _protect_private_user_root(source_path.parent)
+    raw = _read_text_with_legacy(SEARCH_CONFIG_PATH, LEGACY_SEARCH_CONFIG_PATH)
+    if raw is None:
+        example = CONFIG_DIR / "searches.example.yaml"
+        if example.exists():
+            return normalize_search_config(yaml.safe_load(example.read_text(encoding="utf-8")) or {})
+        return {}
+    return normalize_search_config(yaml.safe_load(raw) or {})
+
+
+def normalize_search_config(cfg: dict | None) -> dict:
+    """Expand simple search config aliases into the internal filter schema."""
+    cfg = dict(cfg or {})
+
+    search_city = cfg.get("search_city") or cfg.get("city")
+    if search_city and not cfg.get("locations"):
+        cfg["locations"] = [{"label": str(search_city), "location": str(search_city)}]
+
+    if cfg.get("job_boards") and not cfg.get("boards"):
+        cfg["boards"] = cfg["job_boards"]
+    if cfg.get("boards") and not cfg.get("sites"):
+        cfg["sites"] = cfg["boards"]
+    if cfg.get("sites") and not cfg.get("boards"):
+        cfg["boards"] = cfg["sites"]
+
+    if cfg.get("search_terms") and not cfg.get("queries"):
+        queries = []
+        for item in cfg["search_terms"]:
+            if isinstance(item, dict):
+                queries.append({"query": item.get("query") or item.get("term"), "tier": item.get("tier", 1)})
+            else:
+                queries.append({"query": str(item), "tier": 1})
+        cfg["queries"] = [q for q in queries if q.get("query")]
+
+    if cfg.get("nearby_locations") and not cfg.get("location_accept"):
+        cfg["location_accept"] = cfg["nearby_locations"]
+    if cfg.get("reject_locations") and not cfg.get("location_reject_non_remote"):
+        cfg["location_reject_non_remote"] = cfg["reject_locations"]
+
+    location_cfg = dict(cfg.get("location", {}) or {})
+    if cfg.get("location_accept") and not location_cfg.get("accept_patterns"):
+        location_cfg["accept_patterns"] = cfg["location_accept"]
+    if cfg.get("location_reject_non_remote") and not location_cfg.get("reject_patterns"):
+        location_cfg["reject_patterns"] = cfg["location_reject_non_remote"]
+    if location_cfg:
+        cfg["location"] = location_cfg
+
+    if cfg.get("target_titles") and not cfg.get("include_titles"):
+        cfg["include_titles"] = cfg["target_titles"]
+    if cfg.get("avoid_titles") and not cfg.get("exclude_titles"):
+        cfg["exclude_titles"] = cfg["avoid_titles"]
+    if cfg.get("avoid_keywords") and not cfg.get("excluded_keywords"):
+        cfg["excluded_keywords"] = cfg["avoid_keywords"]
+    if cfg.get("trusted_sites") and not cfg.get("trusted_local_sites"):
+        cfg["trusted_local_sites"] = cfg["trusted_sites"]
+
+    if cfg.get("part_time_titles") and not cfg.get("customer_service_title_terms"):
+        cfg["customer_service_title_terms"] = cfg["part_time_titles"]
+    if "require_part_time" in cfg and "customer_service_require_part_time" not in cfg:
+        cfg["customer_service_require_part_time"] = bool(cfg["require_part_time"])
+    if "max_hours_per_week" in cfg and "customer_service_max_hours_per_week" not in cfg:
+        cfg["customer_service_max_hours_per_week"] = cfg["max_hours_per_week"]
+
+    return cfg
+
+
+def validate_search_config(cfg: dict | None = None) -> dict:
+    """Validate search config shape without contacting job boards."""
+    if cfg is None:
+        cfg = load_search_config()
+    raw_cfg = dict(cfg or {})
+    cfg = normalize_search_config(raw_cfg)
+
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    legacy_aliases = {
+        "job_boards": "boards",
+        "search_terms": "queries",
+        "nearby_locations": "locations",
+        "reject_locations": "location.reject_patterns",
+        "target_titles": "include_titles",
+        "avoid_titles": "exclude_titles",
+        "avoid_keywords": "excluded_keywords",
+        "trusted_sites": "trusted_local_sites",
+        "part_time_titles": "customer_service_title_terms",
+    }
+    for old_key, new_key in legacy_aliases.items():
+        if old_key in raw_cfg:
+            warnings.append(f"{old_key} is a legacy searches.yaml key; prefer {new_key}")
+    if "sites" in raw_cfg and ("boards" not in raw_cfg or raw_cfg.get("sites") != raw_cfg.get("boards")):
+        warnings.append("sites is a legacy searches.yaml key; prefer boards")
+
+    queries = cfg.get("queries", [])
+    locations = cfg.get("locations", [])
+    if not isinstance(queries, list) or not queries:
+        errors.append("searches.yaml needs a non-empty queries list")
+    if not isinstance(locations, list) or not locations:
+        errors.append("searches.yaml needs a non-empty locations list")
+
+    for idx, query in enumerate(queries if isinstance(queries, list) else []):
+        if not isinstance(query, dict) or not query.get("query"):
+            errors.append(f"queries[{idx}] needs a query string")
+
+    known_location_labels = {
+        str(location.get("label") or location.get("location") or "").strip()
+        for location in locations
+        if isinstance(location, dict)
+    }
+    for idx, query in enumerate(queries if isinstance(queries, list) else []):
+        if not isinstance(query, dict):
+            continue
+        scopes = query.get("location_labels")
+        if scopes is None:
+            continue
+        if not isinstance(scopes, list):
+            errors.append(f"queries[{idx}].location_labels must be a list")
+            continue
+        for scope in scopes:
+            scope_text = str(scope).strip()
+            if scope_text not in known_location_labels:
+                errors.append(f"queries[{idx}].location_labels contains unknown location '{scope_text}'")
+
+    for idx, location in enumerate(locations if isinstance(locations, list) else []):
+        if not isinstance(location, dict) or not location.get("location"):
+            errors.append(f"locations[{idx}] needs a location string")
+
+    target_families = cfg.get("target_families", [])
+    if target_families and not isinstance(target_families, list):
+        errors.append("target_families must be a list")
+    for idx, family in enumerate(target_families if isinstance(target_families, list) else []):
+        if not isinstance(family, dict):
+            errors.append(f"target_families[{idx}] must be a mapping")
+            continue
+        if not str(family.get("name") or "").strip():
+            errors.append(f"target_families[{idx}] needs a name")
+        priority = family.get("priority")
+        try:
+            valid_priority = not isinstance(priority, bool) and int(str(priority)) in {1, 2, 3}
+        except (TypeError, ValueError):
+            valid_priority = False
+        if not valid_priority:
+            errors.append(f"target_families[{idx}].priority must be an integer from 1 to 3")
+
+    preferred_schedule = str(cfg.get("preferred_schedule") or "any").strip().casefold()
+    if preferred_schedule not in {"any", "full_time", "part_time"}:
+        errors.append("preferred_schedule must be one of: any, full_time, part_time")
+
+    sites_value = cfg.get("sites")
+    boards_value = cfg.get("boards")
+    boards = sites_value or boards_value or []
+    if boards and not isinstance(boards, list):
+        errors.append("sites/boards must be a list")
+    if sites_value and boards_value and sites_value != boards_value:
+        warnings.append("sites and boards differ; discovery will prefer sites")
+
+    filters = cfg.get("filters", {}) or {}
+    list_fields = (
+        "exclude_titles",
+        "title_blacklist",
+        "company_blacklist",
+        "required_keywords",
+        "excluded_keywords",
+        "include_titles",
+        "customer_service_title_terms",
+        "trusted_local_sites",
+        "location_accept",
+        "location_reject_non_remote",
+    )
+    for key in list_fields:
+        value = cfg.get(key, filters.get(key, []))
+        if value and not isinstance(value, list):
+            errors.append(f"{key} must be a list")
+
+    location_cfg = cfg.get("location", {}) or {}
+    for key in ("accept_patterns", "reject_patterns"):
+        value = location_cfg.get(key, [])
+        if value and not isinstance(value, list):
+            errors.append(f"location.{key} must be a list")
+
+    max_cs_hours = cfg.get(
+        "customer_service_max_hours_per_week",
+        filters.get("customer_service_max_hours_per_week", 0),
+    )
+    if max_cs_hours not in (None, ""):
+        try:
+            int(max_cs_hours)
+        except (TypeError, ValueError):
+            errors.append("customer_service_max_hours_per_week must be an integer")
+
+    location_lists = {
+        "location_accept": cfg.get("location_accept", []) or location_cfg.get("accept_patterns", []) or [],
+        "location_reject_non_remote": cfg.get("location_reject_non_remote", [])
+        or location_cfg.get("reject_patterns", [])
+        or [],
+    }
+    for key, values in location_lists.items():
+        for token in values:
+            token_text = str(token).strip()
+            if 0 < len(token_text) <= 2:
+                warnings.append(f"{key} contains short token '{token_text}'; use full city/state names when possible")
+
+    remote_pref = str(cfg.get("remote_preference") or filters.get("remote_preference") or "any").lower()
+    if remote_pref not in {
+        "any",
+        "all",
+        "none",
+        "no_preference",
+        "remote",
+        "remote_only",
+        "hybrid",
+        "hybrid_only",
+        "onsite",
+        "on_site",
+        "office",
+    }:
+        warnings.append(f"remote_preference '{remote_pref}' is unknown; it will be treated as any")
+
+    return {"passed": not errors, "errors": errors, "warnings": warnings}
+
+
+def load_sites_config() -> dict:
+    """Load sites.yaml configuration (sites list, manual_ats, blocked, etc.)."""
+    import yaml
+
+    path = resolve_config_file("sites.yaml")
+    if not path.exists():
+        return {}
+    stat = path.stat()
+    cache_key = path.resolve()
+    cached = _YAML_CACHE.get(cache_key)
+    if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+        return cached[2]
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    data = data if isinstance(data, dict) else {}
+    _YAML_CACHE[cache_key] = (stat.st_mtime_ns, stat.st_size, data)
+    return data
+
+
+def load_credentials(path: Path | None = None) -> dict:
+    """Load optional login credentials from ~/.divapply/credentials.yaml.
+
+    Profile data should stay focused on candidate facts. Login material belongs
+    in this separate file or environment variables.
+    """
+    import yaml
+
+    credentials_path = path or CREDENTIALS_PATH
+    if not credentials_path.exists():
+        return {}
+    _protect_private_user_root(credentials_path.parent)
+    data = yaml.safe_load(credentials_path.read_text(encoding="utf-8")) or {}
+    return data if isinstance(data, dict) else {}
+
+
+def get_apply_timeout() -> int | None:
+    """Return the per-job apply timeout in seconds, or None when explicitly disabled."""
+    value = os.environ.get("DIVAPPLY_APPLY_TIMEOUT") or os.environ.get("APPLYPILOT_APPLY_TIMEOUT")
+    if value:
+        if value.strip().lower() in {"0", "none", "off", "false", "no"}:
+            return None
+        try:
+            return max(30, int(value))
+        except ValueError:
+            return None
+    default = int(DEFAULTS["apply_timeout"])
+    return default if default > 0 else None
+
+
+def get_log_retention_days() -> int:
+    """Return the local apply-log retention period; zero disables cleanup."""
+    raw = os.environ.get("DIVAPPLY_LOG_RETENTION_DAYS", "30").strip()
+    try:
+        days = int(raw)
+    except ValueError as exc:
+        raise ValueError("DIVAPPLY_LOG_RETENTION_DAYS must be an integer from 0 to 3650") from exc
+    if not 0 <= days <= 3650:
+        raise ValueError("DIVAPPLY_LOG_RETENTION_DAYS must be an integer from 0 to 3650")
+    return days
+
+
+def gmail_mcp_enabled() -> bool:
+    """Reject the retired Gmail MCP integration and otherwise remain disabled."""
+    value = os.environ.get("DIVAPPLY_ENABLE_GMAIL_MCP", "")
+    if value.strip().lower() in {"1", "true", "yes", "on"}:
+        raise RuntimeError(
+            "Gmail MCP is unavailable because its archived dependency tree has known High vulnerabilities"
+        )
+    return False
+
+
+def is_manual_ats(url: str | None) -> bool:
+    """Check if a URL routes through an ATS that requires manual application."""
+    if not url:
+        return False
+    sites_cfg = load_sites_config()
+    domains = sites_cfg.get("manual_ats", [])
+    url_lower = url.lower()
+    return any(domain in url_lower for domain in domains)
+
+
+def load_blocked_sites() -> tuple[set[str], list[str]]:
+    """Load blocked sites and URL patterns from sites.yaml."""
+    cfg = load_sites_config()
+    blocked = cfg.get("blocked", {})
+    sites = set(blocked.get("sites", []))
+    patterns = blocked.get("url_patterns", [])
+    return sites, patterns
+
+
+def load_blocked_sso() -> list[str]:
+    """Load blocked SSO domains from sites.yaml."""
+    cfg = load_sites_config()
+    return cfg.get("blocked_sso", [])
+
+
+def load_base_urls() -> dict[str, str | None]:
+    """Load site base URLs for URL resolution from sites.yaml."""
+    cfg = load_sites_config()
+    return cfg.get("base_urls", {})
+
+
+DEFAULTS: dict[str, Any] = {
+    "min_score": 7,
+    "max_apply_attempts": 3,
+    "max_tailor_attempts": 5,
+    "poll_interval": 60,
+    "apply_timeout": 2700,
+    "apply_lock_timeout": 3600,
+    "viewport": "1280x900",
+}
+
+
+def load_env() -> None:
+    """Load environment variables from ~/.divapply/.env if it exists."""
+    from dotenv import load_dotenv
+
+    source_path = ENV_PATH if ENV_PATH.exists() else LEGACY_ENV_PATH
+    if source_path.exists():
+        _protect_private_user_root(source_path.parent)
+    if ENV_PATH.exists():
+        load_dotenv(ENV_PATH, override=True)
+    elif LEGACY_ENV_PATH.exists():
+        load_dotenv(LEGACY_ENV_PATH, override=True)
+    load_dotenv()
+
+
+from divapply import runtime as _runtime  # noqa: E402
+
+APPLY_AGENT_LABELS = _runtime.APPLY_AGENT_LABELS
+APPLY_BROWSER_LABELS = _runtime.APPLY_BROWSER_LABELS
+TIER_COMMANDS = _runtime.TIER_COMMANDS
+TIER_LABELS = _runtime.TIER_LABELS
+check_tier = _runtime.check_tier
+get_apply_backend = _runtime.get_apply_backend
+get_apply_backend_executable = _runtime.get_apply_backend_executable
+get_apply_backend_label = _runtime.get_apply_backend_label
+get_apply_browser = _runtime.get_apply_browser
+get_apply_browser_label = _runtime.get_apply_browser_label
+get_available_apply_backends = _runtime.get_available_apply_backends
+get_chrome_path = _runtime.get_chrome_path
+get_chrome_user_data = _runtime.get_chrome_user_data
+get_tier = _runtime.get_tier

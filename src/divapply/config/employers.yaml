@@ -1,0 +1,4 @@
+# Generic Workday employer registry. User/employer targets belong in
+# ~/.divapply/config/employers.yaml and override this file entirely.
+
+employers: {}
