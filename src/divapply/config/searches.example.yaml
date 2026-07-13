@@ -1,0 +1,49 @@
+# DivApply search configuration
+# Copy to ~/.divapply/searches.yaml or use `divapply edit`.
+
+queries:
+  # Tier 1: best, most specific searches.
+  - query: "student assistant"
+    tier: 1
+  - query: "campus recreation"
+    tier: 1
+  - query: "front desk"
+    tier: 1
+
+  # Tier 2: strong adjacent matches.
+  - query: "office assistant"
+    tier: 2
+  - query: "receptionist"
+    tier: 2
+  - query: "patient access"
+    tier: 2
+
+  # Tier 3: broad fallback searches.
+  - query: "customer service"
+    tier: 3
+  - query: "guest services"
+    tier: 3
+  - query: "data entry"
+    tier: 3
+
+locations:
+  - location: "Exampletown, UT"
+    remote: false
+  - location: "Remote"
+    remote: true
+
+country: "USA"
+
+boards:
+  - indeed
+  - linkedin
+
+defaults:
+  results_per_site: 50
+  hours_old: 168
+  workers: 3
+  prune_score: 3
+  country_indeed: usa
+
+allow_unknown_location: false
+require_part_time: true

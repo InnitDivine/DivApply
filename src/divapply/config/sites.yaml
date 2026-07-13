@@ -1,0 +1,36 @@
+# Generic direct career-site registry. User/employer targets belong in
+# ~/.divapply/config/sites.yaml and override this file entirely.
+
+manual_ats:
+  - "ibegin.tcsapps.com"
+  - "applicantpro.com"
+  - "icims.com"
+  - "hcahealthcare.com"
+
+blocked:
+  sites:
+    - "glassdoor"
+    - "google"
+  url_patterns:
+    - "%glassdoor%"
+    - "%google.com/about/careers%"
+    - "%google.jobs%"
+
+blocked_sso:
+  - "accounts.google.com"
+  - "login.microsoftonline.com"
+  - "okta.com"
+  - "auth0.com"
+
+base_urls:
+  "GovernmentJobs.com": "https://www.governmentjobs.com"
+  "SimplyHired": "https://www.simplyhired.com"
+
+sites:
+  - name: "GovernmentJobs.com"
+    url: "https://www.governmentjobs.com/jobs?keyword={query_encoded}&location={location_encoded}&radius=15"
+    type: search
+
+  - name: "SimplyHired"
+    url: "https://www.simplyhired.com/search?q={query_encoded}&l={location_encoded}"
+    type: search

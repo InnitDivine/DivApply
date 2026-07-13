@@ -1,0 +1,109 @@
+{
+  "personal": {
+    "first_name": "Your",
+    "middle_name": "",
+    "last_name": "Name",
+    "full_name": "Your Name",
+    "preferred_name": "Your",
+    "email": "your.email@example.com",
+    "phone": "555-123-4567",
+    "address": "100 Example Avenue",
+    "city": "Exampletown",
+    "province_state": "ZZ",
+    "country": "United States",
+    "postal_code": "00000",
+    "linkedin_url": "https://www.linkedin.com/in/yourprofile",
+    "github_url": "",
+    "website_url": ""
+  },
+  "application_addresses": {
+    "alternate": {
+      "address": "200 Sample Street",
+      "city": "Sample City",
+      "province_state": "YY",
+      "country": "United States",
+      "postal_code": "00000"
+    }
+  },
+  "work_authorization": {
+    "legally_authorized_to_work": "Yes",
+    "require_sponsorship": "No",
+    "work_permit_type": ""
+  },
+  "compensation": {
+    "target_hourly_rate": "15",
+    "salary_expectation": "15600",
+    "salary_currency": "USD",
+    "salary_range_min": "15600",
+    "salary_range_max": "15600",
+    "hourly_expectation": "Target $15/hr for part-time work. Use the employer's posted range when available."
+  },
+  "experience": {
+    "education_level": "Bachelor's Degree (in progress)",
+    "current_job_title": "Student / job seeker",
+    "current_company": ""
+  },
+  "work_history": [
+    {
+      "title": "Customer Service Associate",
+      "company": "Example Employer",
+      "dates": "2024 to 2025",
+      "tasks": "Customer service, front desk support, payments, scheduling, and guest assistance."
+    }
+  ],
+  "skills": [
+    "customer service",
+    "front desk",
+    "cash handling",
+    "data entry",
+    "Microsoft Office"
+  ],
+  "education_schools": [
+    {
+      "school": "Example College",
+      "city_state": "Exampletown, ZZ",
+      "major": "General Studies",
+      "degree": "Associate Degree",
+      "degree_received": true,
+      "gpa": "3.2",
+      "start_year": "2022",
+      "end_year": "2024",
+      "notes": "Degree completed."
+    }
+  ],
+  "certifications": [
+    {
+      "name": "CPR",
+      "issuer": "Example Issuer",
+      "status": "Active",
+      "expires": "2027"
+    }
+  ],
+  "resume_facts": {
+    "preserved_companies": [
+      "Example Employer"
+    ],
+    "preserved_projects": [
+      "Example project"
+    ],
+    "preserved_school": "Example College",
+    "real_metrics": [
+      "3.2 GPA"
+    ]
+  },
+  "references": [
+    {
+      "name": "Reference Name",
+      "title": "Former Supervisor",
+      "phone": "555-555-5555",
+      "email": "reference@example.com",
+      "address": "Exampletown, ZZ"
+    }
+  ],
+  "eeo_voluntary": {
+    "gender": "Decline to self-identify",
+    "race_ethnicity": "Decline to self-identify",
+    "veteran_status": "Decline to self-identify",
+    "disability_status": "Decline to self-identify"
+  }
+}
