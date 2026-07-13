@@ -65,7 +65,7 @@ For PyPI releases:
 6. Merge or fast-forward the release commit onto `main`.
 7. Tag the `main` commit with the same version, for example `git tag v0.5.0`.
 8. Push `main`, then push the tag.
-9. Verify the GitHub `Release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
+9. Verify the GitHub `Publish release` workflow, GitHub Release page, and published PyPI wheel in a clean environment.
 
 Clean install smoke test:
 
