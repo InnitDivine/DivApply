@@ -80,6 +80,36 @@ def _read_pdf_text(path: Path) -> str:
         return ""
 
 
+def _education_summary_lines(schools: list[dict]) -> list[str]:
+    if not schools:
+        return []
+    lines = ["\n== EDUCATION (list ALL schools in this order on forms) =="]
+    for index, school in enumerate(schools, 1):
+        status = str(school.get("status", "")).strip().lower()
+        degree_status = (
+            "Transferred"
+            if status in {"transferred", "transfer"}
+            else "Yes"
+            if school.get("degree_received")
+            else "No (in progress)"
+            if school.get("end_year") == "present"
+            else "No"
+        )
+        lines.append(
+            f"School {index}: {school['school']} | {school['city_state']} | "
+            f"Major: {school['major']} | Minor: {school.get('minor', 'N/A')} | "
+            f"Degree: {school['degree']} | Received: {degree_status} | "
+            f"Units: {school['units']} {school.get('units_type', 'Semester')} | GPA: {school.get('gpa', 'N/A')} | "
+            f"{school['start_year']}â€“{school['end_year']}"
+        )
+    school_names = ", ".join(school["school"] for school in schools)
+    lines.append(
+        f"IMPORTANT: Always enter ALL {len(schools)} schools ({school_names}). "
+        "Add schools if needed using 'Add Another School'."
+    )
+    return lines
+
+
 def _build_profile_summary(profile: dict) -> str:
     """Format the applicant profile section of the prompt.
 
@@ -157,31 +187,7 @@ def _build_profile_summary(profile: dict) -> str:
     lines.append(f"Disability: {eeo.get('disability_status', 'I do not wish to answer')}")
 
     # Education schools
-    edu_schools = p.get("education_schools", [])
-    if edu_schools:
-        lines.append("\n== EDUCATION (list ALL schools in this order on forms) ==")
-        for i, sch in enumerate(edu_schools, 1):
-            status = str(sch.get("status", "")).strip().lower()
-            degree_status = (
-                "Transferred"
-                if status in {"transferred", "transfer"}
-                else "Yes"
-                if sch.get("degree_received")
-                else "No (in progress)"
-                if sch.get("end_year") == "present"
-                else "No"
-            )
-            lines.append(
-                f"School {i}: {sch['school']} | {sch['city_state']} | "
-                f"Major: {sch['major']} | Minor: {sch.get('minor', 'N/A')} | "
-                f"Degree: {sch['degree']} | Received: {degree_status} | "
-                f"Units: {sch['units']} {sch.get('units_type', 'Semester')} | GPA: {sch.get('gpa', 'N/A')} | "
-                f"{sch['start_year']}â€“{sch['end_year']}"
-            )
-        school_names = ", ".join(s["school"] for s in edu_schools)
-        lines.append(
-            f"IMPORTANT: Always enter ALL {len(edu_schools)} schools ({school_names}). Add schools if needed using 'Add Another School'."
-        )
+    lines.extend(_education_summary_lines(p.get("education_schools", [])))
 
     # Employer addresses
     emp_addrs = p.get("employer_addresses", {})

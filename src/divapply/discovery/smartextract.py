@@ -276,6 +276,85 @@ def load_sites() -> list[dict]:
     return normalized
 
 
+def _filtered_job_row(
+    job: dict,
+    *,
+    site: str,
+    accept_locs: list[str],
+    reject_locs: list[str],
+    title_excludes: list[str] | None,
+    filter_rules: dict,
+) -> tuple[str | None, dict | None, str | None]:
+    from divapply.discovery.jobspy import _job_row_passes_filters
+
+    url = _normalize_job_url(site, job.get("url"))
+    if not url:
+        return None, None, None
+    allow_unknown = bool(filter_rules.get("allow_unknown_location", True))
+    if site.lower() in set(filter_rules.get("trusted_local_sites", [])):
+        allow_unknown = True
+    if not _location_ok(job.get("location"), accept_locs, reject_locs, allow_unknown=allow_unknown):
+        return url, None, "location"
+    if title_excludes and not _title_ok(job.get("title"), title_excludes):
+        return url, None, "title"
+    row = {**job, "site": site, "company": job.get("company") or site}
+    if filter_rules and not _job_row_passes_filters(row, filter_rules):
+        return url, None, "rules"
+    return url, row, None
+
+
+def _resolved_discovery_policy(
+    row: dict,
+    *,
+    market_label: str,
+    application_mode: str,
+    source_verification: str,
+    search_config: dict | None,
+) -> tuple[str, str]:
+    resolved_label = market_label
+    resolved_mode = str(application_mode or "manual_review").strip().casefold()
+    if not resolved_label and search_config:
+        resolved_label, resolved_policy = market_policy_for_job(search_config, row)
+        resolved_mode = str(resolved_policy.get("application_mode") or "manual_review").strip().casefold()
+    if source_verification != "official" and resolved_mode == "active":
+        resolved_mode = "manual_review"
+    return resolved_label, resolved_mode
+
+
+def _infer_work_schedule(job: dict) -> tuple[str, object]:
+    text = f"{job.get('title') or ''} {job.get('description') or ''}".casefold()
+    employment_type = str(job.get("employment_type") or job.get("job_type") or "").strip().casefold()
+    if not employment_type:
+        if "part-time" in text or "part time" in text:
+            employment_type = "part_time"
+        elif "full-time" in text or "full time" in text:
+            employment_type = "full_time"
+    hours = job.get("hours_per_week")
+    if hours is None:
+        hour_matches = re.findall(
+            r"\b(\d{1,3}(?:\.\d+)?)\s*hours?\s*(?:per|a|/)\s*week\b",
+            text,
+        )
+        hours = max((float(value) for value in hour_matches), default=None)
+    return employment_type, hours
+
+
+def _normalized_source_verification(value: object) -> str:
+    normalized = str(value or "unknown").strip().casefold()
+    if normalized in {"official", "unverified_aggregator", "unknown"}:
+        return normalized
+    return "unknown"
+
+
+def _log_filtered_job_counts(location: int, title: int, rules: int) -> None:
+    if location:
+        log.info("Filtered %d jobs (wrong location)", location)
+    if title:
+        log.info("Filtered %d jobs (excluded title)", title)
+    if rules:
+        log.info("Filtered %d jobs (rules)", rules)
+
+
 def _store_jobs_filtered(
     conn: sqlite3.Connection,
     jobs: list[dict],
@@ -292,8 +371,6 @@ def _store_jobs_filtered(
     search_config: dict | None = None,
 ) -> tuple[int, int]:
     """Store jobs with location and title filtering. Returns (new, existing)."""
-    from divapply.discovery.jobspy import _job_row_passes_filters
-
     now = datetime.now(timezone.utc).isoformat()
     new = 0
     existing = 0
@@ -301,53 +378,31 @@ def _store_jobs_filtered(
     filtered_title = 0
     filtered_rules = 0
     filter_rules = filter_rules or {}
-    normalized_verification = str(source_verification or "unknown").strip().casefold()
-    if normalized_verification not in {"official", "unverified_aggregator", "unknown"}:
-        normalized_verification = "unknown"
+    normalized_verification = _normalized_source_verification(source_verification)
 
     for job in jobs:
-        url = _normalize_job_url(site, job.get("url"))
-        if not url:
+        url, row, rejection = _filtered_job_row(
+            job,
+            site=site,
+            accept_locs=accept_locs,
+            reject_locs=reject_locs,
+            title_excludes=title_excludes,
+            filter_rules=filter_rules,
+        )
+        if row is None:
+            filtered += int(rejection == "location")
+            filtered_title += int(rejection == "title")
+            filtered_rules += int(rejection == "rules")
             continue
-        allow_unknown = bool(filter_rules.get("allow_unknown_location", True))
-        if site.lower() in set(filter_rules.get("trusted_local_sites", [])):
-            allow_unknown = True
-        if not _location_ok(
-            job.get("location"),
-            accept_locs,
-            reject_locs,
-            allow_unknown=allow_unknown,
-        ):
-            filtered += 1
-            continue
-        if title_excludes and not _title_ok(job.get("title"), title_excludes):
-            filtered_title += 1
-            continue
-        row = {**job, "site": site, "company": job.get("company") or site}
-        if filter_rules and not _job_row_passes_filters(row, filter_rules):
-            filtered_rules += 1
-            continue
-        resolved_label = market_label
-        resolved_mode = str(application_mode or "manual_review").strip().casefold()
-        if not resolved_label and search_config:
-            resolved_label, resolved_policy = market_policy_for_job(search_config, row)
-            resolved_mode = str(resolved_policy.get("application_mode") or "manual_review").strip().casefold()
-        if normalized_verification != "official" and resolved_mode == "active":
-            resolved_mode = "manual_review"
-        text = f"{job.get('title') or ''} {job.get('description') or ''}".casefold()
-        employment_type = str(job.get("employment_type") or job.get("job_type") or "").strip().casefold()
-        if not employment_type:
-            if "part-time" in text or "part time" in text:
-                employment_type = "part_time"
-            elif "full-time" in text or "full time" in text:
-                employment_type = "full_time"
-        hours = job.get("hours_per_week")
-        if hours is None:
-            hour_matches = re.findall(
-                r"\b(\d{1,3}(?:\.\d+)?)\s*hours?\s*(?:per|a|/)\s*week\b",
-                text,
-            )
-            hours = max((float(value) for value in hour_matches), default=None)
+        assert url is not None
+        resolved_label, resolved_mode = _resolved_discovery_policy(
+            row,
+            market_label=market_label,
+            application_mode=application_mode,
+            source_verification=normalized_verification,
+            search_config=search_config,
+        )
+        employment_type, hours = _infer_work_schedule(job)
         was_existing = conn.execute("SELECT 1 FROM jobs WHERE url = ?", (url,)).fetchone() is not None
         full_description = job.get("full_description")
         application_url = job.get("application_url") or url
@@ -425,12 +480,7 @@ def _store_jobs_filtered(
         else:
             existing += 1
 
-    if filtered:
-        log.info("Filtered %d jobs (wrong location)", filtered)
-    if filtered_title:
-        log.info("Filtered %d jobs (excluded title)", filtered_title)
-    if filtered_rules:
-        log.info("Filtered %d jobs (rules)", filtered_rules)
+    _log_filtered_job_counts(filtered, filtered_title, filtered_rules)
     conn.commit()
     return new, existing
 
@@ -1469,6 +1519,22 @@ def build_scrape_targets(
 
 # -- Run all sites -----------------------------------------------------------
 
+
+def _run_target_with_cache(target: dict, cache: dict, cache_lock) -> dict:
+    """Run one target and retry discovery when a cached plan has gone stale."""
+    if target.get("adapter") == "greenhouse":
+        return _run_greenhouse_board(target["name"], target["url"])
+    with cache_lock:
+        cached = cache.get(target["name"])
+    result = _run_one_site(target["name"], target["url"], cached_plan=cached)
+    if result.get("cache_hit") and result["status"] == "FAIL":
+        log.info("Cache invalid for %s — re-discovering", target["name"])
+        with cache_lock:
+            cache.pop(target["name"], None)
+        result = _run_one_site(target["name"], target["url"])
+    return result
+
+
 def _run_all(
     targets: list[dict],
     accept_locs: list[str],
@@ -1526,25 +1592,11 @@ def _run_all(
                 cache[target["name"]] = r["plan"]
                 _save_plan_cache(cache)
 
-    def _run_with_cache(target: dict) -> dict:
-        """Run site extraction, falling back to full discovery if cache returns 0 jobs."""
-        if target.get("adapter") == "greenhouse":
-            return _run_greenhouse_board(target["name"], target["url"])
-        with cache_lock:
-            cached = cache.get(target["name"])
-        r = _run_one_site(target["name"], target["url"], cached_plan=cached)
-        if r.get("cache_hit") and r["status"] == "FAIL":
-            log.info("Cache invalid for %s â€” re-discovering", target["name"])
-            with cache_lock:
-                cache.pop(target["name"], None)
-            r = _run_one_site(target["name"], target["url"])
-        return r
-
     if workers > 1 and len(targets) > 1:
         # Parallel mode
         with ThreadPoolExecutor(max_workers=min(workers, len(targets))) as pool:
             future_to_target = {
-                pool.submit(_run_with_cache, target): target
+                pool.submit(_run_target_with_cache, target, cache, cache_lock): target
                 for target in targets
             }
             for future in as_completed(future_to_target):
@@ -1577,7 +1629,7 @@ def _run_all(
                 label = f"{target['name']} [{target['query']}]"
             log.info("[%d/%d] %s", i + 1, len(targets), label)
 
-            r = _run_with_cache(target)
+            r = _run_target_with_cache(target, cache, cache_lock)
             results.append(r)
             _process_result(r, target)
 

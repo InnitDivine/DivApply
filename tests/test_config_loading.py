@@ -386,6 +386,15 @@ def test_coursework_context_validation_fails_closed_for_malformed_policy() -> No
     assert summary == []
 
 
+def test_v96_bounded_integer_accepts_only_canonical_values() -> None:
+    assert config._bounded_integer(1, 1, 24)
+    assert config._bounded_integer("24", 1, 24)
+    assert not config._bounded_integer(True, 1, 24)
+    assert not config._bounded_integer(1.5, 1, 24)
+    assert not config._bounded_integer(object(), 1, 24)
+    assert not config._bounded_integer("25", 1, 24)
+
+
 def test_coursework_context_policy_filters_low_value_rows_and_skill_tags() -> None:
     coursework = [
         {

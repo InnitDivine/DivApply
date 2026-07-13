@@ -529,22 +529,18 @@ def _load_project_version(dist_dir: Path) -> tuple[str | None, list[Issue]]:
         return None, [("project_version_unavailable", "pyproject.toml")]
 
 
-def scan_dist(dist_dir: Path) -> list[Issue]:
-    dist_dir = Path(dist_dir)
-    issues: list[Issue] = []
-    project_version, project_issues = _load_project_version(dist_dir)
-    issues.extend(project_issues)
-
+def _classify_distribution_entries(
+    dist_dir: Path,
+) -> tuple[list[tuple[Path, str]], list[tuple[Path, str]], list[Issue]]:
     entries = sorted(dist_dir.iterdir(), key=lambda item: item.name.casefold()) if dist_dir.is_dir() else []
     wheels: list[tuple[Path, str]] = []
     sdists: list[tuple[Path, str]] = []
-    unexpected_entries = False
+    issues: list[Issue] = []
     for index, path in enumerate(entries, 1):
         try:
             metadata = path.lstat()
         except OSError:
             issues.append(_entry_issue("unsafe_distribution_entry", dist_dir, index))
-            unexpected_entries = True
             continue
         if (
             stat.S_ISLNK(metadata.st_mode)
@@ -552,7 +548,6 @@ def scan_dist(dist_dir: Path) -> list[Issue]:
             or not stat.S_ISREG(metadata.st_mode)
         ):
             issues.append(_entry_issue("unsafe_distribution_entry", dist_dir, index))
-            unexpected_entries = True
             continue
         wheel_match = _WHEEL_RE.fullmatch(path.name)
         sdist_match = _SDIST_RE.fullmatch(path.name)
@@ -562,9 +557,18 @@ def scan_dist(dist_dir: Path) -> list[Issue]:
             sdists.append((path, sdist_match.group("version")))
         else:
             issues.append(_entry_issue("unexpected_distribution_entry", dist_dir, index))
-            unexpected_entries = True
+    return wheels, sdists, issues
 
-    if unexpected_entries:
+
+def scan_dist(dist_dir: Path) -> list[Issue]:
+    dist_dir = Path(dist_dir)
+    issues: list[Issue] = []
+    project_version, project_issues = _load_project_version(dist_dir)
+    issues.extend(project_issues)
+
+    wheels, sdists, entry_issues = _classify_distribution_entries(dist_dir)
+    issues.extend(entry_issues)
+    if entry_issues:
         issues.append(("unexpected_archive", "distribution-set"))
 
     if not wheels:

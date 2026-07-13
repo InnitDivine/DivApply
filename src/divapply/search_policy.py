@@ -143,6 +143,48 @@ def _is_broad_remote_or_unknown(location: str) -> bool:
     return not " ".join(remainder.split())
 
 
+def _validated_persisted_market_label(
+    policies: dict[str, Any],
+    locations: list[Any],
+    job: dict[str, Any],
+) -> str:
+    label = str(job.get("market_label") or "").strip()
+    if label not in policies:
+        return ""
+    if any(
+        isinstance(item, dict)
+        and str(item.get("label") or item.get("location") or "").strip() == label
+        for item in locations
+    ):
+        return label
+    return ""
+
+
+def _configured_market_match(
+    policies: dict[str, Any],
+    locations: list[Any],
+    actual_location: str,
+    persisted_label: str,
+) -> tuple[bool, str, dict[str, Any]]:
+    for location in locations:
+        if not isinstance(location, dict):
+            continue
+        label = str(location.get("label") or location.get("location") or "").strip()
+        policy = policies.get(label)
+        patterns = [str(location.get("location") or "").strip()]
+        configured_patterns = location.get("match_patterns")
+        if isinstance(configured_patterns, list):
+            patterns.extend(str(pattern).strip() for pattern in configured_patterns if str(pattern).strip())
+        if not isinstance(policy, dict) or not any(
+            _location_matches(pattern, actual_location) for pattern in patterns
+        ):
+            continue
+        if persisted_label and persisted_label != label:
+            return True, "", {}
+        return True, label, dict(policy)
+    return False, "", {}
+
+
 def market_policy_for_job(search_config: dict[str, Any], job: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Resolve one market from verified query provenance or concrete location."""
     policies = search_config.get("market_policies")
@@ -154,30 +196,10 @@ def market_policy_for_job(search_config: dict[str, Any], job: dict[str, Any]) ->
     if not actual_location:
         return "", {}
 
-    persisted_label = str(job.get("market_label") or "").strip()
-    if persisted_label not in policies or not any(
-        isinstance(item, dict)
-        and str(item.get("label") or item.get("location") or "").strip() == persisted_label
-        for item in locations
-    ):
-        persisted_label = ""
-
-    for location in locations:
-        if not isinstance(location, dict):
-            continue
-        label = str(location.get("label") or location.get("location") or "").strip()
-        configured_location = str(location.get("location") or "").strip()
-        policy = policies.get(label)
-        patterns = [configured_location]
-        configured_patterns = location.get("match_patterns")
-        if isinstance(configured_patterns, list):
-            patterns.extend(str(pattern).strip() for pattern in configured_patterns if str(pattern).strip())
-        if isinstance(policy, dict) and any(
-            _location_matches(pattern, actual_location) for pattern in patterns
-        ):
-            if persisted_label and persisted_label != label:
-                return "", {}
-            return label, dict(policy)
+    persisted_label = _validated_persisted_market_label(policies, locations, job)
+    resolved, label, policy = _configured_market_match(policies, locations, actual_location, persisted_label)
+    if resolved:
+        return label, policy
 
     if _is_broad_remote_or_unknown(actual_location) and persisted_label:
         persisted_policy = policies.get(persisted_label)

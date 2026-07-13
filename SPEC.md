@@ -194,6 +194,8 @@
 - V92: untrusted ZIP EOCD/central-directory + decompressed TAR raw headers/pseudo-members pass bounded streaming preflight before `ZipFile`/`TarFile`; parser metadata cannot outrun configured count/byte caps.
 - V93: distribution raw preflight + stdlib parse consume same continuously open verified file handle; path replacement cannot swap unchecked bytes into parser.
 - V94: fresh-install audit invokes locked developer `pip-audit` by explicit project-venv path against smoke site-packages; runtime extra need not/shall not supply audit tooling.
+- V95: 0.5.2 changed-method complexity check has no CodeFactor `Complex Method`/`Very Complex Method` finding; helper extraction preserves public behavior + V74-V94 gates.
+- V96: bounded integer config accepts only non-bool integers/base-10 integer strings within range; Linux + Windows mypy gates pass.
 
 ## §T
 
@@ -254,6 +256,7 @@
 |T53|retire stale score/action data + refresh official sources|verified backup, full active rescore/source audit, 0 stale actionable rows; V72,V73,V78,V85|x|
 |T54|add deterministic official ATS adapters|Greenhouse API extraction/live refresh + URL/provenance regressions; V73,V78,V86,V87|x|
 |T55|bind packet generation to candidate evidence + exact tailored artifact|job-only skill rejection, artifact-read, strict packet regeneration/visual QA; V38,V40,V85,V90|x|
+|T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|~|
 
 ## §B
 
@@ -450,3 +453,5 @@
 |B189|V94 workflow regression fails|publish smoke references unqualified auditor absent from clean runtime venv|V94|T52|invoke locked `.venv/bin/pip-audit` against smoke path; rerun release tests|
 |B190|V93 re-audit swaps archive after path `lstat` but before open; oversized replacement passes|regular/reparse/outer-size checks are not repeated/bound on live descriptor|V93|T52|live `fstat` + post-open path/descriptor identity; lstat-to-open ZIP/TAR regressions|
 |B191|2 live-handle V93 regressions accept oversized replacement ZIP/TAR|opened descriptor metadata is unchecked|V93|T52|shared descriptor verifier before raw preflight; rerun release gates|
+|B192|PR #11 CodeFactor fails with 12 complex + 1 very-complex changed method|policy/scoring/discovery/release logic accumulated multi-branch orchestration|V95|T56|extract cohesive helpers; preserve tests/security gates; rerun CodeFactor|
+|B193|release preflight stops on `_bounded_integer(object)` mypy error|helper annotation exposed unchecked numeric coercion + float acceptance|V96|T56|fail-closed scalar narrowing + named regression; rerun both mypy gates|

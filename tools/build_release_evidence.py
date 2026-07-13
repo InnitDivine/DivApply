@@ -109,25 +109,19 @@ def _default_export_sbom(destination: Path) -> None:
     )
 
 
-def _validate_sbom(path: Path) -> None:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError("release SBOM is not valid JSON") from exc
-    if payload.get("bomFormat") != "CycloneDX" or payload.get("specVersion") != "1.5":
-        raise ValueError("release SBOM must be CycloneDX 1.5")
-    if not isinstance(payload.get("components"), list):
-        raise ValueError("release SBOM components must be a list")
-
+def _require_root_ref(payload: dict) -> str:
     metadata = payload.get("metadata")
     root_component = metadata.get("component") if isinstance(metadata, dict) else None
     root_ref = root_component.get("bom-ref") if isinstance(root_component, dict) else None
     if not isinstance(root_ref, str) or not root_ref.strip():
         raise ValueError("release SBOM root component is missing a stable bom-ref")
+    return root_ref
 
+
+def _validate_jobspy_component(components: list) -> None:
     matches = [
         component
-        for component in payload["components"]
+        for component in components
         if isinstance(component, dict)
         and str(component.get("name") or "").casefold() in {"python-jobspy", "python_jobspy"}
     ]
@@ -143,7 +137,8 @@ def _validate_sbom(path: Path) -> None:
     ):
         raise ValueError("release SBOM JobSpy component conflicts with runtime contract")
 
-    dependencies = payload.get("dependencies")
+
+def _validated_dependency_nodes(dependencies: object) -> dict[str, set[str]]:
     if not isinstance(dependencies, list):
         raise ValueError("release SBOM dependencies must be a list")
     dependency_nodes: dict[str, set[str]] = {}
@@ -161,27 +156,30 @@ def _validate_sbom(path: Path) -> None:
         ):
             raise ValueError("release SBOM dependency graph is malformed")
         dependency_nodes[ref] = set(depends_on)
+    return dependency_nodes
+
+
+def _validate_sbom(path: Path) -> None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError("release SBOM is not valid JSON") from exc
+    if payload.get("bomFormat") != "CycloneDX" or payload.get("specVersion") != "1.5":
+        raise ValueError("release SBOM must be CycloneDX 1.5")
+    components = payload.get("components")
+    if not isinstance(components, list):
+        raise ValueError("release SBOM components must be a list")
+
+    root_ref = _require_root_ref(payload)
+    _validate_jobspy_component(components)
+    dependency_nodes = _validated_dependency_nodes(payload.get("dependencies"))
     if root_ref not in dependency_nodes or JOBSPY_BOM_REF not in dependency_nodes:
         raise ValueError("release SBOM dependency graph omits a required node")
     if JOBSPY_BOM_REF not in dependency_nodes[root_ref]:
         raise ValueError("release SBOM is missing the JobSpy dependency edge")
 
 
-def _supplement_jobspy_runtime(path: Path) -> None:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        components = payload["components"]
-        metadata = payload.get("metadata")
-        dependencies = payload["dependencies"]
-    except (KeyError, OSError, json.JSONDecodeError, TypeError) as exc:
-        raise ValueError("release SBOM cannot be supplemented") from exc
-    if not isinstance(components, list) or not isinstance(dependencies, list):
-        raise ValueError("release SBOM cannot be supplemented")
-    root_component = metadata.get("component") if isinstance(metadata, dict) else None
-    root_ref = root_component.get("bom-ref") if isinstance(root_component, dict) else None
-    if not isinstance(root_ref, str) or not root_ref.strip():
-        raise ValueError("release SBOM root component is missing a stable bom-ref")
-
+def _upsert_jobspy_component(components: list) -> dict:
     matches = [
         component
         for component in components
@@ -215,6 +213,10 @@ def _supplement_jobspy_runtime(path: Path) -> None:
             "hashes": expected_hashes,
         }
     )
+    return jobspy
+
+
+def _normalize_jobspy_properties(jobspy: dict) -> None:
     properties = jobspy.get("properties", [])
     if not isinstance(properties, list) or any(not isinstance(item, dict) for item in properties):
         raise ValueError("release SBOM JobSpy component conflicts with runtime contract")
@@ -227,6 +229,8 @@ def _supplement_jobspy_runtime(path: Path) -> None:
     )
     jobspy["properties"] = properties
 
+
+def _normalize_dependency_nodes(dependencies: list) -> dict[str, dict[str, object]]:
     dependency_by_ref: dict[str, dict[str, object]] = {}
     for dependency in dependencies:
         if not isinstance(dependency, dict):
@@ -239,7 +243,14 @@ def _supplement_jobspy_runtime(path: Path) -> None:
             raise ValueError("release SBOM dependency graph is malformed")
         dependency["dependsOn"] = sorted(set(depends_on))
         dependency_by_ref[ref] = dependency
+    return dependency_by_ref
 
+
+def _ensure_jobspy_dependency_edge(
+    dependencies: list,
+    dependency_by_ref: dict[str, dict[str, object]],
+    root_ref: str,
+) -> None:
     root_node = dependency_by_ref.get(root_ref)
     if root_node is None:
         root_node = {"ref": root_ref, "dependsOn": []}
@@ -253,6 +264,23 @@ def _supplement_jobspy_runtime(path: Path) -> None:
     if JOBSPY_BOM_REF not in dependency_by_ref:
         dependencies.append({"ref": JOBSPY_BOM_REF, "dependsOn": []})
     dependencies.sort(key=lambda dependency: str(dependency["ref"]))
+
+
+def _supplement_jobspy_runtime(path: Path) -> None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        components = payload["components"]
+        dependencies = payload["dependencies"]
+    except (KeyError, OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("release SBOM cannot be supplemented") from exc
+    if not isinstance(components, list) or not isinstance(dependencies, list):
+        raise ValueError("release SBOM cannot be supplemented")
+
+    root_ref = _require_root_ref(payload)
+    jobspy = _upsert_jobspy_component(components)
+    _normalize_jobspy_properties(jobspy)
+    dependency_by_ref = _normalize_dependency_nodes(dependencies)
+    _ensure_jobspy_dependency_edge(dependencies, dependency_by_ref, root_ref)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
@@ -335,15 +363,7 @@ def assemble_release_bundle(
     return bundle
 
 
-def verify_release_bundle(bundle_dir: Path) -> None:
-    """Validate manifest shape, containment, subject set, and every SHA256 digest."""
-    bundle_input = bundle_dir.expanduser()
-    if _is_link_or_reparse(bundle_input):
-        raise ValueError("release bundle must not be a link or reparse point")
-    bundle = bundle_input.resolve()
-    manifest = bundle / CHECKSUM_NAME
-    if not manifest.is_file() or _is_link_or_reparse(manifest):
-        raise ValueError("release checksum manifest is missing or unsafe")
+def _read_checksum_entries(bundle: Path, manifest: Path) -> dict[str, str]:
     entries: dict[str, str] = {}
     for line in manifest.read_text(encoding="utf-8").splitlines():
         match = CHECKSUM_LINE_RE.fullmatch(line)
@@ -363,6 +383,19 @@ def verify_release_bundle(bundle_dir: Path) -> None:
         if name in entries:
             raise ValueError(f"release checksum manifest has a duplicate checksum subject: {name}")
         entries[name] = match.group("digest")
+    return entries
+
+
+def verify_release_bundle(bundle_dir: Path) -> None:
+    """Validate manifest shape, containment, subject set, and every SHA256 digest."""
+    bundle_input = bundle_dir.expanduser()
+    if _is_link_or_reparse(bundle_input):
+        raise ValueError("release bundle must not be a link or reparse point")
+    bundle = bundle_input.resolve()
+    manifest = bundle / CHECKSUM_NAME
+    if not manifest.is_file() or _is_link_or_reparse(manifest):
+        raise ValueError("release checksum manifest is missing or unsafe")
+    entries = _read_checksum_entries(bundle, manifest)
 
     expected_names = {path.relative_to(bundle).as_posix() for path in _bundle_subjects(bundle)}
     if set(entries) != expected_names or not entries:

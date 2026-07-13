@@ -634,148 +634,136 @@ def normalize_search_config(cfg: dict | None) -> dict:
     return cfg
 
 
-def validate_search_config(cfg: dict | None = None) -> dict:
-    """Validate search config shape without contacting job boards."""
-    if cfg is None:
-        cfg = load_search_config()
-    raw_cfg = dict(cfg or {})
-    cfg = normalize_search_config(raw_cfg)
-
-    errors: list[str] = []
-    warnings: list[str] = []
-
-    legacy_aliases = {
-        "job_boards": "boards",
-        "search_terms": "queries",
-        "nearby_locations": "locations",
-        "reject_locations": "location.reject_patterns",
-        "target_titles": "include_titles",
-        "avoid_titles": "exclude_titles",
-        "avoid_keywords": "excluded_keywords",
-        "trusted_sites": "trusted_local_sites",
-        "part_time_titles": "customer_service_title_terms",
-    }
-    for old_key, new_key in legacy_aliases.items():
-        if old_key in raw_cfg:
-            warnings.append(f"{old_key} is a legacy searches.yaml key; prefer {new_key}")
-    if "sites" in raw_cfg and ("boards" not in raw_cfg or raw_cfg.get("sites") != raw_cfg.get("boards")):
-        warnings.append("sites is a legacy searches.yaml key; prefer boards")
-
-    queries = cfg.get("queries", [])
-    locations = cfg.get("locations", [])
-    if not isinstance(queries, list) or not queries:
-        errors.append("searches.yaml needs a non-empty queries list")
-    if not isinstance(locations, list) or not locations:
-        errors.append("searches.yaml needs a non-empty locations list")
-
-    for idx, query in enumerate(queries if isinstance(queries, list) else []):
-        if not isinstance(query, dict) or not query.get("query"):
-            errors.append(f"queries[{idx}] needs a query string")
-
-    known_location_labels = {
+def _known_location_labels(locations: list[object]) -> set[str]:
+    return {
         str(location.get("label") or location.get("location") or "").strip()
         for location in locations
         if isinstance(location, dict)
     }
-    for idx, query in enumerate(queries if isinstance(queries, list) else []):
+
+
+def _validate_search_queries(
+    queries: list[object],
+    known_location_labels: set[str],
+    errors: list[str],
+) -> None:
+    for index, query in enumerate(queries):
+        if not isinstance(query, dict) or not query.get("query"):
+            errors.append(f"queries[{index}] needs a query string")
+    for index, query in enumerate(queries):
         if not isinstance(query, dict):
             continue
         scopes = query.get("location_labels")
         if scopes is None:
             continue
         if not isinstance(scopes, list):
-            errors.append(f"queries[{idx}].location_labels must be a list")
+            errors.append(f"queries[{index}].location_labels must be a list")
             continue
         for scope in scopes:
             scope_text = str(scope).strip()
             if scope_text not in known_location_labels:
-                errors.append(f"queries[{idx}].location_labels contains unknown location '{scope_text}'")
+                errors.append(f"queries[{index}].location_labels contains unknown location '{scope_text}'")
 
-    for idx, location in enumerate(locations if isinstance(locations, list) else []):
+
+def _validate_search_locations(locations: list[object], errors: list[str]) -> None:
+    for index, location in enumerate(locations):
         if not isinstance(location, dict) or not location.get("location"):
-            errors.append(f"locations[{idx}] needs a location string")
+            errors.append(f"locations[{index}] needs a location string")
             continue
         patterns = location.get("match_patterns")
         if patterns is not None and (
             not isinstance(patterns, list)
             or any(not isinstance(pattern, str) or "," not in pattern for pattern in patterns)
         ):
-            errors.append(f"locations[{idx}].match_patterns must be state-qualified strings")
+            errors.append(f"locations[{index}].match_patterns must be state-qualified strings")
 
+
+def _validate_target_families(cfg: dict, errors: list[str]) -> None:
     target_families = cfg.get("target_families", [])
     if target_families and not isinstance(target_families, list):
         errors.append("target_families must be a list")
-    for idx, family in enumerate(target_families if isinstance(target_families, list) else []):
+    for index, family in enumerate(target_families if isinstance(target_families, list) else []):
         if not isinstance(family, dict):
-            errors.append(f"target_families[{idx}] must be a mapping")
+            errors.append(f"target_families[{index}] must be a mapping")
             continue
         if not str(family.get("name") or "").strip():
-            errors.append(f"target_families[{idx}] needs a name")
+            errors.append(f"target_families[{index}] needs a name")
         priority = family.get("priority")
         try:
             valid_priority = not isinstance(priority, bool) and int(str(priority)) in {1, 2, 3}
         except (TypeError, ValueError):
             valid_priority = False
         if not valid_priority:
-            errors.append(f"target_families[{idx}].priority must be an integer from 1 to 3")
+            errors.append(f"target_families[{index}].priority must be an integer from 1 to 3")
 
-    preferred_schedule = str(cfg.get("preferred_schedule") or "any").strip().casefold()
-    if preferred_schedule not in {"any", "full_time", "part_time"}:
-        errors.append("preferred_schedule must be one of: any, full_time, part_time")
 
+def _bounded_integer(value: object, lower: int, upper: int) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, str)):
+        return False
+    try:
+        return lower <= int(value) <= upper
+    except ValueError:
+        return False
+
+
+def _validate_market_policy_entry(
+    label: object,
+    policy: object,
+    known_location_labels: set[str],
+    errors: list[str],
+) -> None:
+    label_text = str(label).strip()
+    prefix = f"market_policies.{label_text}"
+    if label_text not in known_location_labels:
+        errors.append(f"market_policies contains unknown location label '{label_text}'")
+    if not isinstance(policy, dict):
+        errors.append(f"{prefix} must be a mapping")
+        return
+    schedule = str(policy.get("preferred_schedule") or "any").strip().casefold()
+    if schedule not in {"any", "full_time", "part_time"}:
+        errors.append(f"{prefix}.preferred_schedule is invalid")
+    for key in ("require_part_time", "require_benefits"):
+        if key in policy and not isinstance(policy[key], bool):
+            errors.append(f"{prefix}.{key} must be boolean")
+    application_mode = str(policy.get("application_mode") or "manual_review").strip().casefold()
+    if application_mode not in {"active", "discovery_only", "manual_review"}:
+        errors.append(f"{prefix}.application_mode is invalid")
+    if "max_hours_per_week" in policy and not _bounded_integer(policy["max_hours_per_week"], 1, 168):
+        errors.append(f"{prefix}.max_hours_per_week must be an integer from 1 to 168")
+
+
+def _validate_market_policies(raw_cfg: dict, known_location_labels: set[str], errors: list[str]) -> None:
     market_policies = raw_cfg.get("market_policies")
-    default_market_label = str(raw_cfg.get("default_market_label") or "").strip()
-    if market_policies is not None and not isinstance(market_policies, dict):
+    if market_policies is None:
+        return
+    if not isinstance(market_policies, dict):
         errors.append("market_policies must be a mapping")
-    elif isinstance(market_policies, dict):
-        if default_market_label not in known_location_labels:
-            errors.append("default_market_label must name a configured location label")
-        for label, policy in market_policies.items():
-            label_text = str(label).strip()
-            prefix = f"market_policies.{label_text}"
-            if label_text not in known_location_labels:
-                errors.append(f"market_policies contains unknown location label '{label_text}'")
-            if not isinstance(policy, dict):
-                errors.append(f"{prefix} must be a mapping")
-                continue
-            schedule = str(policy.get("preferred_schedule") or "any").strip().casefold()
-            if schedule not in {"any", "full_time", "part_time"}:
-                errors.append(f"{prefix}.preferred_schedule is invalid")
-            for key in ("require_part_time", "require_benefits"):
-                if key in policy and not isinstance(policy[key], bool):
-                    errors.append(f"{prefix}.{key} must be boolean")
-            application_mode = str(policy.get("application_mode") or "manual_review").strip().casefold()
-            if application_mode not in {"active", "discovery_only", "manual_review"}:
-                errors.append(f"{prefix}.application_mode is invalid")
-            if "max_hours_per_week" in policy:
-                try:
-                    valid_hours = (
-                        not isinstance(policy["max_hours_per_week"], bool)
-                        and 1 <= int(policy["max_hours_per_week"]) <= 168
-                    )
-                except (TypeError, ValueError):
-                    valid_hours = False
-                if not valid_hours:
-                    errors.append(f"{prefix}.max_hours_per_week must be an integer from 1 to 168")
+        return
+    default_market_label = str(raw_cfg.get("default_market_label") or "").strip()
+    if default_market_label not in known_location_labels:
+        errors.append("default_market_label must name a configured location label")
+    for label, policy in market_policies.items():
+        _validate_market_policy_entry(label, policy, known_location_labels, errors)
 
+
+def _validate_coursework_context(raw_cfg: dict, errors: list[str]) -> None:
     coursework_context = raw_cfg.get("coursework_context")
-    if coursework_context is not None and not isinstance(coursework_context, dict):
+    if coursework_context is None:
+        return
+    if not isinstance(coursework_context, dict):
         errors.append("coursework_context must be a mapping")
-    elif isinstance(coursework_context, dict):
-        for key in ("include_patterns", "exclude_patterns", "skill_exclude_patterns"):
-            value = coursework_context.get(key)
-            if value is not None and (
-                not isinstance(value, list) or any(not isinstance(item, str) for item in value)
-            ):
-                errors.append(f"coursework_context.{key} must be a list")
-        max_per_school = coursework_context.get("max_per_school", 12)
-        try:
-            valid_max = not isinstance(max_per_school, bool) and 1 <= int(max_per_school) <= 24
-        except (TypeError, ValueError):
-            valid_max = False
-        if not valid_max:
-            errors.append("coursework_context.max_per_school must be an integer from 1 to 24")
+        return
+    for key in ("include_patterns", "exclude_patterns", "skill_exclude_patterns"):
+        value = coursework_context.get(key)
+        if value is not None and (
+            not isinstance(value, list) or any(not isinstance(item, str) for item in value)
+        ):
+            errors.append(f"coursework_context.{key} must be a list")
+    if not _bounded_integer(coursework_context.get("max_per_school", 12), 1, 24):
+        errors.append("coursework_context.max_per_school must be an integer from 1 to 24")
 
+
+def _validate_board_fields(cfg: dict, errors: list[str], warnings: list[str]) -> None:
     sites_value = cfg.get("sites")
     boards_value = cfg.get("boards")
     boards = sites_value or boards_value or []
@@ -784,6 +772,8 @@ def validate_search_config(cfg: dict | None = None) -> dict:
     if sites_value and boards_value and sites_value != boards_value:
         warnings.append("sites and boards differ; discovery will prefer sites")
 
+
+def _validate_list_filter_fields(cfg: dict, errors: list[str]) -> None:
     filters = cfg.get("filters", {}) or {}
     list_fields = (
         "exclude_titles",
@@ -802,22 +792,34 @@ def validate_search_config(cfg: dict | None = None) -> dict:
         if value and not isinstance(value, list):
             errors.append(f"{key} must be a list")
 
+
+def _validate_location_filter_fields(cfg: dict, errors: list[str]) -> None:
     location_cfg = cfg.get("location", {}) or {}
     for key in ("accept_patterns", "reject_patterns"):
         value = location_cfg.get(key, [])
         if value and not isinstance(value, list):
             errors.append(f"location.{key} must be a list")
 
-    max_cs_hours = cfg.get(
+
+def _validate_filter_fields(cfg: dict, errors: list[str], warnings: list[str]) -> None:
+    _validate_board_fields(cfg, errors, warnings)
+    _validate_list_filter_fields(cfg, errors)
+    _validate_location_filter_fields(cfg, errors)
+
+
+def _validate_search_limits_and_location_tokens(cfg: dict, errors: list[str], warnings: list[str]) -> None:
+    filters = cfg.get("filters", {}) or {}
+    max_hours = cfg.get(
         "customer_service_max_hours_per_week",
         filters.get("customer_service_max_hours_per_week", 0),
     )
-    if max_cs_hours not in (None, ""):
+    if max_hours not in (None, ""):
         try:
-            int(max_cs_hours)
+            int(max_hours)
         except (TypeError, ValueError):
             errors.append("customer_service_max_hours_per_week must be an integer")
 
+    location_cfg = cfg.get("location", {}) or {}
     location_lists = {
         "location_accept": cfg.get("location_accept", []) or location_cfg.get("accept_patterns", []) or [],
         "location_reject_non_remote": cfg.get("location_reject_non_remote", [])
@@ -830,8 +832,49 @@ def validate_search_config(cfg: dict | None = None) -> dict:
             if 0 < len(token_text) <= 2:
                 warnings.append(f"{key} contains short token '{token_text}'; use full city/state names when possible")
 
+
+def _legacy_search_warnings(raw_cfg: dict) -> list[str]:
+    aliases = {
+        "job_boards": "boards",
+        "search_terms": "queries",
+        "nearby_locations": "locations",
+        "reject_locations": "location.reject_patterns",
+        "target_titles": "include_titles",
+        "avoid_titles": "exclude_titles",
+        "avoid_keywords": "excluded_keywords",
+        "trusted_sites": "trusted_local_sites",
+        "part_time_titles": "customer_service_title_terms",
+    }
+    warnings = [
+        f"{old_key} is a legacy searches.yaml key; prefer {new_key}"
+        for old_key, new_key in aliases.items()
+        if old_key in raw_cfg
+    ]
+    if "sites" in raw_cfg and ("boards" not in raw_cfg or raw_cfg.get("sites") != raw_cfg.get("boards")):
+        warnings.append("sites is a legacy searches.yaml key; prefer boards")
+    return warnings
+
+
+def _search_collection_context(cfg: dict, errors: list[str]) -> tuple[list[object], list[object], set[str]]:
+    queries = cfg.get("queries", [])
+    locations = cfg.get("locations", [])
+    if not isinstance(queries, list) or not queries:
+        errors.append("searches.yaml needs a non-empty queries list")
+    if not isinstance(locations, list) or not locations:
+        errors.append("searches.yaml needs a non-empty locations list")
+    query_items = queries if isinstance(queries, list) else []
+    location_items = locations if isinstance(locations, list) else []
+    return query_items, location_items, _known_location_labels(location_items)
+
+
+def _validate_schedule_preferences(cfg: dict, errors: list[str], warnings: list[str]) -> None:
+    preferred_schedule = str(cfg.get("preferred_schedule") or "any").strip().casefold()
+    if preferred_schedule not in {"any", "full_time", "part_time"}:
+        errors.append("preferred_schedule must be one of: any, full_time, part_time")
+
+    filters = cfg.get("filters", {}) or {}
     remote_pref = str(cfg.get("remote_preference") or filters.get("remote_preference") or "any").lower()
-    if remote_pref not in {
+    valid_remote_preferences = {
         "any",
         "all",
         "none",
@@ -843,8 +886,29 @@ def validate_search_config(cfg: dict | None = None) -> dict:
         "onsite",
         "on_site",
         "office",
-    }:
+    }
+    if remote_pref not in valid_remote_preferences:
         warnings.append(f"remote_preference '{remote_pref}' is unknown; it will be treated as any")
+
+
+def validate_search_config(cfg: dict | None = None) -> dict:
+    """Validate search config shape without contacting job boards."""
+    if cfg is None:
+        cfg = load_search_config()
+    raw_cfg = dict(cfg or {})
+    cfg = normalize_search_config(raw_cfg)
+
+    errors: list[str] = []
+    warnings = _legacy_search_warnings(raw_cfg)
+    query_items, location_items, known_location_labels = _search_collection_context(cfg, errors)
+    _validate_search_queries(query_items, known_location_labels, errors)
+    _validate_search_locations(location_items, errors)
+    _validate_target_families(cfg, errors)
+    _validate_schedule_preferences(cfg, errors, warnings)
+    _validate_market_policies(raw_cfg, known_location_labels, errors)
+    _validate_coursework_context(raw_cfg, errors)
+    _validate_filter_fields(cfg, errors, warnings)
+    _validate_search_limits_and_location_tokens(cfg, errors, warnings)
 
     return {"passed": not errors, "errors": errors, "warnings": warnings}
 

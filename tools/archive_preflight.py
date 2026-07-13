@@ -52,15 +52,7 @@ def _discard_exact(stream: BinaryIO, size: int, *, label: str) -> None:
         remaining -= len(chunk)
 
 
-def preflight_zip(
-    stream: BinaryIO,
-    *,
-    max_members: int,
-    max_member_bytes: int,
-    max_total_bytes: int,
-    max_metadata_bytes: int,
-) -> list[PreflightIssue]:
-    """Inspect EOCD and fixed central-directory records without constructing ZipFile."""
+def _read_zip_end_record(stream: BinaryIO) -> tuple[int, int, int, int]:
     stream.seek(0, io.SEEK_END)
     archive_size = stream.tell()
     if archive_size < _ZIP_EOCD.size:
@@ -72,7 +64,6 @@ def preflight_zip(
     if relative_eocd < 0 or relative_eocd + _ZIP_EOCD.size > len(tail):
         raise ValueError("ZIP end record is missing")
     eocd_offset = archive_size - tail_size + relative_eocd
-    end_record = _ZIP_EOCD.unpack_from(tail, relative_eocd)
     (
         _signature,
         disk_number,
@@ -82,7 +73,7 @@ def preflight_zip(
         directory_size,
         directory_offset,
         comment_size,
-    ) = end_record
+    ) = _ZIP_EOCD.unpack_from(tail, relative_eocd)
     if eocd_offset + _ZIP_EOCD.size + comment_size != archive_size:
         raise ValueError("ZIP end record has an invalid comment length")
     if disk_number != 0 or directory_disk != 0 or entries_on_disk != declared_entries:
@@ -93,18 +84,25 @@ def preflight_zip(
         or directory_offset == _ZIP_SENTINEL_32
     ):
         raise ValueError("ZIP64 metadata is unsupported by the bounded scanner")
+    return eocd_offset, declared_entries, directory_size, directory_offset
 
-    issues: list[PreflightIssue] = []
-    if declared_entries > max_members:
-        _add_issue(issues, "member_count_limit", max_members + 1)
-    if directory_size > max_metadata_bytes:
-        _add_issue(issues, "archive_metadata_limit", 1)
-        return issues
 
+def _scan_zip_central_directory(
+    stream: BinaryIO,
+    *,
+    eocd_offset: int,
+    directory_size: int,
+    directory_offset: int,
+    declared_entries: int,
+    max_members: int,
+    max_member_bytes: int,
+    max_total_bytes: int,
+) -> list[PreflightIssue]:
     central_start = eocd_offset - directory_size
     if central_start < 0 or directory_offset > central_start:
         raise ValueError("ZIP central directory has an invalid offset")
     stream.seek(central_start)
+    issues: list[PreflightIssue] = []
     actual_entries = 0
     expanded_total = 0
     while stream.tell() < eocd_offset:
@@ -136,6 +134,38 @@ def preflight_zip(
 
     if stream.tell() == eocd_offset and actual_entries != declared_entries:
         raise ValueError("ZIP central-directory count does not match end record")
+    return issues
+
+
+def preflight_zip(
+    stream: BinaryIO,
+    *,
+    max_members: int,
+    max_member_bytes: int,
+    max_total_bytes: int,
+    max_metadata_bytes: int,
+) -> list[PreflightIssue]:
+    """Inspect EOCD and fixed central-directory records without constructing ZipFile."""
+    eocd_offset, declared_entries, directory_size, directory_offset = _read_zip_end_record(stream)
+
+    issues: list[PreflightIssue] = []
+    if declared_entries > max_members:
+        _add_issue(issues, "member_count_limit", max_members + 1)
+    if directory_size > max_metadata_bytes:
+        _add_issue(issues, "archive_metadata_limit", 1)
+        return issues
+
+    for code, index in _scan_zip_central_directory(
+        stream,
+        eocd_offset=eocd_offset,
+        directory_size=directory_size,
+        directory_offset=directory_offset,
+        declared_entries=declared_entries,
+        max_members=max_members,
+        max_member_bytes=max_member_bytes,
+        max_total_bytes=max_total_bytes,
+    ):
+        _add_issue(issues, code, index)
     return sorted(issues)
 
 
@@ -173,6 +203,57 @@ def _preflight_gzip_header(stream: BinaryIO, max_metadata_bytes: int) -> list[Pr
         stream.seek(start)
 
 
+def _finish_tar_stream(
+    archive: BinaryIO,
+    *,
+    metadata_total: int,
+    index: int,
+    max_metadata_bytes: int,
+    issues: list[PreflightIssue],
+) -> list[PreflightIssue]:
+    second_end = _read_exact(archive, _TAR_BLOCK, label="TAR second end marker")
+    metadata_total += _TAR_BLOCK
+    if second_end != b"\x00" * _TAR_BLOCK:
+        raise ValueError("TAR archive has an invalid end marker")
+    while chunk := archive.read(_READ_CHUNK):
+        metadata_total += len(chunk)
+        if metadata_total > max_metadata_bytes:
+            return [("archive_metadata_limit", max(index, 1))]
+        if chunk.strip(b"\x00"):
+            raise ValueError("TAR archive has nonzero trailing data")
+    return sorted(issues)
+
+
+def _inspect_tar_member(
+    header: bytes,
+    *,
+    index: int,
+    expanded_total: int,
+    metadata_total: int,
+    max_member_bytes: int,
+    max_total_bytes: int,
+    max_metadata_bytes: int,
+) -> tuple[int, int, int, list[PreflightIssue]]:
+    try:
+        member = tarfile.TarInfo.frombuf(header, "utf-8", "surrogateescape")
+    except tarfile.HeaderError as exc:
+        raise ValueError("TAR header is invalid") from exc
+    issues: list[PreflightIssue] = []
+    size = int(member.size)
+    if size < 0 or size > max_member_bytes:
+        _add_issue(issues, "member_size_limit", index)
+    expanded_total += max(size, 0)
+    if expanded_total > max_total_bytes:
+        _add_issue(issues, "expanded_size_limit", index)
+    padding = (-size) % _TAR_BLOCK if size >= 0 else 0
+    metadata_total += padding
+    if metadata_total > max_metadata_bytes:
+        _add_issue(issues, "archive_metadata_limit", index)
+    if member.type in _TAR_EXTENSION_TYPES:
+        _add_issue(issues, "archive_metadata_extension", index)
+    return size + padding, expanded_total, metadata_total, sorted(issues)
+
+
 def preflight_tar_gzip(
     stream: BinaryIO,
     *,
@@ -199,37 +280,26 @@ def preflight_tar_gzip(
             if metadata_total > max_metadata_bytes:
                 return [("archive_metadata_limit", max(index, 1))]
             if header == b"\x00" * _TAR_BLOCK:
-                second_end = _read_exact(archive, _TAR_BLOCK, label="TAR second end marker")
-                metadata_total += _TAR_BLOCK
-                if second_end != b"\x00" * _TAR_BLOCK:
-                    raise ValueError("TAR archive has an invalid end marker")
-                while chunk := archive.read(_READ_CHUNK):
-                    metadata_total += len(chunk)
-                    if metadata_total > max_metadata_bytes:
-                        return [("archive_metadata_limit", max(index, 1))]
-                    if chunk.strip(b"\x00"):
-                        raise ValueError("TAR archive has nonzero trailing data")
-                return sorted(issues)
+                return _finish_tar_stream(
+                    archive,
+                    metadata_total=metadata_total,
+                    index=index,
+                    max_metadata_bytes=max_metadata_bytes,
+                    issues=issues,
+                )
 
             index += 1
             if index > max_members:
                 return [("member_count_limit", index)]
-            try:
-                member = tarfile.TarInfo.frombuf(header, "utf-8", "surrogateescape")
-            except tarfile.HeaderError as exc:
-                raise ValueError("TAR header is invalid") from exc
-            size = int(member.size)
-            if size < 0 or size > max_member_bytes:
-                _add_issue(issues, "member_size_limit", index)
-            expanded_total += max(size, 0)
-            if expanded_total > max_total_bytes:
-                _add_issue(issues, "expanded_size_limit", index)
-            padding = (-size) % _TAR_BLOCK if size >= 0 else 0
-            metadata_total += padding
-            if metadata_total > max_metadata_bytes:
-                _add_issue(issues, "archive_metadata_limit", index)
-            if member.type in _TAR_EXTENSION_TYPES:
-                _add_issue(issues, "archive_metadata_extension", index)
-            if issues:
-                return sorted(issues)
-            _discard_exact(archive, size + padding, label="TAR member data")
+            discard_bytes, expanded_total, metadata_total, member_issues = _inspect_tar_member(
+                header,
+                index=index,
+                expanded_total=expanded_total,
+                metadata_total=metadata_total,
+                max_member_bytes=max_member_bytes,
+                max_total_bytes=max_total_bytes,
+                max_metadata_bytes=max_metadata_bytes,
+            )
+            if member_issues:
+                return member_issues
+            _discard_exact(archive, discard_bytes, label="TAR member data")

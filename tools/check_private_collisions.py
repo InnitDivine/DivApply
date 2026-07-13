@@ -161,6 +161,115 @@ def _archive_kind(name: str) -> str | None:
     return None
 
 
+def _enforce_archive_preflight(kind: str | None, payload: bytes, budget: _ArchiveBudget) -> None:
+    remaining_members = max(0, MAX_ARCHIVE_MEMBERS - budget.members)
+    remaining_total = max(0, MAX_ARCHIVE_TOTAL_BYTES - budget.total_bytes)
+    raw_stream = io.BytesIO(payload)
+    if kind == "zip":
+        issues = _ARCHIVE_PREFLIGHT.preflight_zip(
+            raw_stream,
+            max_members=remaining_members,
+            max_member_bytes=MAX_ARCHIVE_MEMBER_BYTES,
+            max_total_bytes=remaining_total,
+            max_metadata_bytes=MAX_ARCHIVE_METADATA_BYTES,
+        )
+    elif kind == "tar":
+        issues = _ARCHIVE_PREFLIGHT.preflight_tar_gzip(
+            raw_stream,
+            max_members=remaining_members,
+            max_member_bytes=MAX_ARCHIVE_MEMBER_BYTES,
+            max_total_bytes=remaining_total,
+            max_metadata_bytes=MAX_ARCHIVE_METADATA_BYTES,
+        )
+    else:
+        issues = []
+    if not issues:
+        return
+    messages = {
+        "archive_metadata_extension": "archive uses unsupported extended metadata",
+        "archive_metadata_limit": "archive exceeds private-scan metadata limit",
+        "expanded_size_limit": "archive exceeds private-scan expansion limit",
+        "member_count_limit": "archive exceeds private-scan member limit",
+        "member_size_limit": "archive member exceeds private-scan size limit",
+    }
+    raise ValueError(messages.get(issues[0][0], "archive metadata preflight failed"))
+
+
+def _scan_zip_payload(
+    *,
+    label: str,
+    payload: bytes,
+    needles: list[Needle],
+    depth: int,
+    budget: _ArchiveBudget,
+) -> list[Collision]:
+    collisions: list[Collision] = []
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        members = archive.infolist()
+        for info in members:
+            budget.consume(0 if info.is_dir() else int(info.file_size))
+        for info in members:
+            if info.is_dir():
+                continue
+            with archive.open(info) as stream:
+                member_payload = stream.read(MAX_ARCHIVE_MEMBER_BYTES + 1)
+            if len(member_payload) != info.file_size:
+                raise ValueError("archive member size changed during private scan")
+            member_label = f"{label}:{info.filename}"
+            collisions.extend(_scan_blob(member_label, member_payload, needles))
+            if _archive_kind(info.filename):
+                collisions.extend(
+                    _scan_archive_payload(
+                        label=member_label,
+                        archive_name=info.filename,
+                        payload=member_payload,
+                        needles=needles,
+                        depth=depth + 1,
+                        budget=budget,
+                    )
+                )
+    return collisions
+
+
+def _scan_tar_payload(
+    *,
+    label: str,
+    payload: bytes,
+    needles: list[Needle],
+    depth: int,
+    budget: _ArchiveBudget,
+) -> list[Collision]:
+    collisions: list[Collision] = []
+    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
+        members: list[tarfile.TarInfo] = []
+        for member in archive:
+            budget.consume(int(member.size) if member.isfile() else 0)
+            members.append(member)
+        for member in members:
+            if not member.isfile():
+                continue
+            stream = archive.extractfile(member)
+            if stream is None:  # pragma: no cover - tarfile contract guard
+                continue
+            member_payload = stream.read(MAX_ARCHIVE_MEMBER_BYTES + 1)
+            if len(member_payload) != member.size:
+                raise ValueError("archive member size changed during private scan")
+            member_label = f"{label}:{member.name}"
+            collisions.extend(_scan_blob(member_label, member_payload, needles))
+            if _archive_kind(member.name):
+                collisions.extend(
+                    _scan_archive_payload(
+                        label=member_label,
+                        archive_name=member.name,
+                        payload=member_payload,
+                        needles=needles,
+                        depth=depth + 1,
+                        budget=budget,
+                    )
+                )
+    return collisions
+
+
 def _scan_archive_payload(
     *,
     label: str,
@@ -173,94 +282,25 @@ def _scan_archive_payload(
     if depth > MAX_ARCHIVE_DEPTH:
         raise ValueError("archive exceeds private-scan nesting limit")
 
-    collisions: list[Collision] = []
     kind = _archive_kind(archive_name)
-    remaining_members = max(0, MAX_ARCHIVE_MEMBERS - budget.members)
-    remaining_total = max(0, MAX_ARCHIVE_TOTAL_BYTES - budget.total_bytes)
-    raw_stream = io.BytesIO(payload)
+    _enforce_archive_preflight(kind, payload, budget)
     if kind == "zip":
-        preflight_issues = _ARCHIVE_PREFLIGHT.preflight_zip(
-            raw_stream,
-            max_members=remaining_members,
-            max_member_bytes=MAX_ARCHIVE_MEMBER_BYTES,
-            max_total_bytes=remaining_total,
-            max_metadata_bytes=MAX_ARCHIVE_METADATA_BYTES,
+        return _scan_zip_payload(
+            label=label,
+            payload=payload,
+            needles=needles,
+            depth=depth,
+            budget=budget,
         )
-    elif kind == "tar":
-        preflight_issues = _ARCHIVE_PREFLIGHT.preflight_tar_gzip(
-            raw_stream,
-            max_members=remaining_members,
-            max_member_bytes=MAX_ARCHIVE_MEMBER_BYTES,
-            max_total_bytes=remaining_total,
-            max_metadata_bytes=MAX_ARCHIVE_METADATA_BYTES,
+    if kind == "tar":
+        return _scan_tar_payload(
+            label=label,
+            payload=payload,
+            needles=needles,
+            depth=depth,
+            budget=budget,
         )
-    else:
-        preflight_issues = []
-    if preflight_issues:
-        code = preflight_issues[0][0]
-        messages = {
-            "archive_metadata_extension": "archive uses unsupported extended metadata",
-            "archive_metadata_limit": "archive exceeds private-scan metadata limit",
-            "expanded_size_limit": "archive exceeds private-scan expansion limit",
-            "member_count_limit": "archive exceeds private-scan member limit",
-            "member_size_limit": "archive member exceeds private-scan size limit",
-        }
-        raise ValueError(messages.get(code, "archive metadata preflight failed"))
-
-    if kind == "zip":
-        with zipfile.ZipFile(io.BytesIO(payload)) as archive:
-            members = archive.infolist()
-            for info in members:
-                budget.consume(0 if info.is_dir() else int(info.file_size))
-            for info in members:
-                if info.is_dir():
-                    continue
-                with archive.open(info) as stream:
-                    member_payload = stream.read(MAX_ARCHIVE_MEMBER_BYTES + 1)
-                if len(member_payload) != info.file_size:
-                    raise ValueError("archive member size changed during private scan")
-                member_label = f"{label}:{info.filename}"
-                collisions.extend(_scan_blob(member_label, member_payload, needles))
-                if _archive_kind(info.filename):
-                    collisions.extend(
-                        _scan_archive_payload(
-                            label=member_label,
-                            archive_name=info.filename,
-                            payload=member_payload,
-                            needles=needles,
-                            depth=depth + 1,
-                            budget=budget,
-                        )
-                    )
-    elif kind == "tar":
-        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
-            members: list[tarfile.TarInfo] = []
-            for member in archive:
-                budget.consume(int(member.size) if member.isfile() else 0)
-                members.append(member)
-            for member in members:
-                if not member.isfile():
-                    continue
-                stream = archive.extractfile(member)
-                if stream is None:  # pragma: no cover - tarfile contract guard
-                    continue
-                member_payload = stream.read(MAX_ARCHIVE_MEMBER_BYTES + 1)
-                if len(member_payload) != member.size:
-                    raise ValueError("archive member size changed during private scan")
-                member_label = f"{label}:{member.name}"
-                collisions.extend(_scan_blob(member_label, member_payload, needles))
-                if _archive_kind(member.name):
-                    collisions.extend(
-                        _scan_archive_payload(
-                            label=member_label,
-                            archive_name=member.name,
-                            payload=member_payload,
-                            needles=needles,
-                            depth=depth + 1,
-                            budget=budget,
-                        )
-                    )
-    return collisions
+    return []
 
 
 def _scan_archive(path: Path, needles: list[Needle], *, label: str | None = None) -> list[Collision]:
