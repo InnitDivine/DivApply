@@ -5,8 +5,9 @@ All notable changes to DivApply will be documented here.
 ## 0.5.1
 
 - Removed the compatibility-only `jobspy-upstream` extra so no published DivApply dependency path can resolve JobSpy's vulnerable `markdownify<0.14.1` requirement.
-- Kept the supported JobSpy setup on the audited `divapply[full]` dependency floor plus exact `python-jobspy==1.1.82 --no-deps` install.
+- Kept the supported JobSpy setup on the audited `divapply[full]` dependency floor plus the exact hash-verified JobSpy 1.1.82 wheel.
 - Added a regression that rejects vulnerable Markdownify versions anywhere in the universal lockfile.
+- Mirrored every compatible upstream JobSpy dependency bound, added an installed-runtime validator/audit, and removed all retired-extra lock markers.
 
 ## 0.5.0
 

@@ -28,7 +28,7 @@ Recommended CLI install with `pip`:
 python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
-python -m pip install --no-deps python-jobspy==1.1.82
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 python -m playwright install chromium
 divapply init
 divapply edit
@@ -43,7 +43,7 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install "divapply[full]"
-python -m pip install --no-deps python-jobspy==1.1.82
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 python -m playwright install chromium
 divapply init
 divapply edit
@@ -55,10 +55,10 @@ Alternative development install from the current GitHub `main` branch:
 ```powershell
 python --version  # expected on the maintained Windows setup: Python 3.12.13
 python -m pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
-python -m pip install --no-deps python-jobspy==1.1.82
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 ```
 
-Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for the secure JobSpy runtime dependency floor, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins `markdownify<0.14.0`, which conflicts with the CVE-2025-46656 fix in `markdownify>=0.14.1`, install DivApply's secure dependency floor first, then install exact `python-jobspy==1.1.82` separately with `--no-deps`. If JobSpy is missing, run `python -m pip install "divapply[full]" && python -m pip install --no-deps python-jobspy==1.1.82`. Until upstream relaxes that pin, `pip check` may still report the stale `python-jobspy` metadata conflict even when `pip-audit` shows no vulnerable `markdownify` version installed.
+Use `divapply` without extras for the lightest install. Use `divapply[coursework]` for PDF transcript import, `divapply[jobspy-runtime]` for the secure JobSpy runtime dependency floor, or `divapply[full]` for both coursework and JobSpy runtime dependencies. Because the current `python-jobspy` package pins `markdownify<0.14.0`, which conflicts with the CVE-2025-46656 fix in `markdownify>=0.14.1`, install DivApply's secure dependency floor first, then install the exact hash-verified JobSpy 1.1.82 wheel shown above with `--no-deps`. Run `python -m divapply.jobspy_runtime` to verify every installed JobSpy dependency bound. Until upstream relaxes that pin, `pip check` may still report the intentional Markdownify metadata conflict even when `pip-audit` and DivApply's runtime validator pass.
 
 On Windows, DivApply installs plain `divapply`/`divapply.cmd` launchers instead of relying on a generated `divapply.exe`, so managed PCs that block generated console-script executables can still run `divapply` directly from `cmd`.
 
@@ -79,7 +79,7 @@ Update an existing clone:
 ```powershell
 git pull
 python -m pip install --upgrade -e ".[full]"
-python -m pip install --no-deps python-jobspy==1.1.82
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 ```
 
 ## First Run

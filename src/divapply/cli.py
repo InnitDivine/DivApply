@@ -14,6 +14,7 @@ from rich.console import Console
 from rich.table import Table
 
 from divapply import __version__
+from divapply.jobspy_runtime import JOBSPY_WHEEL_URL, validate_installed_jobspy
 from divapply.manual_url import extract_manual_job_metadata
 from divapply.privacy import redact_error_snippet
 
@@ -1467,10 +1468,19 @@ def doctor() -> None:
     # jobspy (discovery dep installed separately)
     try:
         import jobspy  # noqa: F401
-        results.append(("python-jobspy", ok_mark, "Job board scraping available"))
+        jobspy_issues = validate_installed_jobspy()
+        if jobspy_issues:
+            results.append(("python-jobspy", fail_mark, "; ".join(jobspy_issues)))
+        else:
+            results.append(("python-jobspy", ok_mark, "Job board scraping available"))
     except ImportError:
-        results.append(("python-jobspy", warn_mark,
-                        "pip install --no-deps python-jobspy && pip install pydantic tls-client requests 'markdownify>=0.14.1' regex"))
+        results.append(
+            (
+                "python-jobspy",
+                warn_mark,
+                f"pip install 'divapply[full]' && pip install --no-deps '{JOBSPY_WHEEL_URL}'",
+            )
+        )
 
     # --- Tier 2 checks ---
     import os

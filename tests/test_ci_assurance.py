@@ -184,6 +184,7 @@ def test_container_build_uses_immutable_locked_inputs() -> None:
     assert "uv sync --locked --no-dev --extra full --no-editable" in dockerfile
     assert "python_jobspy-1.1.82-py3-none-any.whl" in dockerfile
     assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in dockerfile
+    assert "python -m divapply.jobspy_runtime" in dockerfile
     assert "pip install --upgrade" not in dockerfile
     assert 'pip install ".[full]"' not in dockerfile
 
@@ -200,6 +201,8 @@ def test_release_verification_and_build_use_the_lockfile() -> None:
     for workflow in (ci, release):
         assert "python_jobspy-1.1.82-py3-none-any.whl" in workflow
         assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in workflow
+        assert "python -m divapply.jobspy_runtime" in workflow
+        assert "pip-audit --path" in workflow
         assert "python -m pip install --no-deps python-jobspy\n" not in workflow
 
 

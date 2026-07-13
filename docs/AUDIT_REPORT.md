@@ -35,18 +35,19 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline and pub
 
 ### Low
 
-- The compatibility-only `jobspy-upstream` extra could resolve `markdownify<0.14.1` even though supported installs already used the secure dependency floor. The unsafe extra is removed, the universal lock contains only patched Markdownify, and a regression rejects its return.
+- The compatibility-only `jobspy-upstream` extra could resolve `markdownify<0.14.1` even though supported installs already used the secure dependency floor. The unsafe extra and every stale lock marker are removed; the universal lock contains only patched Markdownify; all JobSpy installation surfaces use one hash-verified wheel; and installed-runtime validation enforces every other upstream bound.
 - Known model grammar fragments, communication-channel overclaims, context relabeling, and PDF separator mojibake now have deterministic normalization or validation regressions.
 - Superseded private documents are moved to dated backups so only current packets remain in active artifact directories.
 - The retention test assumed POSIX no-follow symlink timestamp support. Its optional symlink fixture now degrades safely on Windows without suppressing the portable cleanup assertions.
 
 ## Verification
 
-- Tests: 456 passed, 2 skipped; 58% branch coverage.
+- Tests: 458 passed, 2 skipped; 58% branch coverage.
 - Ruff: clean.
 - mypy: clean for Linux and Windows targets.
 - Offline selfcheck: all checks passed.
 - Dependency audits: Python has no known vulnerabilities; npm reports 0 vulnerabilities.
+- Supported JobSpy smoke: exact wheel 1.1.82 with pandas 2.3.3, regex 2024.11.6, and patched Markdownify 1.2.3 passes runtime-bound validation and installed-environment audit.
 - Lockfile: valid and resolved.
 - Release evidence: wheel and sdist pass Twine validation; SBOM and SHA256 evidence regenerate and verify.
 - Privacy preflight: tracked tree, wheel, and sdist contain zero exact collisions with private identity, location, employment, education, or employer values; diagnostics redact source values.

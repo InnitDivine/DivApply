@@ -18,7 +18,7 @@ uv run mypy --platform win32 src/divapply
 
 Install `uv==0.11.28`; do not update `uv.lock` during ordinary verification. If `uv` is unavailable, `python -m pip install -e ".[dev,full]"` remains a compatibility fallback, but it does not reproduce CI's exact dependency tree.
 
-JobSpy is not needed for unit tests. To exercise live JobSpy discovery, run `uv pip install --python .venv --no-deps python-jobspy==1.1.82` after the locked sync. Do not install upstream JobSpy dependencies directly until its `markdownify<0.14.0` pin is relaxed.
+JobSpy is not needed for unit tests. To exercise live JobSpy discovery, run `uv pip install --python .venv --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"` after the locked sync, then run `uv run python -m divapply.jobspy_runtime`. Do not install upstream JobSpy dependencies directly until its `markdownify<0.14.0` pin is relaxed.
 
 ## Repo Layout
 

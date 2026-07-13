@@ -57,7 +57,7 @@ The `Publish release` workflow will lint, test, verify the tagged commit is the 
 
 ```bash
 pip install "divapply[full]"
-python -m pip install --no-deps python-jobspy==1.1.82
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 ```
 
 `python-jobspy` is installed with `--no-deps` because upstream version 1.1.82 still pins `markdownify<0.14.0`, while DivApply's secure full extra requires `markdownify>=0.14.1` for CVE-2025-46656. Do not move `python-jobspy` into the `full` extra or remove the no-deps release smoke test until upstream relaxes that pin and `pip-audit` passes without ignores.
@@ -66,15 +66,15 @@ For development snapshots, users can install the latest `main` directly from Git
 
 ```bash
 pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
-python -m pip install --no-deps python-jobspy==1.1.82
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 ```
 
 ## Verify
 
 ```bash
 python -m pip install --upgrade "divapply[full]"
-python -m pip install --no-deps python-jobspy==1.1.82
-python -c "import jobspy"
+python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
+python -m divapply.jobspy_runtime
 divapply --version
 python -m divapply --version
 divapply doctor
