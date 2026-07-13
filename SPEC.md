@@ -256,7 +256,7 @@
 |T53|retire stale score/action data + refresh official sources|verified backup, full active rescore/source audit, 0 stale actionable rows; V72,V73,V78,V85|x|
 |T54|add deterministic official ATS adapters|Greenhouse API extraction/live refresh + URL/provenance regressions; V73,V78,V86,V87|x|
 |T55|bind packet generation to candidate evidence + exact tailored artifact|job-only skill rejection, artifact-read, strict packet regeneration/visual QA; V38,V40,V85,V90|x|
-|T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|~|
+|T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|x|
 
 ## §B
 
