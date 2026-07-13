@@ -50,7 +50,7 @@ divapply edit
 divapply doctor
 ```
 
-Install directly from GitHub before a PyPI release is available:
+Alternative development install from the current GitHub `main` branch:
 
 ```powershell
 python --version  # expected on the maintained Windows setup: Python 3.12.13
