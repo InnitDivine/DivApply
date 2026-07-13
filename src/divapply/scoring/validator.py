@@ -211,6 +211,9 @@ GENERIC_COVER_LETTER_PHRASES: list[str] = [
 
 REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION"}
 ALLOWED_SKILLS_SECTION_TITLES: set[str] = {"TECHNICAL SKILLS", "CORE QUALIFICATIONS"}
+MISSING_SKILL_CLAIM_ALIASES: dict[str, tuple[str, ...]] = {
+    "asset inventory": ("asset inventory", "asset tracking", "asset management", "inventory control"),
+}
 
 
 # â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -284,6 +287,23 @@ def _profile_evidence_text(profile: dict, original_text: str = "") -> str:
         if isinstance(school, dict):
             chunks.extend(str(value) for value in school.values() if value)
     return " ".join(chunks).lower()
+
+
+def _add_unsupported_tailored_skill_findings(
+    skills: object,
+    profile: dict,
+    original_text: str,
+    errors: list[str],
+) -> None:
+    """Reject skill-section items absent from candidate-owned evidence."""
+    if not isinstance(skills, dict):
+        return
+    evidence = _profile_evidence_text(profile, original_text)
+    for raw in skills.values():
+        for item in re.split(r"[,;|]", str(raw or "")):
+            skill = " ".join(item.casefold().split()).strip(" .:-")
+            if skill and not _term_in_text(skill, evidence):
+                errors.append(f"Candidate-unsupported skill: '{item.strip()}'")
 
 
 def _add_unsupported_metric_findings(text: str, profile: dict, errors: list[str]) -> None:
@@ -518,6 +538,7 @@ def validate_json_fields(
                 continue
             if fake in skills_text and fake not in evidence_text:
                 errors.append(f"Fabricated skill: '{fake}'")
+        _add_unsupported_tailored_skill_findings(data["skills"], profile, original_text, errors)
 
     # Experience: check preserved companies (first 2 are required, rest are warnings)
     resume_facts = profile.get("resume_facts", {})
@@ -798,6 +819,46 @@ def validate_cover_letter(
     _add_cover_letter_tool_findings(text_lower, profile, resume_text, job, errors)
     _add_cover_letter_job_specificity_findings(text_lower, job, warnings)
     resume_evidence = (resume_text or "").casefold()
+    job_evidence = " ".join(
+        str((job or {}).get(key) or "")
+        for key in ("title", "company", "site", "location", "full_description", "description")
+    ).casefold()
+    normalized_cover = re.sub(r"[-_/]+", " ", text_lower)
+    normalized_candidate_evidence = re.sub(
+        r"[-_/]+",
+        " ",
+        f"{resume_evidence} {_profile_evidence_text(profile or {})}",
+    )
+    raw_missing = (job or {}).get("missing_skills")
+    if isinstance(raw_missing, list):
+        missing_skills = [str(item).strip().casefold() for item in raw_missing if str(item).strip()]
+    else:
+        missing_skills = [
+            item.strip().casefold() for item in re.split(r"[,;|\n]", str(raw_missing or "")) if item.strip()
+        ]
+    for missing_skill in missing_skills[:12]:
+        aliases = MISSING_SKILL_CLAIM_ALIASES.get(missing_skill, (missing_skill,))
+        if any(alias in normalized_cover and alias not in normalized_candidate_evidence for alias in aliases):
+            errors.append("Claims a recorded candidate evidence gap as a performed skill.")
+            break
+    for domain in re.findall(r"(?<![\w@])(?:[a-z0-9-]+\.)+(?:com|org|net|io|dev|app|edu|gov)\b", text_lower):
+        if domain not in resume_evidence and domain not in job_evidence:
+            errors.append(f"Project/domain anchor absent from tailored resume: '{domain}'")
+            break
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text_lower):
+        candidate_experience_claim = bool(
+            re.search(r"\b(?:worked|experience|background|settings? where i|roles? i (?:held|worked))\b", sentence)
+        )
+        if not candidate_experience_claim:
+            continue
+        unsupported_sectors = [
+            sector
+            for sector in ("healthcare", "nonprofit")
+            if _term_in_text(sector, sentence) and not _term_in_text(sector, resume_evidence)
+        ]
+        if unsupported_sectors:
+            errors.append("Employer sector context is relabeled as candidate work experience.")
+            break
     unsupported_client_context = re.search(
         r"(?:\bmy\b|\bi\b|\bmix of\b).{0,50}\bclient-facing\b|"
         r"\bclient-facing\b.{0,40}(?:experience|work|problem solving|background)",
@@ -807,6 +868,29 @@ def validate_cover_letter(
         errors.append("Relabels non-client work as client-facing experience.")
     if "same kind of problems from both sides" in text_lower:
         errors.append("Equates distinct paid-work and project contexts.")
+    ambiguous_cross_setting = re.search(
+        r"(?:windows|network(?:ing)?|microsoft 365|technical|troubleshoot\w*)"
+        r".{0,160}\bacross\b.{0,100}\b(?:public-sector|municipal|county)\b"
+        r".{0,100}\b(?:lab|project)\w*\b",
+        text_lower,
+    )
+    if ambiguous_cross_setting:
+        errors.append("Ambiguously attributes technical skills across paid-work and lab settings.")
+    if job:
+        target_title = re.sub(r"\s*\([^)]*\)\s*", " ", str(job.get("title") or "")).strip().casefold()
+        target_training_pattern = None
+        if target_title:
+            target_training_pattern = re.compile(
+                rf"(?<![\w+#.]){re.escape(target_title)}(?![\w+#.]).{{0,32}}"
+                r"\b(?:training|certificate|coursework|program|credential)\b"
+            )
+        profile_evidence = _profile_evidence_text(profile or {})
+        if (
+            target_training_pattern
+            and target_training_pattern.search(text_lower)
+            and not target_training_pattern.search(profile_evidence)
+        ):
+            errors.append("Relabels the target job title as unsupported training or a credential.")
     unsupported_channel_match = re.search(
         r"(?:follow-up calls?|phone|email|chat|virtual trainings?).{0,100}"
         r"(?:fit(?:s)?|match(?:es)?).{0,80}(?:worked|done|background|experience)",
@@ -853,6 +937,31 @@ def validate_cover_letter(
         )
         if any(phrase in text_lower for phrase in overclaim_phrases) or cross_context_it:
             errors.append("Violates professional IT experience boundary.")
+        mixed_setting_sentence = False
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text_lower):
+            has_paid_setting = bool(
+                re.search(r"\b(?:public-sector|municipal|county|front[ -]desk|paid (?:work|role))\b", sentence)
+            )
+            has_lab_setting = bool(re.search(r"\b(?:home lab|lab work|project work|personal project)\b", sentence))
+            has_it_skill = bool(
+                re.search(
+                    r"\b(?:windows|network(?:ing)?|microsoft 365|pc hardware|device setup|"
+                    r"troubleshoot\w*|it support|end-user support|technical issues?)\b",
+                    sentence,
+                )
+            )
+            if has_paid_setting and has_lab_setting and has_it_skill:
+                mixed_setting_sentence = True
+                break
+        if mixed_setting_sentence:
+            errors.append("Combines paid-work and lab evidence with IT skills in one sentence.")
+        mixed_paid_setting_sentence = any(
+            re.search(r"\b(?:city|municipal|front[ -]desk)\b", sentence)
+            and re.search(r"\bcounty\b", sentence)
+            for sentence in re.split(r"(?<=[.!?])\s+|\n+", text_lower)
+        )
+        if mixed_paid_setting_sentence:
+            errors.append("Combines distinct paid-work settings in one sentence.")
 
     professional_healthcare_years = (
         str(experience.get("years_of_professional_healthcare_experience", "") if isinstance(experience, dict) else "")

@@ -73,7 +73,7 @@ Clean install smoke test:
 python -m venv .venv-install-smoke
 . .venv-install-smoke/bin/activate
 python -m pip install --upgrade pip
-python -m pip install "divapply[full]"
+python -m pip install --upgrade "divapply[full]"
 python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 python -m divapply.jobspy_runtime
 divapply --version

@@ -236,6 +236,12 @@ def test_full_crawl_reports_board_timing_stats(tmp_path, monkeypatch) -> None:
     assert result["board_stats"]["indeed"]["total"] == 1
     assert result["board_stats"]["linkedin"]["calls"] == 1
     assert result["board_stats"]["linkedin"]["total"] == 1
+    provenance = conn.execute(
+        "SELECT DISTINCT market_label, search_query, application_mode, source_verification FROM jobs"
+    ).fetchall()
+    assert [tuple(row) for row in provenance] == [
+        ("Exampletown", "support", "discovery_only", "unverified_aggregator")
+    ]
 
     close_connection(db_path)
 
@@ -309,4 +315,14 @@ def test_remote_suffix_on_concrete_location_still_needs_description_evidence() -
     assert not _row_is_effectively_remote(tagged)
     assert _row_is_effectively_remote(
         tagged | {"description": "Fully remote desktop support across the United States."}
+    )
+
+
+def test_false_remote_suffix_cannot_bypass_location_filter() -> None:
+    assert not _location_ok(
+        "Manhattan, KS (Remote)",
+        ["Exampletown, UT"],
+        [],
+        allow_unknown=False,
+        is_remote=False,
     )

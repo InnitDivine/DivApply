@@ -175,9 +175,9 @@ def test_streaming_pending_counts_require_meaningful_full_description(tmp_path, 
         """
         INSERT INTO jobs (
             url, title, full_description, fit_score, tailored_resume_path,
-            tailor_attempts, discovered_at
+            tailor_attempts, discovered_at, application_mode, source_verification
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'official')
         """,
         [
             ("https://example.com/score-short", "Score Short", "Metadata.", None, None, 0, "2026-01-01"),
@@ -218,8 +218,8 @@ def test_streaming_pending_counts_match_worker_eligibility(tmp_path, monkeypatch
         INSERT INTO jobs (
             url, title, site, full_description, fit_score, tailored_resume_path,
             score_attempts, score_retry_at, detail_scraped_at, cover_letter_path,
-            discovered_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01')
+            discovered_at, application_mode, source_verification
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01', 'active', 'official')
         """,
         [
             (f"https://example.com/{name}", name, site, description, score, tailored,

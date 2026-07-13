@@ -31,6 +31,7 @@ from divapply.discovery.filters import (
     term_in_text,
     title_ok,
 )
+from divapply.search_policy import scoped_query_locations
 
 log = logging.getLogger(__name__)
 
@@ -393,12 +394,38 @@ def _location_ok(
     Remote jobs are accepted unless their concrete location matches a rejected
     place. Non-remote jobs must match an accept pattern.
     """
-    return location_ok(location, accept, reject, allow_unknown=allow_unknown, is_remote=is_remote)
+    checked_location = location
+    if location and not is_remote:
+        # The effective-remote classifier already rejected the board tag.
+        # Remove advisory suffixes so the shared helper cannot re-authorize a
+        # concrete out-of-market job merely because its label says "Remote".
+        normalized_location = re.sub(
+            r"\b(?:remote|work from home|wfh|distributed)\b|[()]",
+            " ",
+            location,
+            flags=re.IGNORECASE,
+        )
+        normalized_location = re.sub(r"\s+", " ", normalized_location).strip(" ,- ")
+        if normalized_location:
+            checked_location = normalized_location
+    return location_ok(
+        checked_location,
+        accept,
+        reject,
+        allow_unknown=allow_unknown,
+        is_remote=is_remote,
+    )
 
 
 # -- DB storage (JobSpy DataFrame -> SQLite) ---------------------------------
 
-def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tuple[int, int]:
+def store_jobspy_results(
+    conn: sqlite3.Connection,
+    df,
+    source_label: str,
+    *,
+    market_label: str = "",
+) -> tuple[int, int]:
     """Store JobSpy DataFrame results into the DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
@@ -462,6 +489,14 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
             "full_description": full_description,
             "application_url": apply_url,
             "detail_scraped_at": detail_scraped_at,
+            "market_label": market_label or None,
+            "search_query": source_label or None,
+            "application_mode": "discovery_only",
+            "employment_type": (
+                str(row.get("job_type") or row.get("employment_type") or "").strip() or None
+            ),
+            "hours_per_week": row.get("hours_per_week"),
+            "source_verification": "unverified_aggregator",
         })
 
     existing_keys = get_existing_canonical_keys(
@@ -480,8 +515,9 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
                 seen_keys.add(canonical_key)
             conn.execute(
                 "INSERT INTO jobs (url, canonical_key, title, company, salary, description, location, site, strategy, discovered_at, "
-                "full_description, application_url, detail_scraped_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "full_description, application_url, detail_scraped_at, market_label, search_query, "
+                "application_mode, employment_type, hours_per_week, source_verification) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     job["url"],
                     canonical_key,
@@ -496,6 +532,12 @@ def store_jobspy_results(conn: sqlite3.Connection, df, source_label: str) -> tup
                     job["full_description"],
                     job["application_url"],
                     job["detail_scraped_at"],
+                    job["market_label"],
+                    job["search_query"],
+                    job["application_mode"],
+                    job["employment_type"],
+                    job["hours_per_week"],
+                    job["source_verification"],
                 ),
             )
             new += 1
@@ -629,7 +671,12 @@ def _run_one_search(
         filtered_rules = before_rules - len(df)
 
     conn = get_connection()
-    new, existing = store_jobspy_results(conn, df, s["query"])
+    new, existing = store_jobspy_results(
+        conn,
+        df,
+        s["query"],
+        market_label=str(s.get("location_label") or ""),
+    )
     if board_stats:
         total_calls = sum(max(1, int(stats.get("calls", 0))) for stats in board_stats.values())
         for stats in board_stats.values():
@@ -746,35 +793,27 @@ def _full_crawl(
     if sites is None:
         sites = ["indeed", "linkedin", "zip_recruiter"]
 
-    # Build search combinations from config
-    queries = search_cfg.get("queries", [])
-    locs = search_cfg.get("locations", [])
+    # Build search combinations from the shared market-scope policy.
     defaults = search_cfg.get("defaults", {})
     glassdoor_map = search_cfg.get("glassdoor_location_map", {})
     accept_locs, reject_locs = _load_location_config(search_cfg)
     title_excludes = _load_title_excludes(search_cfg)
     filter_rules = _load_filter_rules(search_cfg)
 
-    if tiers:
-        queries = [q for q in queries if q.get("tier") in tiers]
-    if locations:
-        locs = [loc for loc in locs if (loc.get("label") or loc.get("location")) in locations]
-
-    searches = []
-    for q in queries:
-        query_location_labels = {
-            str(label).strip() for label in q.get("location_labels", []) if str(label).strip()
+    searches = [
+        {
+            "query": scoped["query"],
+            "location": scoped["location"],
+            "location_label": scoped["location_label"],
+            "remote": scoped["remote"],
+            "tier": scoped["tier"],
         }
-        for loc in locs:
-            location_label = str(loc.get("label") or loc.get("location") or "").strip()
-            if query_location_labels and location_label not in query_location_labels:
-                continue
-            searches.append({
-                "query": q["query"],
-                "location": loc["location"],
-                "remote": loc.get("remote", False),
-                "tier": q.get("tier", 0),
-            })
+        for scoped in scoped_query_locations(
+            search_cfg,
+            tiers=set(tiers) if tiers else None,
+            location_labels=set(locations) if locations else None,
+        )
+    ]
 
     # Support per-worker proxy rotation: proxy can be a single string or
     # a comma-separated list ("host:port:user:pass,host2:port2:user2:pass2").

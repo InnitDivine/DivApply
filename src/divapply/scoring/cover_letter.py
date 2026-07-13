@@ -6,6 +6,7 @@ profile at runtime. No hardcoded personal information.
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,12 +14,13 @@ from pathlib import Path
 from divapply.artifacts import cover_letter_artifact_path
 from divapply.config import (
     COVER_LETTER_DIR,
-    RESUME_PATH,
+    TAILORED_DIR,
     load_profile,
     profile_for_job_address,
     profile_skills,
 )
 from divapply.database import (
+    ACTIONABLE_JOB_SQL,
     MEANINGFUL_FULL_DESCRIPTION_SQL,
     get_connection,
     get_jobs_by_stage,
@@ -31,11 +33,23 @@ from divapply.scoring.validator import (
     sanitize_text,
     validate_cover_letter,
 )
-from divapply.security import protect_file
+from divapply.security import _is_link_or_reparse, protect_file
 
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 5  # max cross-run retries before giving up
+MAX_TAILORED_ARTIFACT_BYTES = 10 * 1024 * 1024
+MAX_TAILORED_PDF_PAGES = 4
+
+
+def _recorded_missing_skills(job: dict) -> list[str]:
+    """Return bounded persisted evidence gaps for document-generation guards."""
+    raw = job.get("missing_skills")
+    if isinstance(raw, list):
+        items = raw
+    else:
+        items = re.split(r"[,;|\n]", str(raw or ""))
+    return [" ".join(str(item).split()) for item in items if str(item).strip()][:12]
 
 
 class CoverLetterValidationError(RuntimeError):
@@ -102,15 +116,10 @@ def _build_cover_letter_prompt(profile: dict) -> str:
 
     # Real metrics from resume_facts
     real_metrics = resume_facts.get("real_metrics", [])
-    preserved_projects = resume_facts.get("preserved_projects", [])
     coursework = profile.get("coursework_summary", [])
     coursework_skills = profile.get("coursework_skills", [])
 
     # Build achievement examples for the prompt
-    projects_hint = ""
-    if preserved_projects:
-        projects_hint = f"\nKnown projects to reference: {', '.join(preserved_projects)}"
-
     metrics_hint = ""
     if real_metrics:
         metrics_hint = f"\nReal metrics to use: {', '.join(real_metrics)}"
@@ -140,11 +149,12 @@ STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its pla
 
 PARAGRAPH 1 (2-3 sentences): Open with the strongest verified fact from the candidate's background that directly matches the job. Use the same rule for every role.
 
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers when available. Frame as solving their problem, not listing your accomplishments.{projects_hint}{metrics_hint}
+PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers when available. Frame as solving their problem, not listing your accomplishments.{metrics_hint}
 {coursework_hint}
 {coursework_skills_hint}
 
 PARAGRAPH 3 (1-2 sentences): Reference one specific thing about the company or role from the job description. Then close: "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
+- Name the exact target job title once in the letter.
 
 JOB DESCRIPTION ACCURACY:
 - Use the job description as evidence, not decoration. Mention a company, duty, requirement, or team detail only if it appears in TARGET JOB.
@@ -159,8 +169,14 @@ EXPERIENCE AND AVAILABILITY BOUNDARY:
 - Do not claim phone, call, email, chat, training, or follow-up experience unless that channel/duty is explicit in the source résumé. A missing target duty may be framed only as a transferable next step, never as work already done.
 - Do not say the candidate has solved "the same problems from both sides". Name the distinct public-service and project evidence without equating their contexts.
 - Home-lab and project work may prove practical exposure, but never call it paid or professional IT employment.
+- Copy education, certificate-program, and training names exactly from candidate evidence. Never turn the target job title into the name of training, coursework, a program, or a credential.
+- Use project-specific facts only when the project anchor and those tools/duties appear together in RESUME. The general allowed-skills list is not evidence that a tool belonged to a named project. Never merge separate projects.
 - Keep device, computer, and network experience from home-lab projects separate from paid municipal or accounting roles.
 - In every sentence, name the setting that proves an IT skill. Do not join Windows, Microsoft 365, end-user, or technical-question claims to municipal, county, front-desk, or generic customer-service experience.
+- Never say a list of IT skills was used "across" paid/public-sector and lab/project settings. Attribute paid-work evidence and home-lab/training evidence in separate clauses or sentences.
+- When professional IT experience is zero, never put a paid/public-sector setting and a home-lab/project setting in the same sentence as an IT skill. Use separate sentences so each skill has one unambiguous evidence source.
+- A company or client-sector list is company context, not candidate experience. Never imply the candidate worked in every sector the target employer serves; state only candidate sectors directly supported by RESUME.
+- Keep each paid employer or paid-work setting in its own sentence. Never combine duties from municipal/city and county roles under one shared verb or requirement list.
 - Do not say the candidate is already doing the target job, works in the same professional environment, or has target-industry tenure when only transferable duties map.
 - When professional IT experience is zero, never say the candidate has already done IT work "in the field"; identify home-lab/project and transferable paid-work contexts separately.
 - When professional IT experience is zero, do not claim a general "background in end-user support". Name public-service issue routing and home-lab troubleshooting as separate evidence.
@@ -211,6 +227,40 @@ def _strip_preamble(text: str) -> str:
     return text
 
 
+def _read_tailored_resume_text(job: dict) -> str:
+    """Read only the exact persisted, owned tailored-resume artifact."""
+    raw_path = str(job.get("tailored_resume_path") or "").strip()
+    if not raw_path:
+        raise ValueError("Tailored resume artifact is required for cover generation.")
+    path = Path(raw_path).expanduser()
+    if _is_link_or_reparse(path):
+        raise ValueError("Tailored resume artifact must not be a link or reparse point.")
+    if not path.is_file():
+        raise FileNotFoundError("Tailored resume artifact is missing.")
+    resolved = path.resolve(strict=True)
+    if not resolved.is_relative_to(TAILORED_DIR.resolve()):
+        raise ValueError("Tailored resume artifact is outside the owned output directory.")
+    if resolved.stat().st_size > MAX_TAILORED_ARTIFACT_BYTES:
+        raise ValueError("Tailored resume artifact exceeds the safe size limit.")
+
+    suffix = resolved.suffix.casefold()
+    if suffix == ".txt":
+        text = resolved.read_text(encoding="utf-8")
+    elif suffix == ".pdf":
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(resolved))
+        if len(reader.pages) > MAX_TAILORED_PDF_PAGES:
+            raise ValueError("Tailored resume PDF exceeds the safe page limit.")
+        text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    else:
+        raise ValueError("Tailored resume artifact must be TXT or PDF.")
+    text = text.strip()
+    if not text:
+        raise ValueError("Tailored resume artifact contains no extractable text.")
+    return text
+
+
 # â”€â”€ Core Generation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
@@ -240,6 +290,8 @@ def generate_cover_letter(
         CoverLetterValidationError: Every generated draft failed validation.
     """
     job_text = format_job_context(job, description_limit=3000)
+    missing_skills = _recorded_missing_skills(job)
+    gap_block = ", ".join(missing_skills) if missing_skills else "none recorded"
 
     avoid_notes: list[str] = []
     letter = ""
@@ -257,11 +309,15 @@ def generate_cover_letter(
             {"role": "system", "content": prompt},
             {
                 "role": "user",
-                "content": (f"RESUME:\n{resume_text}\n\n---\n\nTARGET JOB:\n{job_text}\n\nWrite the cover letter:"),
+                "content": (
+                    f"RESUME:\n{resume_text}\n\n---\n\nTARGET JOB:\n{job_text}\n\n"
+                    "RECORDED CANDIDATE EVIDENCE GAPS (never claim these as performed skills, including "
+                    f"synonyms or transferable labels): {gap_block}\n\nWrite the cover letter:"
+                ),
             },
         ]
 
-        letter = client.chat(messages, max_tokens=1024, temperature=0.7)
+        letter = client.chat(messages, max_tokens=1024, temperature=0.2)
         letter = sanitize_text(letter)  # auto-fix em dashes, smart quotes
         letter = _strip_preamble(letter)  # remove any "Here is the letter:" prefix
 
@@ -309,7 +365,6 @@ def run_cover_letters(
         {"generated": int, "errors": int, "elapsed": float}
     """
     profile = load_profile()
-    resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
 
     # Fetch jobs that have tailored resumes but no cover letter yet
@@ -318,6 +373,7 @@ def run_cover_letters(
             "SELECT * FROM jobs "
             "WHERE url = ? AND fit_score >= ? AND tailored_resume_path IS NOT NULL "
             "AND archived_at IS NULL "
+            f"AND {ACTIONABLE_JOB_SQL} "
             f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
             "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < ?",
@@ -359,6 +415,7 @@ def run_cover_letters(
         completed += 1
         try:
             job_profile = profile_for_job_address(profile, job)
+            resume_text = _read_tailored_resume_text(job)
             letter = generate_cover_letter(resume_text, job, job_profile, validation_mode=validation_mode)
 
             cl_path = cover_letter_artifact_path(COVER_LETTER_DIR, job)

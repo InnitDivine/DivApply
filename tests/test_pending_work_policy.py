@@ -32,8 +32,9 @@ def test_pending_stage_count_and_selection_share_one_policy(tmp_path) -> None:
         INSERT INTO jobs (
             url, title, full_description, fit_score, tailored_resume_path,
             score_attempts, score_retry_at, cover_letter_path, cover_attempts,
-            archived_at, discovered_at, tailor_attempts
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01', ?)
+            archived_at, discovered_at, tailor_attempts,
+            application_mode, source_verification
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01', ?, 'active', 'official')
         """,
         [
             (

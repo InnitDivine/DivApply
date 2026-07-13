@@ -1,6 +1,7 @@
 """DivApply configuration: paths, platform detection, user data."""
 
 import copy
+import math
 import os
 import re
 from pathlib import Path
@@ -106,7 +107,11 @@ def profile_for_job_address(profile: dict, job: dict) -> dict:
         return profile
 
     for address in addresses.values():
-        if not isinstance(address, dict) or not job_matches_application_address(job, address):
+        if (
+            not isinstance(address, dict)
+            or address.get("is_current_legal_residence") is not True
+            or not job_matches_application_address(job, address)
+        ):
             continue
         adjusted = copy.deepcopy(profile)
         personal = adjusted.setdefault("personal", {})
@@ -207,7 +212,7 @@ def load_profile() -> dict:
     except Exception:
         search_config = {}
     profile["coursework_summary"] = _summarize_coursework(coursework, search_config=search_config)
-    profile["coursework_skills"] = _summarize_coursework_skills(coursework)
+    profile["coursework_skills"] = _summarize_coursework_skills(coursework, search_config=search_config)
     return profile
 
 
@@ -394,6 +399,110 @@ def _coursework_relevance_score(row: dict, terms: set[str]) -> int:
     return sum(1 for term in terms if term in lowered)
 
 
+def _coursework_context_policy(search_config: dict | None) -> dict[str, Any]:
+    raw = (search_config or {}).get("coursework_context")
+    valid = raw is None or isinstance(raw, dict)
+    policy = raw if isinstance(raw, dict) else {}
+
+    def _patterns(key: str) -> list[str]:
+        nonlocal valid
+        value = policy.get(key)
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            valid = False
+            return []
+        if any(not isinstance(item, str) for item in value):
+            valid = False
+        return [item.strip().casefold() for item in value if isinstance(item, str) and item.strip()]
+
+    try:
+        raw_max = policy.get("max_per_school", 12)
+        if isinstance(raw_max, bool):
+            raise ValueError
+        max_per_school = int(raw_max)
+    except (TypeError, ValueError):
+        valid = False
+        max_per_school = 12
+    if not 1 <= max_per_school <= 24:
+        valid = False
+    return {
+        "include_patterns": _patterns("include_patterns"),
+        "exclude_patterns": _patterns("exclude_patterns"),
+        "skill_exclude_patterns": _patterns("skill_exclude_patterns"),
+        "max_per_school": max(1, min(24, max_per_school)),
+        "valid": valid,
+    }
+
+
+def _coursework_row_is_eligible(row: dict, policy: dict[str, Any]) -> bool:
+    if not policy.get("valid", False):
+        return False
+    status = str(row.get("status") or "").strip().casefold()
+    if status not in {"completed", "complete", "passed", "accepted", "transfer credit", "transferred"}:
+        return False
+
+    credits = row.get("credits")
+    try:
+        numeric_credits = float(str(credits).strip())
+    except (TypeError, ValueError):
+        return False
+    if isinstance(credits, bool) or not math.isfinite(numeric_credits) or numeric_credits <= 0:
+        return False
+
+    haystack = " ".join(
+        str(row.get(key) or "")
+        for key in ("course_title", "course_code", "subject_area", "notes")
+    ).casefold()
+    excludes = policy["exclude_patterns"]
+    if any(pattern in haystack for pattern in excludes):
+        return False
+    includes = policy["include_patterns"]
+    return not includes or any(pattern in haystack for pattern in includes)
+
+
+def _select_coursework_rows(
+    coursework: list[dict],
+    *,
+    search_config: dict | None = None,
+    max_per_school: int | None = None,
+) -> dict[str, list[dict]]:
+    policy = _coursework_context_policy(search_config)
+    limit = policy["max_per_school"] if max_per_school is None else max(1, min(24, max_per_school))
+    grouped: dict[str, list[dict]] = {}
+    for row in coursework:
+        school = str(row.get("school") or "Unknown school").strip()
+        if _coursework_item(row) and _coursework_row_is_eligible(row, policy):
+            grouped.setdefault(school, []).append(row)
+
+    relevance_terms = _coursework_relevance_terms(search_config)
+    selected_by_school: dict[str, list[dict]] = {}
+    for school, rows in grouped.items():
+        newest = sorted(rows, key=_academic_term_key, reverse=True)
+        relevant = sorted(
+            (row for row in rows if _coursework_relevance_score(row, relevance_terms) > 0),
+            key=lambda row: (_coursework_relevance_score(row, relevance_terms), _academic_term_key(row)),
+            reverse=True,
+        )
+        selected: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
+        for row in [*relevant, *newest]:
+            identity = (
+                str(row.get("course_code") or "").strip().casefold(),
+                str(row.get("course_title") or "").strip().casefold(),
+                str(row.get("term") or "").strip().casefold(),
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            selected.append(row)
+            if len(selected) >= limit:
+                break
+        if selected:
+            selected_by_school[school] = selected
+    return selected_by_school
+
+
 def _summarize_coursework(
     coursework: list[dict],
     *,
@@ -404,53 +513,48 @@ def _summarize_coursework(
     if not coursework:
         return []
 
-    grouped: dict[str, list[dict]] = {}
-    for row in coursework:
-        school = (row.get("school") or "Unknown school").strip()
-        if not _coursework_item(row):
-            continue
-        grouped.setdefault(school, []).append(row)
-
-    relevance_terms = _coursework_relevance_terms(search_config)
+    policy = _coursework_context_policy(search_config)
+    configured_limit = policy["max_per_school"]
+    limit = configured_limit if isinstance((search_config or {}).get("coursework_context"), dict) else max_per_school
+    grouped = _select_coursework_rows(coursework, search_config=search_config, max_per_school=limit)
     summary: list[str] = []
     for school, rows in grouped.items():
-        newest = sorted(rows, key=_academic_term_key, reverse=True)
-        relevant = sorted(
-            (row for row in rows if _coursework_relevance_score(row, relevance_terms) > 0),
-            key=lambda row: (_coursework_relevance_score(row, relevance_terms), _academic_term_key(row)),
-            reverse=True,
-        )
-        selected: list[str] = []
-        for row in [*newest[: max_per_school // 2], *relevant, *newest]:
-            item = _coursework_item(row)
-            if item and item not in selected:
-                selected.append(item)
-            if len(selected) >= max_per_school:
-                break
-        if selected:
-            summary.append(f"{school}: {', '.join(selected)}")
+        summary.append(f"{school}: {', '.join(_coursework_item(row) for row in rows)}")
     return summary
 
 
-def _summarize_coursework_skills(coursework: list[dict]) -> list[str]:
+def _summarize_coursework_skills(
+    coursework: list[dict],
+    *,
+    search_config: dict | None = None,
+) -> list[str]:
     """Aggregate coursework skill tags into a compact internal-only summary."""
     if not coursework:
         return []
 
+    policy = _coursework_context_policy(search_config)
+    selected = _select_coursework_rows(coursework, search_config=search_config)
     grouped: dict[str, set[str]] = {}
-    for row in coursework:
-        school = (row.get("school") or "Unknown school").strip()
-        raw_skills = row.get("skills") or []
-        if isinstance(raw_skills, str):
-            try:
-                import json
+    for school, rows in selected.items():
+        for row in rows:
+            raw_skills = row.get("skills") or []
+            if isinstance(raw_skills, str):
+                try:
+                    import json
 
-                raw_skills = json.loads(raw_skills)
-            except Exception:
-                raw_skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
-        if not isinstance(raw_skills, list):
-            continue
-        grouped.setdefault(school, set()).update(str(skill).strip() for skill in raw_skills if str(skill).strip())
+                    raw_skills = json.loads(raw_skills)
+                except Exception:
+                    raw_skills = [s.strip() for s in raw_skills.split(",") if s.strip()]
+            if not isinstance(raw_skills, list):
+                continue
+            for skill in raw_skills:
+                skill_text = str(skill).strip()
+                if not skill_text:
+                    continue
+                lowered = skill_text.casefold()
+                if any(pattern in lowered for pattern in policy["skill_exclude_patterns"]):
+                    continue
+                grouped.setdefault(school, set()).add(skill_text)
 
     summary: list[str] = []
     for school, skills in grouped.items():
@@ -590,6 +694,13 @@ def validate_search_config(cfg: dict | None = None) -> dict:
     for idx, location in enumerate(locations if isinstance(locations, list) else []):
         if not isinstance(location, dict) or not location.get("location"):
             errors.append(f"locations[{idx}] needs a location string")
+            continue
+        patterns = location.get("match_patterns")
+        if patterns is not None and (
+            not isinstance(patterns, list)
+            or any(not isinstance(pattern, str) or "," not in pattern for pattern in patterns)
+        ):
+            errors.append(f"locations[{idx}].match_patterns must be state-qualified strings")
 
     target_families = cfg.get("target_families", [])
     if target_families and not isinstance(target_families, list):
@@ -611,6 +722,59 @@ def validate_search_config(cfg: dict | None = None) -> dict:
     preferred_schedule = str(cfg.get("preferred_schedule") or "any").strip().casefold()
     if preferred_schedule not in {"any", "full_time", "part_time"}:
         errors.append("preferred_schedule must be one of: any, full_time, part_time")
+
+    market_policies = raw_cfg.get("market_policies")
+    default_market_label = str(raw_cfg.get("default_market_label") or "").strip()
+    if market_policies is not None and not isinstance(market_policies, dict):
+        errors.append("market_policies must be a mapping")
+    elif isinstance(market_policies, dict):
+        if default_market_label not in known_location_labels:
+            errors.append("default_market_label must name a configured location label")
+        for label, policy in market_policies.items():
+            label_text = str(label).strip()
+            prefix = f"market_policies.{label_text}"
+            if label_text not in known_location_labels:
+                errors.append(f"market_policies contains unknown location label '{label_text}'")
+            if not isinstance(policy, dict):
+                errors.append(f"{prefix} must be a mapping")
+                continue
+            schedule = str(policy.get("preferred_schedule") or "any").strip().casefold()
+            if schedule not in {"any", "full_time", "part_time"}:
+                errors.append(f"{prefix}.preferred_schedule is invalid")
+            for key in ("require_part_time", "require_benefits"):
+                if key in policy and not isinstance(policy[key], bool):
+                    errors.append(f"{prefix}.{key} must be boolean")
+            application_mode = str(policy.get("application_mode") or "manual_review").strip().casefold()
+            if application_mode not in {"active", "discovery_only", "manual_review"}:
+                errors.append(f"{prefix}.application_mode is invalid")
+            if "max_hours_per_week" in policy:
+                try:
+                    valid_hours = (
+                        not isinstance(policy["max_hours_per_week"], bool)
+                        and 1 <= int(policy["max_hours_per_week"]) <= 168
+                    )
+                except (TypeError, ValueError):
+                    valid_hours = False
+                if not valid_hours:
+                    errors.append(f"{prefix}.max_hours_per_week must be an integer from 1 to 168")
+
+    coursework_context = raw_cfg.get("coursework_context")
+    if coursework_context is not None and not isinstance(coursework_context, dict):
+        errors.append("coursework_context must be a mapping")
+    elif isinstance(coursework_context, dict):
+        for key in ("include_patterns", "exclude_patterns", "skill_exclude_patterns"):
+            value = coursework_context.get(key)
+            if value is not None and (
+                not isinstance(value, list) or any(not isinstance(item, str) for item in value)
+            ):
+                errors.append(f"coursework_context.{key} must be a list")
+        max_per_school = coursework_context.get("max_per_school", 12)
+        try:
+            valid_max = not isinstance(max_per_school, bool) and 1 <= int(max_per_school) <= 24
+        except (TypeError, ValueError):
+            valid_max = False
+        if not valid_max:
+            errors.append("coursework_context.max_per_school must be an integer from 1 to 24")
 
     sites_value = cfg.get("sites")
     boards_value = cfg.get("boards")

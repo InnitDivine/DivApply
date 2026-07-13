@@ -305,7 +305,24 @@ def fetch_details(employer: dict, jobs: list[dict]) -> list[dict]:
 
 # -- DB storage --------------------------------------------------------------
 
-def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -> tuple[int, int]:
+def _normalized_time_type(value: object) -> str | None:
+    text = " ".join(str(value or "").casefold().replace("-", " ").split())
+    if "part time" in text:
+        return "part_time"
+    if "full time" in text:
+        return "full_time"
+    return text.replace(" ", "_") or None
+
+
+def store_results(
+    conn: sqlite3.Connection,
+    jobs: list[dict],
+    employers: dict,
+    *,
+    search_query: str | None = None,
+    market_label: str = "",
+    application_mode: str = "manual_review",
+) -> tuple[int, int]:
     """Store corporate jobs in DB. Returns (new, existing)."""
     now = datetime.now(timezone.utc).isoformat()
     new = 0
@@ -341,14 +358,30 @@ def store_results(conn: sqlite3.Connection, jobs: list[dict], employers: dict) -
 
         site = job.get("employer_name", "Corporate")
         strategy = "workday_api"
+        employer = employers.get(job.get("employer_key", ""), {})
+        source_verification = (
+            "official"
+            if str(employer.get("source_verification") or "").strip().casefold() == "official"
+            else "unknown"
+        )
+        resolved_mode = str(application_mode or "manual_review").strip().casefold()
+        if source_verification != "official" and resolved_mode == "active":
+            resolved_mode = "manual_review"
+        employment_type = _normalized_time_type(
+            job.get("time_type") or job.get("employment_type")
+        )
 
         try:
             conn.execute(
                 "INSERT INTO jobs (url, title, salary, description, location, site, strategy, "
-                "discovered_at, full_description, application_url, detail_scraped_at, detail_error) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "discovered_at, full_description, application_url, detail_scraped_at, detail_error, "
+                "market_label, search_query, application_mode, employment_type, source_verification, "
+                "official_url_verified_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (url, job.get("title"), None, short_desc, job.get("location"),
-                 site, strategy, now, full_description, url, detail_scraped_at, detail_error),
+                 site, strategy, now, full_description, url, detail_scraped_at, detail_error,
+                 market_label or None, search_query, resolved_mode, employment_type,
+                 source_verification, now if source_verification == "official" else None),
             )
             new += 1
         except sqlite3.IntegrityError:
@@ -367,6 +400,8 @@ def _process_one(
     reject_locs: list[str],
     title_excludes: list[str] | None = None,
     include_titles: list[str] | None = None,
+    market_label: str = "",
+    application_mode: str = "manual_review",
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -413,7 +448,14 @@ def _process_one(
         log.error("%s: ERROR fetching details for '%s': %s", emp["name"], search_text, e)
 
     conn = get_connection()
-    new, existing = store_results(conn, jobs, employers)
+    new, existing = store_results(
+        conn,
+        jobs,
+        employers,
+        search_query=search_text,
+        market_label=market_label,
+        application_mode=application_mode,
+    )
     log.info("%s: %d new, %d already in DB", emp["name"], new, existing)
 
     return {"employer": emp["name"], "query": search_text,
@@ -433,6 +475,8 @@ def scrape_employers(
     title_excludes: list[str] | None = None,
     include_titles: list[str] | None = None,
     workers: int = 1,
+    market_label: str = "",
+    application_mode: str = "manual_review",
 ) -> dict:
     """Run full scrape: search -> filter -> detail -> store.
 
@@ -466,6 +510,7 @@ def scrape_employers(
                 pool.submit(
                     _process_one, key, employers, search_text,
                     location_filter, accept_locs, reject_locs, title_excludes, include_titles,
+                    market_label, application_mode,
                 ): key
                 for key in valid_keys
             }
@@ -500,6 +545,7 @@ def scrape_employers(
             result = _process_one(
                 key, employers, search_text,
                 location_filter, accept_locs, reject_locs, title_excludes, include_titles,
+                market_label, application_mode,
             )
             completed += 1
             total_new += result["new"]
@@ -549,13 +595,14 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     title_excludes = _load_title_excludes(search_cfg)
     include_titles = [str(value).lower() for value in search_cfg.get("include_titles", []) or [] if str(value).strip()]
 
-    # Default to tier 1-2 queries for workday scraping
+    # Default to tier 1-2 queries for Workday scraping. Scoped queries run
+    # only against employers explicitly assigned to the same market labels.
     max_tier = search_cfg.get("workday_max_tier", 2)
-    queries = [q["query"] for q in queries_cfg if q.get("tier", 99) <= max_tier]
+    queries = [q for q in queries_cfg if q.get("tier", 99) <= max_tier]
 
     if not queries:
         # Fallback: use all queries
-        queries = [q["query"] for q in queries_cfg]
+        queries = [q for q in queries_cfg]
 
     if not queries:
         log.warning("No search queries configured in searches.yaml.")
@@ -573,30 +620,56 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     grand_existing = 0
     grand_found = 0
 
-    for i, query in enumerate(queries, 1):
+    executed_queries = 0
+    for i, query_cfg in enumerate(queries, 1):
+        query = str(query_cfg.get("query") or "").strip()
+        query_labels = {
+            str(label).strip() for label in (query_cfg.get("location_labels") or []) if str(label).strip()
+        }
+        scoped_employers = {
+            key: employer
+            for key, employer in employers.items()
+            if not query_labels
+            or {
+                str(label).strip()
+                for label in (employer.get("location_labels") or [])
+                if str(label).strip()
+            }
+            & query_labels
+        }
+        if not query or not scoped_employers:
+            log.info("Skipping Workday query %r: no employer shares its market labels", query)
+            continue
+        executed_queries += 1
         log.info("Query %d/%d: \"%s\"", i, len(queries), query)
         result = scrape_employers(
             search_text=query,
-            employers=employers,
+            employers=scoped_employers,
             location_filter=location_filter,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             title_excludes=title_excludes,
             include_titles=include_titles,
             workers=workers,
+            market_label=(next(iter(query_labels)) if len(query_labels) == 1 else ""),
+            application_mode=str(
+                (search_cfg.get("market_policies") or {})
+                .get(next(iter(query_labels)), {})
+                .get("application_mode", "manual_review")
+            ) if len(query_labels) == 1 else "manual_review",
         )
         grand_new += result["new"]
         grand_existing += result["existing"]
         grand_found += result["found"]
 
     log.info("Workday crawl done: %d found, %d new, %d existing across %d queries x %d employers",
-             grand_found, grand_new, grand_existing, len(queries), len(employers))
+             grand_found, grand_new, grand_existing, executed_queries, len(employers))
 
     return {
         "found": grand_found,
         "new": grand_new,
         "existing": grand_existing,
-        "queries": len(queries),
-        "status": "ok",
+        "queries": executed_queries,
+        "status": "ok" if executed_queries else "skipped",
     }
 

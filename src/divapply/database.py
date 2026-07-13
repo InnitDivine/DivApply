@@ -25,6 +25,9 @@ MIN_FULL_DESCRIPTION_CHARS = 200
 MEANINGFUL_FULL_DESCRIPTION_SQL = (
     f"full_description IS NOT NULL AND length(trim(full_description)) >= {MIN_FULL_DESCRIPTION_CHARS}"
 )
+ACTIONABLE_JOB_SQL = (
+    "application_mode = 'active' AND source_verification = 'official'"
+)
 
 # Thread-local connection storage - each thread gets its own connection
 # (required for SQLite thread safety with parallel workers)
@@ -127,7 +130,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 
     Schema columns by stage:
       - Discovery:  url, canonical_key, title, company, salary, description,
-                   location, site, strategy, discovered_at
+                   location, site, strategy, discovered_at, market_label,
+                   search_query, application_mode, employment_type,
+                   hours_per_week, source_verification, official_url_verified_at
       - Enrichment: full_description, application_url, detail_scraped_at, detail_error
       - Scoring:    fit_score, llm_score, keyword_score, embedding_score,
                    composite_score, score_breakdown, score_reasoning,
@@ -165,6 +170,13 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             site                  TEXT,
             strategy              TEXT,
             discovered_at         TEXT,
+            market_label          TEXT,
+            search_query          TEXT,
+            application_mode      TEXT,
+            employment_type       TEXT,
+            hours_per_week         REAL,
+            source_verification    TEXT,
+            official_url_verified_at TEXT,
 
             -- Enrichment stage (detail_scraper)
             full_description      TEXT,
@@ -227,6 +239,7 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
     # case a migration introduced columns outside the registry order.
     run_migrations(conn)
     ensure_columns(conn)
+    backfill_discovery_provenance(conn)
     ensure_job_indexes(conn)
     ensure_application_events_table(conn)
     backfill_application_events(conn)
@@ -250,6 +263,13 @@ _ALL_COLUMNS: dict[str, str] = {
     "site": "TEXT",
     "strategy": "TEXT",
     "discovered_at": "TEXT",
+    "market_label": "TEXT",
+    "search_query": "TEXT",
+    "application_mode": "TEXT",
+    "employment_type": "TEXT",
+    "hours_per_week": "REAL",
+    "source_verification": "TEXT",
+    "official_url_verified_at": "TEXT",
     # Enrichment
     "full_description": "TEXT",
     "application_url": "TEXT",
@@ -363,6 +383,35 @@ def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
     except sqlite3.IntegrityError:
         log.warning("Existing duplicate canonical job keys prevent unique dedup index creation")
     conn.commit()
+
+
+def backfill_discovery_provenance(conn: sqlite3.Connection | None = None) -> int:
+    """Fail legacy aggregator rows closed without guessing direct-source trust."""
+    if conn is None:
+        conn = get_connection()
+    rows = int(
+        conn.execute(
+            """
+            SELECT COUNT(*) FROM jobs
+            WHERE strategy = 'jobspy'
+              AND (
+                  COALESCE(application_mode, '') != 'discovery_only'
+                  OR COALESCE(source_verification, '') != 'unverified_aggregator'
+              )
+            """
+        ).fetchone()[0]
+    )
+    if rows:
+        conn.execute(
+            """
+            UPDATE jobs
+            SET application_mode = 'discovery_only',
+                source_verification = 'unverified_aggregator'
+            WHERE strategy = 'jobspy'
+            """
+        )
+        conn.commit()
+    return rows
 
 
 def ensure_application_events_table(conn: sqlite3.Connection | None = None) -> None:
@@ -1073,10 +1122,15 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
             SUM(CASE WHEN detail_error IS NOT NULL THEN 1 ELSE 0 END) AS detail_errors,
             SUM(CASE WHEN fit_score IS NOT NULL THEN 1 ELSE 0 END) AS scored,
             SUM(CASE WHEN {MEANINGFUL_FULL_DESCRIPTION_SQL} AND fit_score IS NULL THEN 1 ELSE 0 END) AS unscored,
-            SUM(CASE WHEN tailored_resume_path IS NOT NULL THEN 1 ELSE 0 END) AS tailored,
+            SUM(CASE
+                WHEN tailored_resume_path IS NOT NULL
+                 AND {ACTIONABLE_JOB_SQL}
+                THEN 1 ELSE 0
+            END) AS tailored,
             SUM(CASE
                 WHEN fit_score >= 7
                  AND {MEANINGFUL_FULL_DESCRIPTION_SQL}
+                 AND {ACTIONABLE_JOB_SQL}
                  AND tailored_resume_path IS NULL
                 THEN 1 ELSE 0
             END) AS untailored_eligible,
@@ -1085,7 +1139,12 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
                  AND tailored_resume_path IS NULL
                 THEN 1 ELSE 0
             END) AS tailor_exhausted,
-            SUM(CASE WHEN cover_letter_path IS NOT NULL AND cover_letter_path != '' THEN 1 ELSE 0 END) AS with_cover_letter,
+            SUM(CASE
+                WHEN cover_letter_path IS NOT NULL
+                 AND cover_letter_path != ''
+                 AND {ACTIONABLE_JOB_SQL}
+                THEN 1 ELSE 0
+            END) AS with_cover_letter,
             SUM(CASE
                 WHEN COALESCE(cover_attempts, 0) >= 5
                  AND (cover_letter_path IS NULL OR cover_letter_path = '')
@@ -1106,6 +1165,7 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
                  AND applied_at IS NULL
                  AND COALESCE(application_url, '') != ''
                  AND archived_at IS NULL
+                 AND {ACTIONABLE_JOB_SQL}
                 THEN 1 ELSE 0
             END) AS ready_to_apply
         FROM jobs
@@ -1268,9 +1328,11 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict], site: str, strategy: 
                     """
                     INSERT INTO jobs (
                         url, canonical_key, title, company, salary, description,
-                        location, site, strategy, discovered_at
+                        location, site, strategy, discovered_at, market_label,
+                        search_query, application_mode, employment_type,
+                        hours_per_week, source_verification, official_url_verified_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         url,
@@ -1283,6 +1345,13 @@ def store_jobs(conn: sqlite3.Connection, jobs: list[dict], site: str, strategy: 
                         site,
                         strategy,
                         now,
+                        job.get("market_label"),
+                        job.get("search_query"),
+                        job.get("application_mode"),
+                        job.get("employment_type"),
+                        job.get("hours_per_week"),
+                        job.get("source_verification"),
+                        job.get("official_url_verified_at"),
                     ),
                 )
                 new += 1
@@ -1303,18 +1372,21 @@ _STAGE_CONDITIONS = {
     "scored": "fit_score IS NOT NULL",
     "pending_tailor": (
         f"fit_score >= ? AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
+        f"AND {ACTIONABLE_JOB_SQL} "
         "AND tailored_resume_path IS NULL AND COALESCE(tailor_attempts, 0) < 5"
     ),
     "tailored": "tailored_resume_path IS NOT NULL",
     "pending_cover": (
         f"fit_score >= ? AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
+        f"AND {ACTIONABLE_JOB_SQL} "
         "AND tailored_resume_path IS NOT NULL "
         "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
         "AND COALESCE(cover_attempts, 0) < 5"
     ),
     "pending_apply": (
         "tailored_resume_path IS NOT NULL AND applied_at IS NULL "
-        "AND COALESCE(application_url, '') != '' AND archived_at IS NULL"
+        f"AND COALESCE(application_url, '') != '' AND {ACTIONABLE_JOB_SQL} "
+        "AND archived_at IS NULL"
     ),
     "applied": "applied_at IS NOT NULL",
     "archived": "archived_at IS NOT NULL",

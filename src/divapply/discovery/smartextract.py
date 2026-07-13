@@ -12,6 +12,7 @@ Sites are loaded from config/sites.yaml, with {query_encoded} and {location_enco
 placeholders replaced from the user's search configuration.
 """
 
+import html
 import json
 import logging
 import re
@@ -22,6 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import quote_plus, urljoin, urlparse
 
+import httpx
 import yaml
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -36,8 +38,9 @@ from divapply.discovery.filters import (
     term_in_text,
     title_ok,
 )
+from divapply.search_policy import market_policy_for_job, scoped_query_locations
 from divapply.llm import get_client
-from divapply.manual_url import flatten_json_ld_items, json_ld_type_matches
+from divapply.manual_url import _fetch_job_page, flatten_json_ld_items, json_ld_type_matches
 from divapply.security import UnsafeUrlError, sanitize_external_url, validate_external_url, validate_navigation_url
 
 log = logging.getLogger(__name__)
@@ -58,6 +61,110 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
 # Selector cache â€” stores winning extraction plans so LLM discovery is skipped on re-runs
 _PLAN_CACHE_PATH = config.APP_DIR / "selector_cache.json"
+_OFFICIAL_REFRESH_INVALIDATES_SQL = """(
+    jobs.applied_at IS NULL AND (
+        jobs.source_verification IS NOT 'official'
+        OR jobs.application_mode IS NOT excluded.application_mode
+        OR jobs.market_label IS NOT excluded.market_label
+        OR jobs.title IS NOT excluded.title
+        OR jobs.company IS NOT excluded.company
+        OR jobs.salary IS NOT excluded.salary
+        OR jobs.description IS NOT excluded.description
+        OR jobs.location IS NOT excluded.location
+        OR jobs.employment_type IS NOT excluded.employment_type
+        OR jobs.hours_per_week IS NOT excluded.hours_per_week
+        OR (
+            excluded.full_description IS NOT NULL
+            AND jobs.full_description IS NOT excluded.full_description
+        )
+        OR jobs.application_url IS NOT excluded.application_url
+    )
+)"""
+
+
+def _greenhouse_board_token(url: str) -> str | None:
+    """Return a validated public Greenhouse board token, if this is one."""
+    parsed = urlparse(url)
+    if parsed.scheme.casefold() != "https" or (parsed.hostname or "").casefold() != "job-boards.greenhouse.io":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts or re.fullmatch(r"[A-Za-z0-9_-]{1,100}", parts[0]) is None:
+        return None
+    return parts[0]
+
+
+def _run_greenhouse_board(name: str, url: str) -> dict:
+    """Read an official Greenhouse board through its deterministic public API."""
+    token = _greenhouse_board_token(url)
+    if token is None:
+        return {"name": name, "status": "FAIL", "total": 0, "titles": 0, "jobs": [], "strategy": "greenhouse_api"}
+    api_url = validate_external_url(
+        f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true",
+        field=f"{name} Greenhouse API",
+    )
+    try:
+        with httpx.Client(follow_redirects=False, timeout=20) as client:
+            response = _fetch_job_page(client, api_url, headers={"User-Agent": UA})
+        payload = response.json()
+    except Exception as exc:
+        log.warning("Greenhouse API failed for %s: %s", name, exc)
+        return {
+            "name": name,
+            "status": "FAIL",
+            "total": 0,
+            "titles": 0,
+            "jobs": [],
+            "strategy": "greenhouse_api",
+            "error": str(exc),
+        }
+
+    raw_jobs = payload.get("jobs") if isinstance(payload, dict) else None
+    if not isinstance(raw_jobs, list):
+        raw_jobs = []
+    jobs: list[dict] = []
+    for item in raw_jobs:
+        if not isinstance(item, dict):
+            continue
+        try:
+            job_url = validate_external_url(str(item.get("absolute_url") or ""), field=f"{name} job URL")
+        except (UnsafeUrlError, ValueError):
+            continue
+        parsed_job_url = urlparse(job_url)
+        job_parts = [part for part in parsed_job_url.path.split("/") if part]
+        if (
+            parsed_job_url.scheme.casefold() != "https"
+            or (parsed_job_url.hostname or "").casefold() != "job-boards.greenhouse.io"
+            or len(job_parts) != 3
+            or job_parts[0] != token
+            or job_parts[1] != "jobs"
+            or re.fullmatch(r"\d+", job_parts[2]) is None
+        ):
+            log.warning("Skipping Greenhouse API job URL outside configured board: %s", job_url)
+            continue
+        decoded_content = html.unescape(str(item.get("content") or ""))
+        content = BeautifulSoup(decoded_content, "html.parser").get_text("\n", strip=True)
+        location_data = item.get("location")
+        location = str(location_data.get("name") or "").strip() if isinstance(location_data, dict) else ""
+        jobs.append(
+            {
+                "url": job_url,
+                "application_url": job_url,
+                "title": str(item.get("title") or "").strip(),
+                "company": name,
+                "location": location,
+                "description": content,
+                "full_description": content,
+            }
+        )
+    status = "PASS" if jobs else "FAIL"
+    return {
+        "name": name,
+        "status": status,
+        "total": len(jobs),
+        "titles": sum(1 for job in jobs if job.get("title")),
+        "jobs": jobs,
+        "strategy": "greenhouse_api",
+    }
 
 
 def _load_plan_cache() -> dict:
@@ -151,7 +258,22 @@ def load_sites() -> list[dict]:
         log.warning("sites.yaml not found at %s", path)
         return []
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    return data.get("sites", [])
+    sites = data.get("sites", [])
+    if not isinstance(sites, list):
+        return []
+    default_verification = str(
+        data.get("default_source_verification") or "unknown"
+    ).strip().casefold()
+    if default_verification not in {"official", "unknown"}:
+        default_verification = "unknown"
+    normalized: list[dict] = []
+    for site in sites:
+        if not isinstance(site, dict):
+            continue
+        item = dict(site)
+        item.setdefault("source_verification", default_verification)
+        normalized.append(item)
+    return normalized
 
 
 def _store_jobs_filtered(
@@ -163,6 +285,11 @@ def _store_jobs_filtered(
     reject_locs: list[str],
     title_excludes: list[str] | None = None,
     filter_rules: dict | None = None,
+    market_label: str = "",
+    search_query: str | None = None,
+    application_mode: str = "manual_review",
+    source_verification: str = "unknown",
+    search_config: dict | None = None,
 ) -> tuple[int, int]:
     """Store jobs with location and title filtering. Returns (new, existing)."""
     from divapply.discovery.jobspy import _job_row_passes_filters
@@ -174,6 +301,9 @@ def _store_jobs_filtered(
     filtered_title = 0
     filtered_rules = 0
     filter_rules = filter_rules or {}
+    normalized_verification = str(source_verification or "unknown").strip().casefold()
+    if normalized_verification not in {"official", "unverified_aggregator", "unknown"}:
+        normalized_verification = "unknown"
 
     for job in jobs:
         url = _normalize_job_url(site, job.get("url"))
@@ -197,15 +327,102 @@ def _store_jobs_filtered(
         if filter_rules and not _job_row_passes_filters(row, filter_rules):
             filtered_rules += 1
             continue
-        try:
-            conn.execute(
-                "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, discovered_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (url, job.get("title"), job.get("company") or site, job.get("salary"), job.get("description"),
-                 job.get("location"), site, strategy, now),
+        resolved_label = market_label
+        resolved_mode = str(application_mode or "manual_review").strip().casefold()
+        if not resolved_label and search_config:
+            resolved_label, resolved_policy = market_policy_for_job(search_config, row)
+            resolved_mode = str(resolved_policy.get("application_mode") or "manual_review").strip().casefold()
+        if normalized_verification != "official" and resolved_mode == "active":
+            resolved_mode = "manual_review"
+        text = f"{job.get('title') or ''} {job.get('description') or ''}".casefold()
+        employment_type = str(job.get("employment_type") or job.get("job_type") or "").strip().casefold()
+        if not employment_type:
+            if "part-time" in text or "part time" in text:
+                employment_type = "part_time"
+            elif "full-time" in text or "full time" in text:
+                employment_type = "full_time"
+        hours = job.get("hours_per_week")
+        if hours is None:
+            hour_matches = re.findall(
+                r"\b(\d{1,3}(?:\.\d+)?)\s*hours?\s*(?:per|a|/)\s*week\b",
+                text,
             )
+            hours = max((float(value) for value in hour_matches), default=None)
+        was_existing = conn.execute("SELECT 1 FROM jobs WHERE url = ?", (url,)).fetchone() is not None
+        full_description = job.get("full_description")
+        application_url = job.get("application_url") or url
+        detail_scraped_at = now if full_description else None
+        conn.execute(
+            "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, "
+            "discovered_at, market_label, search_query, application_mode, employment_type, "
+            "hours_per_week, source_verification, official_url_verified_at, full_description, "
+            "application_url, detail_scraped_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(url) DO UPDATE SET "
+            "title=excluded.title, company=excluded.company, salary=excluded.salary, "
+            "description=excluded.description, location=excluded.location, site=excluded.site, "
+            "strategy=excluded.strategy, market_label=excluded.market_label, "
+            "search_query=excluded.search_query, application_mode=excluded.application_mode, "
+            "employment_type=excluded.employment_type, hours_per_week=excluded.hours_per_week, "
+            "source_verification='official', official_url_verified_at=excluded.official_url_verified_at, "
+            "full_description=CASE "
+            "WHEN jobs.source_verification='official' AND excluded.full_description IS NULL "
+            "THEN jobs.full_description ELSE excluded.full_description END, "
+            "application_url=excluded.application_url, "
+            "detail_scraped_at=CASE "
+            "WHEN jobs.source_verification='official' AND excluded.full_description IS NULL "
+            "THEN jobs.detail_scraped_at ELSE excluded.detail_scraped_at END, "
+            "detail_error=CASE "
+            "WHEN jobs.source_verification='official' AND excluded.full_description IS NULL "
+            "THEN jobs.detail_error ELSE NULL END, "
+            f"fit_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.fit_score END, "
+            f"llm_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.llm_score END, "
+            f"keyword_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.keyword_score END, "
+            f"embedding_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.embedding_score END, "
+            f"composite_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.composite_score END, "
+            f"score_breakdown=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.score_breakdown END, "
+            f"score_reasoning=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.score_reasoning END, "
+            f"matched_skills=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.matched_skills END, "
+            f"missing_skills=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.missing_skills END, "
+            f"keyword_hits=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.keyword_hits END, "
+            f"risk_flags=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.risk_flags END, "
+            f"apply_or_skip_reason=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.apply_or_skip_reason END, "
+            f"scored_at=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.scored_at END, "
+            f"score_attempts=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN 0 ELSE jobs.score_attempts END, "
+            f"score_error=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.score_error END, "
+            f"score_retry_at=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.score_retry_at END, "
+            f"tailored_resume_path=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.tailored_resume_path END, "
+            f"tailored_at=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.tailored_at END, "
+            f"tailor_attempts=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN 0 ELSE jobs.tailor_attempts END, "
+            f"cover_letter_path=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.cover_letter_path END, "
+            f"cover_letter_at=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.cover_letter_at END, "
+            f"cover_attempts=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN 0 ELSE jobs.cover_attempts END "
+            "WHERE excluded.source_verification='official'",
+            (
+                url,
+                job.get("title"),
+                job.get("company") or site,
+                job.get("salary"),
+                job.get("description"),
+                job.get("location"),
+                site,
+                strategy,
+                now,
+                resolved_label or None,
+                search_query,
+                resolved_mode,
+                employment_type or None,
+                hours,
+                normalized_verification,
+                now if normalized_verification == "official" else None,
+                full_description,
+                application_url,
+                detail_scraped_at,
+            ),
+        )
+        if not was_existing:
             new += 1
-        except sqlite3.IntegrityError:
+        else:
             existing += 1
 
     if filtered:
@@ -1185,10 +1402,9 @@ def build_scrape_targets(
     if search_cfg is None:
         search_cfg = config.load_search_config()
 
-    queries_cfg = search_cfg.get("queries", [])
-    queries = [q["query"] for q in queries_cfg]
     locs = search_cfg.get("locations", [])
     default_location = locs[0]["location"] if locs else ""
+    scoped_searches = scoped_query_locations(search_cfg)
 
     targets: list[dict] = []
 
@@ -1196,13 +1412,22 @@ def build_scrape_targets(
         site_url = site.get("url", "")
         site_name = site.get("name", "Unknown")
         site_type = site.get("type", "static")
+        verification = str(site.get("source_verification") or "unknown").strip().casefold()
+        if verification != "official":
+            verification = "unknown"
 
-        if site_type == "search" and queries:
-            for query in queries:
+        if site_type == "search" and scoped_searches:
+            site_location_labels = {
+                str(label).strip() for label in (site.get("location_labels") or []) if str(label).strip()
+            }
+            for search in scoped_searches:
+                if site_location_labels and search["location_label"] not in site_location_labels:
+                    continue
+                query = search["query"]
                 expanded_url = site_url
                 expanded_url = expanded_url.replace("{query_encoded}", quote_plus(query))
                 expanded_url = expanded_url.replace("{query}", quote_plus(query))
-                expanded_url = expanded_url.replace("{location_encoded}", quote_plus(default_location))
+                expanded_url = expanded_url.replace("{location_encoded}", quote_plus(search["location"]))
                 try:
                     safe_url = validate_external_url(expanded_url, field=f"{site_name} url")
                 except UnsafeUrlError as exc:
@@ -1212,6 +1437,15 @@ def build_scrape_targets(
                     "name": site_name,
                     "url": safe_url,
                     "query": query,
+                    "location": search["location"],
+                    "location_label": search["location_label"],
+                    "application_mode": str(
+                        (search_cfg.get("market_policies") or {})
+                        .get(search["location_label"], {})
+                        .get("application_mode", "manual_review")
+                    ),
+                    "source_verification": verification,
+                    "adapter": "greenhouse" if _greenhouse_board_token(safe_url) else None,
                 })
         else:
             expanded_url = site_url
@@ -1225,6 +1459,9 @@ def build_scrape_targets(
                 "name": site_name,
                 "url": safe_url,
                 "query": None,
+                "application_mode": "manual_review",
+                "source_verification": verification,
+                "adapter": "greenhouse" if _greenhouse_board_token(safe_url) else None,
             })
 
     return targets
@@ -1239,6 +1476,7 @@ def _run_all(
     title_excludes: list[str] | None = None,
     filter_rules: dict | None = None,
     workers: int = 1,
+    search_config: dict | None = None,
 ) -> dict:
     """Run smart extract on all targets.
 
@@ -1263,11 +1501,21 @@ def _run_all(
         nonlocal total_new, total_existing
         jobs = r.get("jobs", [])
         if jobs:
-            new, existing = _store_jobs_filtered(conn, jobs, target["name"],
-                                                  r.get("strategy", "?"),
-                                                  accept_locs, reject_locs,
-                                                  title_excludes,
-                                                  filter_rules)
+            new, existing = _store_jobs_filtered(
+                conn,
+                jobs,
+                target["name"],
+                r.get("strategy", "?"),
+                accept_locs,
+                reject_locs,
+                title_excludes,
+                filter_rules,
+                market_label=str(target.get("location_label") or ""),
+                search_query=target.get("query"),
+                application_mode=str(target.get("application_mode") or "manual_review"),
+                source_verification=str(target.get("source_verification") or "unknown"),
+                search_config=search_config,
+            )
             total_new += new
             total_existing += existing
             log.info("DB: +%d new, %d already existed", new, existing)
@@ -1280,6 +1528,8 @@ def _run_all(
 
     def _run_with_cache(target: dict) -> dict:
         """Run site extraction, falling back to full discovery if cache returns 0 jobs."""
+        if target.get("adapter") == "greenhouse":
+            return _run_greenhouse_board(target["name"], target["url"])
         with cache_lock:
             cached = cache.get(target["name"])
         r = _run_one_site(target["name"], target["url"], cached_plan=cached)
@@ -1389,5 +1639,6 @@ def run_smart_extract(
         title_excludes,
         filter_rules,
         workers=workers,
+        search_config=search_cfg,
     )
 

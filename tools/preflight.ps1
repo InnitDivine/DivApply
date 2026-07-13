@@ -22,6 +22,25 @@ function Invoke-Step {
     }
 }
 
+function Remove-OwnedBuildOutput {
+    param([string]$Name)
+    $target = [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Name))
+    $relative = [System.IO.Path]::GetRelativePath($repoRoot, $target)
+    if ($relative.StartsWith("..") -or [System.IO.Path]::IsPathRooted($relative)) {
+        throw "Refusing to remove build output outside repository root"
+    }
+    if (Test-Path -LiteralPath $target) {
+        $item = Get-Item -LiteralPath $target -Force
+        if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            throw "Refusing to remove reparse-point build output"
+        }
+        if (-not $item.PSIsContainer) {
+            throw "Refusing to remove build output that is not a regular directory"
+        }
+        Remove-Item -LiteralPath $target -Recurse -Force
+    }
+}
+
 Invoke-Step "Validate Python lock" { uv lock --check }
 Invoke-Step "Sync locked toolchain" { uv sync --locked --extra dev --extra full }
 Invoke-Step "Ruff" { uv run --locked ruff check . }
@@ -33,9 +52,16 @@ Invoke-Step "Pytest with branch coverage" {
     uv run --locked coverage run -m pytest -q
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     uv run --locked coverage report
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    uv run --locked coverage erase
 }
+Remove-OwnedBuildOutput "dist"
+Remove-OwnedBuildOutput "release"
+Remove-OwnedBuildOutput "build"
 Invoke-Step "Build package" {
     uv run --locked python -m build --no-isolation
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+    uv run --locked python tools/check_distribution_contents.py --dist-dir (Join-Path $repoRoot "dist")
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     uv run --locked python -m twine check dist/*
 }

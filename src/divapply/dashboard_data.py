@@ -8,7 +8,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 import sqlite3
 
-from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, ensure_columns, get_connection
+from divapply.database import (
+    ACTIONABLE_JOB_SQL,
+    MEANINGFUL_FULL_DESCRIPTION_SQL,
+    ensure_columns,
+    get_connection,
+)
 
 
 @dataclass(frozen=True)
@@ -60,7 +65,8 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
         "WHERE archived_at IS NULL "
         f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
         "AND application_url IS NOT NULL "
-        "AND application_url != ''"
+        "AND application_url != '' "
+        f"AND {ACTIONABLE_JOB_SQL}"
     ).fetchone()[0] or 0)
     scored = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
@@ -74,13 +80,15 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
         "WHERE archived_at IS NULL "
         "AND tailored_resume_path IS NOT NULL "
-        "AND tailored_resume_path != ''"
+        "AND tailored_resume_path != '' "
+        f"AND {ACTIONABLE_JOB_SQL}"
     ).fetchone()[0] or 0)
     with_cover_letter = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
         "WHERE archived_at IS NULL "
         "AND cover_letter_path IS NOT NULL "
-        "AND cover_letter_path != ''"
+        "AND cover_letter_path != '' "
+        f"AND {ACTIONABLE_JOB_SQL}"
     ).fetchone()[0] or 0)
     applied = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
@@ -124,7 +132,8 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
         SELECT url, title, salary, description, location, site, strategy,
                full_description, application_url, detail_error,
                fit_score, score_reasoning, tailored_resume_path, cover_letter_path,
-               apply_status, applied_at, apply_error, verification_confidence
+               apply_status, applied_at, apply_error, verification_confidence,
+               market_label, application_mode, source_verification
         FROM {dashboard_score_table}
         WHERE archived_at IS NULL AND fit_score >= 5
         ORDER BY fit_score DESC, site, title

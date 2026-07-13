@@ -1,6 +1,6 @@
 [project]
 name = "divapply"
-version = "0.5.1"
+version = "0.5.2"
 description = "DivApply: AI-assisted end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -72,11 +72,16 @@ build-backend = "hatchling.build"
 packages = ["src/divapply"]
 shared-scripts = { "scripts/divapply" = "divapply", "scripts/divapply.cmd" = "divapply.cmd" }
 
-[tool.hatch.build]
-artifacts = [
-    "src/divapply/config/*.json",
-    "src/divapply/config/*.yaml",
-    "src/divapply/mcp_runtime_assets/*.json",
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/divapply/**/*.py",
+    "/src/divapply/config/employers.yaml",
+    "/src/divapply/config/searches.example.yaml",
+    "/src/divapply/config/sites.yaml",
+    "/src/divapply/mcp_runtime_assets/package-lock.json",
+    "/src/divapply/mcp_runtime_assets/package.json",
+    "/scripts/divapply",
+    "/scripts/divapply.cmd",
 ]
 
 [tool.ruff]

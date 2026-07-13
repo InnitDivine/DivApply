@@ -56,7 +56,7 @@ git push origin vX.Y.Z
 The `Publish release` workflow will lint, test, verify the tagged commit is the current `main` tip, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, and build the package once under read-only permissions. Separate no-checkout promotion jobs download that verified artifact: one owns only PyPI Trusted Publishing authority, and the other owns only GitHub Release authority. After the workflow succeeds, users can install with:
 
 ```bash
-pip install "divapply[full]"
+pip install --upgrade "divapply[full]"
 python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 ```
 
@@ -65,7 +65,7 @@ python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/1
 For development snapshots, users can install the latest `main` directly from GitHub:
 
 ```bash
-pip install "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
+pip install --upgrade "divapply[full] @ git+https://github.com/InnitDivine/DivApply.git"
 python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
 ```
 

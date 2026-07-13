@@ -18,10 +18,10 @@ _STOPWORDS = {
     "below", "between", "both", "business", "can", "candidate", "company",
     "could", "daily", "duties", "each", "employee", "employees", "equal",
     "etc", "from", "full", "have", "help", "high", "including", "into",
-    "job", "jobs", "least", "level", "like", "looking", "more", "must",
+    "education", "e.g", "eg", "job", "jobs", "least", "level", "like", "looking", "more", "must",
     "advantage", "bonus", "certification", "certifications", "desired",
     "mandatory", "minimum", "nice",
-    "need", "needs", "offer", "only", "optional", "other", "our", "plus",
+    "need", "needs", "offer", "only", "optional", "other", "our", "plus", "qualification", "qualifications",
     "preferred", "provide", "required", "requirements", "responsibilities", "role",
     "should", "skill", "skills", "some", "team", "than", "that", "the", "their", "them",
     "then", "this", "through", "time", "using", "will", "with", "work",
@@ -36,6 +36,50 @@ _PREFERRED_MARKERS = {
     "preferred", "nice to have", "nice-to-have", "bonus", "plus",
     "desired", "optional", "advantage",
 }
+_REQUIRED_LINE_RE = re.compile(
+    r"^(?:job\s+)?(?:required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
+    r"minimum(?:\s+qualifications)?|mandatory|qualifications?|responsibilities|duties)\b|"
+    r"\b(?:must\s+have|required\s+to|is\s+required|are\s+required|minimum\s+of)\b",
+    re.IGNORECASE,
+)
+_PREFERRED_LINE_RE = re.compile(
+    r"^(?:preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
+    r"nice[- ]to[- ]have|bonus|desired|optional|advantage)\b",
+    re.IGNORECASE,
+)
+_REQUIREMENT_HEADING_RE = re.compile(
+    r"^(?:job\s+)?(?:required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
+    r"minimum(?:\s+qualifications)?|mandatory|qualifications?(?:\s*(?:&|and)\s*education)?|"
+    r"responsibilities|duties|preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
+    r"nice[- ]to[- ]have|bonus|desired|optional|advantage)\s*:?[\s]*$",
+    re.IGNORECASE,
+)
+_NON_REQUIREMENT_HEADINGS = {
+    "additional information",
+    "benefits",
+    "compensation",
+    "employee benefits",
+    "hourly rate",
+    "pay range",
+    "perks",
+    "salary",
+    "what we offer",
+}
+_NON_REQUIREMENT_LINE_RE = re.compile(
+    r"^(?:\.\.\.\[?middle omitted\]?\.\.\.|additional information\b|about\b|"
+    r"benefits?\b|compensation\b|employment type\b|hourly rate\b|job type\b|"
+    r"location\s*:|pay\b|salary\b|schedule\s*:|work arrangement\b|work location\b)",
+    re.IGNORECASE,
+)
+_BOILERPLATE_BOUNDARIES = {
+    "applicants have rights under",
+    "apply for this job",
+    "eeo is the law",
+    "equal opportunity and affirmative action",
+    "equal opportunity employer",
+    "public burden statement",
+    "voluntary self-identification",
+}
 _SKILL_HINTS = {
     "aws", "azure", "gcp", "linux", "windows", "python", "sql", "excel",
     "access", "administrative", "answering", "appointments", "billing", "cash",
@@ -48,6 +92,30 @@ _SKILL_HINTS = {
     "data", "analysis", "analytics", "documentation", "communication",
     "troubleshooting", "networking", "security", "compliance", "inventory",
     "scheduling", "reporting", "reconciliation", "billing", "crm",
+}
+_SKILL_PHRASES = {
+    "active directory",
+    "asset inventory",
+    "basic networking",
+    "cash handling",
+    "customer service",
+    "data entry",
+    "device setup",
+    "end-user support",
+    "front desk",
+    "medical terminology",
+    "microsoft 365",
+    "microsoft office",
+    "patient registration",
+    "phone etiquette",
+    "problem-solving",
+    "technical documentation",
+    "user account management",
+}
+_EVIDENCE_EQUIVALENTS = {
+    "device setup": ("workstation setup", "pc building", "windows installation"),
+    "end-user support": ("end user support", "user assistance", "user support", "helped staff"),
+    "problem-solving": ("problem solving", "troubleshooting", "resolved", "discrepancy research"),
 }
 
 
@@ -65,14 +133,19 @@ def _normalize_token(token: str) -> str:
 
 def _line_bucket(line: str, current: str | None) -> str | None:
     """Classify a JD line as required/preferred using headings and markers."""
-    lowered = line.casefold()
-    has_preferred = any(marker in lowered for marker in _PREFERRED_MARKERS)
-    has_required = any(marker in lowered for marker in _REQUIRED_MARKERS)
-    if has_preferred:
+    lowered = line.casefold().strip(" :.-")
+    if lowered in _NON_REQUIREMENT_HEADINGS or _NON_REQUIREMENT_LINE_RE.search(line.strip()):
+        return None
+    if _PREFERRED_LINE_RE.search(lowered):
         return "preferred"
-    if has_required:
+    if _REQUIRED_LINE_RE.search(lowered):
         return "required"
     return current
+
+
+def _is_boilerplate_boundary(line: str) -> bool:
+    lowered = line.casefold()
+    return any(marker in lowered for marker in _BOILERPLATE_BOUNDARIES)
 
 
 def _clean_phrase(phrase: str) -> str:
@@ -101,31 +174,32 @@ def _candidate_phrases(text: str, *, bucket: str = "required") -> list[str]:
         line = line.strip(" -•*\t")
         if not line:
             continue
+        if _is_boilerplate_boundary(line):
+            break
         current_bucket = _line_bucket(line, current_bucket)
         if current_bucket != bucket:
+            continue
+        if _REQUIREMENT_HEADING_RE.fullmatch(line.strip()):
             continue
         bucket_lines.append(line)
         markerless = _strip_marker_prefix(line)
         if markerless and markerless != line:
             phrases.extend(chunk.strip() for chunk in re.split(r"[,;/]| and | or ", markerless))
-        if any(mark in line for mark in _REQUIRED_MARKERS | _PREFERRED_MARKERS):
+        if _REQUIRED_LINE_RE.search(line) or _PREFERRED_LINE_RE.search(line):
             chunks = re.split(r"[,;/]| and | or ", line)
             phrases.extend(chunk.strip() for chunk in chunks)
         elif 1 <= len(markerless.split()) <= 6:
             phrases.append(markerless)
 
     bucket_text = "\n".join(bucket_lines)
-    if bucket == "required" and not bucket_text:
-        bucket_text = lowered
     words = [_normalize_token(w) for w in _WORD_RE.findall(bucket_text)]
     words = [w for w in words if len(w) > 2 and w not in _STOPWORDS]
     for word in words:
         if word in _SKILL_HINTS or any(c in word for c in ("+", "#", ".")):
             phrases.append(word)
 
-    for idx in range(len(words) - 1):
-        phrase = f"{words[idx]} {words[idx + 1]}"
-        if any(hint in phrase for hint in _SKILL_HINTS):
+    for phrase in sorted(_SKILL_PHRASES):
+        if phrase in bucket_text:
             phrases.append(phrase)
 
     seen: set[str] = set()
@@ -192,6 +266,8 @@ def keyword_present(keyword: str, text: str) -> bool:
     if not keyword:
         return False
     if keyword in text:
+        return True
+    if any(evidence in text for evidence in _EVIDENCE_EQUIVALENTS.get(keyword, ())):
         return True
     parts = [part for part in keyword.split() if part not in _STOPWORDS]
     return bool(parts) and all(part in text for part in parts)

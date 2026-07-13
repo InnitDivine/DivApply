@@ -9,6 +9,7 @@ from divapply.database import (
     MIN_FULL_DESCRIPTION_CHARS,
     add_application_event,
     archive_job,
+    backfill_discovery_provenance,
     canonical_job_key,
     close_connection,
     delete_scored_jobs_at_or_below,
@@ -143,6 +144,113 @@ def test_store_jobs_keeps_sparse_jobs_that_lack_company(tmp_path) -> None:
     close_connection(db_path)
 
 
+def test_store_jobs_persists_discovery_provenance(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+
+    store_jobs(
+        conn,
+        [
+            {
+                "url": "https://jobs.example.com/one",
+                "title": "IT Support Technician",
+                "company": "Example",
+                "market_label": "Current market",
+                "search_query": "part time IT support",
+                "application_mode": "active",
+                "employment_type": "part_time",
+                "hours_per_week": 30,
+                "source_verification": "official",
+            }
+        ],
+        site="Example Careers",
+        strategy="official_api",
+    )
+
+    row = conn.execute(
+        "SELECT market_label, search_query, application_mode, employment_type, "
+        "hours_per_week, source_verification FROM jobs"
+    ).fetchone()
+    assert tuple(row) == (
+        "Current market",
+        "part time IT support",
+        "active",
+        "part_time",
+        30.0,
+        "official",
+    )
+    close_connection(db_path)
+
+
+def test_pending_action_stages_exclude_unverified_aggregators(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.executemany(
+        """
+        INSERT INTO jobs (
+            url, title, fit_score, full_description, application_url,
+            application_mode, source_verification, discovered_at
+        ) VALUES (?, ?, 8, ?, ?, ?, ?, '2026-01-01')
+        """,
+        [
+            (
+                "https://aggregator.example/job",
+                "Aggregator",
+                LONG_DESCRIPTION,
+                "https://aggregator.example/apply",
+                "discovery_only",
+                "unverified_aggregator",
+            ),
+            (
+                "https://official.example/job",
+                "Official",
+                LONG_DESCRIPTION,
+                "https://official.example/apply",
+                "active",
+                "official",
+            ),
+            (
+                "https://unknown.example/job",
+                "Unknown",
+                LONG_DESCRIPTION,
+                "https://unknown.example/apply",
+                "active",
+                "unknown",
+            ),
+            (
+                "https://legacy.example/job",
+                "Legacy",
+                LONG_DESCRIPTION,
+                "https://legacy.example/apply",
+                None,
+                None,
+            ),
+        ],
+    )
+    conn.commit()
+
+    pending = get_jobs_by_stage(conn=conn, stage="pending_tailor", min_score=7)
+
+    assert [job["title"] for job in pending] == ["Official"]
+    close_connection(db_path)
+
+
+def test_backfill_marks_legacy_jobspy_rows_discovery_only(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    conn.execute(
+        "INSERT INTO jobs (url, strategy) VALUES ('https://aggregator.example/job', 'jobspy')"
+    )
+    conn.commit()
+
+    assert backfill_discovery_provenance(conn) == 1
+    row = conn.execute(
+        "SELECT application_mode, source_verification FROM jobs"
+    ).fetchone()
+    assert tuple(row) == ("discovery_only", "unverified_aggregator")
+    close_connection(db_path)
+
+
 def test_store_jobs_rolls_back_batch_when_unexpected_insert_error_occurs(tmp_path) -> None:
     db_path = tmp_path / "divapply.db"
     conn = init_db(db_path)
@@ -185,11 +293,11 @@ def test_get_jobs_by_stage_pending_apply_requires_nonempty_application_url(tmp_p
     conn = init_db(db_path)
     conn.executemany(
         """
-        INSERT INTO jobs (
-            url, title, fit_score, full_description, application_url,
-            tailored_resume_path, discovered_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (
+                url, title, fit_score, full_description, application_url,
+                tailored_resume_path, discovered_at, application_mode, source_verification
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'official')
         """,
         [
             ("https://example.com/empty", "Empty", 8, LONG_DESCRIPTION, "", "resume.txt", "2026-01-01"),
@@ -219,11 +327,12 @@ def test_get_jobs_by_stage_pending_cover_treats_empty_path_as_missing(tmp_path) 
     conn = init_db(db_path)
     conn.execute(
         """
-        INSERT INTO jobs (
-            url, title, fit_score, full_description,
-            tailored_resume_path, cover_letter_path, discovered_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO jobs (
+                url, title, fit_score, full_description,
+                tailored_resume_path, cover_letter_path, discovered_at,
+                application_mode, source_verification
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'official')
         """,
         ("https://example.com/cover", "Cover", 8, LONG_DESCRIPTION, "resume.txt", "", "2026-01-01"),
     )
@@ -295,9 +404,9 @@ def test_archive_job_hides_job_from_ready_apply_counts(tmp_path) -> None:
         """
         INSERT INTO jobs (
             url, title, fit_score, full_description, tailored_resume_path,
-            application_url, discovered_at
+            application_url, discovered_at, application_mode, source_verification
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 'official')
         """,
         (
             "https://example.com/archive-me",
@@ -491,9 +600,9 @@ def test_get_stats_reports_aggregate_stage_counts(tmp_path) -> None:
             url, title, site, detail_scraped_at, full_description, detail_error,
             fit_score, tailored_resume_path, tailor_attempts, cover_letter_path,
             cover_attempts, applied_at, apply_status, apply_error, application_url,
-            last_attempted_at, discovered_at
+            last_attempted_at, discovered_at, application_mode, source_verification
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'official')
         """,
         [
             (

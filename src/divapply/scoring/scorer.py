@@ -19,6 +19,7 @@ from divapply.database import (
 )
 from divapply.llm import get_client_for_stage
 from divapply.privacy import redact_error_snippet
+from divapply.search_policy import effective_search_config, job_has_schedule_exception
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
 
@@ -48,14 +49,18 @@ CORE POLICY:
 - Use general role sense only to interpret common requirements, not to invent unstated requirements.
 - Transferable experience counts when duties, tools, domain knowledge, education, or coursework reasonably map to the job's work.
 - When a posting says equivalent experience is accepted, evaluate verified duties and task summaries, not just exact titles.
+- When equivalent experience is accepted, do not list the substitutable degree field itself as a missing skill. State the verified equivalency evidence and only genuine task/tool gaps.
+- Do not invent a paid, professional, same-title, or minimum-years requirement unless the posting explicitly states it.
 - For entry-level, low-hour, student, customer service, cashier, front desk, office assistant, data entry, library, recreation, retail, or food service roles, do not require the same prior job title or exact industry/tool when the candidate has verified transferable public-facing service, records, payments, scheduling, data entry, or administrative experience.
 - Non-substitutable requirements such as licenses, clearances, legal credentials, completed degrees, or certifications must be treated as hard gaps when the posting requires them.
 - Preferred/nice-to-have certifications, tools, degrees, or licenses are not hard gaps. Treat them as small tie-breakers after required qualifications.
 - Coursework and in-progress education can support skills, exposure, and student eligibility. They do not prove completed degrees, completed certificates, licensure, employment history, or professional years of experience.
-- If search filters require part-time but verified search context marks a referral or priority-employer exception, do not penalize a full-time posting solely for schedule. Still penalize real conflicts and missing required qualifications.
+- State credential gaps precisely. Do not say a degree level is absent when the evidence shows a completed degree at that level; say that the completed degree is not IT-related when field alignment is the actual gap.
+- If search filters require part-time but verified search context marks an explicit schedule exception for the current employer, do not penalize a full-time posting solely for schedule. Still penalize real conflicts and missing required qualifications.
 - Search priority controls primary-queue eligibility after qualification fit. Priority 1 is primary, priority 2 is a bridge, and priority 3 is fallback.
-- Priority 3 or outside all named target families: maximum score 6, unless the search context explicitly names the employer as an exception.
-- When search context prefers full-time, a part-time, per-diem, temporary, or seasonal role: maximum score 6, unless a referral/priority-employer exception explicitly applies.
+- Priority 3 or outside all named target families: maximum score 6.
+- When search context prefers full-time, a part-time, per-diem, temporary, or seasonal role: maximum score 6, unless an explicit schedule exception for the current employer applies.
+- When application mode is discovery only, evaluate fit but never recommend immediate application.
 
 SCORING CRITERIA:
 - 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
@@ -88,9 +93,10 @@ IMPORTANT NOTES:
 - Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family unless the verified profile facts identify it as a current target.
 - Do not artificially boost or suppress roles based on a presumed career path; use active search queries and filters instead.
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
+- Never turn "equivalent experience accepted" into "paid IT experience required" unless the posting itself uses that restriction.
 - Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
 - For entry-level part-time roles with no hard credential/license gap, no schedule conflict, and an APPLY recommendation, avoid scoring below 6 solely because the candidate lacks exact same-title experience.
-- For referral or priority-employer exceptions, score full-time roles on qualifications and location unless the profile states a hard availability conflict.
+- For an explicit schedule exception for the current employer, score full-time roles on qualifications and location unless the profile states a hard availability conflict.
 - Use only evidence from the resume, verified profile facts, profile-safe coursework summary, and the job description.
 
 RESPOND IN EXACTLY THIS FORMAT (no other text):
@@ -102,6 +108,75 @@ KEYWORD_HITS: [comma-separated job-description keywords that are truthfully supp
 RISK_FLAGS: [comma-separated concerns like scam, license gap, location, low detail, or "none"]
 APPLY_OR_SKIP_REASON: [one short human-readable apply/skip reason]
 SCORE_REASONING: [1-2 sentences explaining the score]"""
+
+
+def _sanitize_substitution_narrative(
+    reasoning: str,
+    risk_flags: str,
+    job_text: str,
+    evidence_gaps: str,
+) -> tuple[str, str]:
+    """Prevent a substitutable credential from being restated as mandatory."""
+    job_lower = job_text.casefold()
+    if not any(
+        term in job_lower
+        for term in ("equivalent experience", "experience accepted", "experience may substitute", "or equivalent")
+    ):
+        return reasoning, risk_flags
+
+    credential_terms = ("associate", "bachelor", "certificate", "certification", "degree")
+    reasoning_lower = reasoning.casefold()
+    if any(term in reasoning_lower for term in credential_terms) and any(
+        term in reasoning_lower for term in ("gap", "lack", "missing", "not completed", "in progress", "in-progress")
+    ):
+        base = re.split(r"\b(?:but|however)\b", reasoning, maxsplit=1, flags=re.IGNORECASE)[0].strip(" ,.;")
+        if base:
+            base += "."
+        parts = [base] if base else []
+        parts.append(
+            "The posting explicitly accepts equivalent experience, so a human reviewer should assess that alternative from verified duties and projects."
+        )
+        if evidence_gaps:
+            parts.append(f"Remaining evidence gap: {evidence_gaps}.")
+        reasoning = " ".join(parts)
+
+    risk_parts = [part.strip() for part in re.split(r"[;,]", risk_flags) if part.strip()]
+    risk_parts = [
+        part
+        for part in risk_parts
+        if not (
+            any(term in part.casefold() for term in credential_terms)
+            and any(
+                term in part.casefold()
+                for term in ("gap", "lack", "missing", "not completed", "in progress", "in-progress", "not explicitly")
+            )
+        )
+    ]
+    return reasoning, ", ".join(risk_parts)
+
+
+def _build_evidence_reasoning(hybrid: dict, job_text: str) -> str:
+    """Build persisted reasoning from bounded evidence instead of LLM prose."""
+    generic_hits = {"communication", "compliance", "customer", "inventory", "microsoft", "security", "support"}
+    hits = [part.strip() for part in str(hybrid.get("keyword_hits", "") or "").split(",") if part.strip()]
+    specific_hits = [hit for hit in hits if hit.casefold() not in generic_hits]
+    selected_hits = (specific_hits or hits)[:8]
+    gaps = str(hybrid.get("missing_skills", "") or "").strip()
+    score = int(hybrid.get("score") or 0)
+    parts = [f"Fit {score}/10 based on verified candidate-to-posting evidence."]
+    if selected_hits:
+        parts.append(f"Supported overlap: {', '.join(selected_hits)}.")
+    job_lower = job_text.casefold()
+    if any(
+        term in job_lower
+        for term in ("equivalent experience", "experience accepted", "experience may substitute", "or equivalent")
+    ):
+        parts.append(
+            "The posting explicitly accepts equivalent experience; a human reviewer should assess that alternative from verified duties and projects."
+        )
+    if gaps:
+        parts.append(f"Remaining evidence gap: {gaps}.")
+    return " ".join(parts)
 
 
 def _parse_score_response(response: str) -> dict:
@@ -279,9 +354,21 @@ def _build_profile_evidence_context(profile: dict) -> str:
     return "\n".join(lines)
 
 
-def _build_search_evidence_context(search_config: dict) -> str:
+def _build_search_evidence_context(search_config: dict, *, job: dict | None = None) -> str:
     """Build scoring-safe search constraints from searches.yaml."""
+    if job is not None:
+        search_config = effective_search_config(search_config, job)
     lines: list[str] = []
+    market_label = str(search_config.get("active_market_label") or "").strip()
+    if market_label:
+        lines.append(f"Active market policy: {market_label}")
+    application_mode = str(search_config.get("application_mode") or "").strip().casefold()
+    if application_mode == "discovery_only":
+        lines.append("Application mode: discovery only")
+    elif application_mode == "manual_review":
+        lines.append("Application mode: manual review")
+    if search_config.get("require_benefits"):
+        lines.append("Benefits required before recommendation")
     target_families = search_config.get("target_families")
     if isinstance(target_families, list):
         family_terms: list[str] = []
@@ -332,32 +419,9 @@ def _build_search_evidence_context(search_config: dict) -> str:
         loc_terms = [str(item.get("location") or "").strip() for item in locations if isinstance(item, dict)]
         if loc_terms:
             lines.append("Search locations: " + "; ".join(loc_terms))
-    exception_terms: list[str] = []
-    for key in (
-        "schedule_exception_employers",
-        "referral_employers",
-        "priority_employers",
-        "employer_priority",
-    ):
-        value = search_config.get(key)
-        if isinstance(value, list):
-            for item in value:
-                if isinstance(item, dict):
-                    text = str(item.get("name") or item.get("employer") or "").strip()
-                else:
-                    text = str(item).strip()
-                if text:
-                    exception_terms.append(text)
-        elif isinstance(value, dict):
-            exception_terms.extend(str(item.get("name") or name).strip() for name, item in value.items())
-        elif isinstance(value, str) and value.strip():
-            exception_terms.append(value.strip())
-    if exception_terms:
-        unique = list(dict.fromkeys(exception_terms))
+    if job is not None and job_has_schedule_exception(search_config, job):
         lines.append(
-            "Referral/priority employer schedule exception: "
-            + "; ".join(unique[:20])
-            + " may be scored without the part-time-only penalty."
+            "Explicit schedule exception: current employer matched configured schedule/referral policy."
         )
     return "\n".join(lines)
 
@@ -368,6 +432,13 @@ def score_job(
     coursework_summary: str = "",
     coursework_skills_summary: str = "",
     profile_context: str = "",
+    schedule_exception: bool = False,
+    application_mode: str = "active",
+    preferred_schedule: str = "any",
+    require_part_time: bool = False,
+    max_hours_per_week: int | float | None = None,
+    require_benefits: bool = False,
+    source_verification: str = "",
 ) -> dict:
     """Score a single job against the resume.
 
@@ -406,14 +477,37 @@ def score_job(
             job_description=job_text,
             resume_text=evidence_text,
             llm_result=llm_result,
+            schedule_exception=schedule_exception,
+            preferred_schedule=preferred_schedule,
+            require_part_time=require_part_time,
+            max_hours_per_week=max_hours_per_week,
+            require_benefits=require_benefits,
+            source_verification=source_verification,
         )
+        reasoning, risk_flags = _sanitize_substitution_narrative(
+            _build_evidence_reasoning(hybrid, job_text),
+            str(llm_result.get("risk_flags", "") or ""),
+            job_text,
+            str(hybrid.get("missing_skills", "") or ""),
+        )
+        action_reason = str(llm_result.get("apply_or_skip_reason", "") or "")
+        normalized_mode = str(application_mode or "active").strip().casefold()
+        if normalized_mode == "discovery_only":
+            action_reason = (
+                "Discovery only - do not apply until this market is activated and "
+                "relocation timing is confirmed."
+            )
+        elif normalized_mode == "manual_review":
+            action_reason = (
+                "Manual review - verify market, schedule, source, and eligibility before applying."
+            )
         return {
             **llm_result,
             **hybrid,
-            "matched_skills": llm_result.get("matched_skills", ""),
-            "risk_flags": llm_result.get("risk_flags", ""),
-            "apply_or_skip_reason": llm_result.get("apply_or_skip_reason", ""),
-            "reasoning": llm_result.get("reasoning", ""),
+            "matched_skills": hybrid.get("keyword_hits", ""),
+            "risk_flags": risk_flags,
+            "apply_or_skip_reason": action_reason,
+            "reasoning": reasoning,
         }
     except Exception as e:
         safe_error = redact_error_snippet(str(e), max_length=500) or type(e).__name__
@@ -464,8 +558,8 @@ def run_scoring(
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     coursework_summary = "\n".join(profile.get("coursework_summary", []))
     coursework_skills_summary = "\n".join(profile.get("coursework_skills", []))
-    search_context = _build_search_evidence_context(load_search_config())
-    profile_context = "\n".join(part for part in (_build_profile_evidence_context(profile), search_context) if part)
+    search_config = load_search_config()
+    profile_evidence_context = _build_profile_evidence_context(profile)
     conn = get_connection()
 
     if target_url:
@@ -500,12 +594,38 @@ def run_scoring(
     results: list[dict] = []
 
     for job in jobs:
+        effective_config = effective_search_config(search_config, job)
+        policy_mode = str(effective_config.get("application_mode") or "manual_review").strip().casefold()
+        stored_mode = str(job.get("application_mode") or "").strip().casefold()
+        if "discovery_only" in {policy_mode, stored_mode}:
+            application_mode = "discovery_only"
+        elif "manual_review" in {policy_mode, stored_mode}:
+            application_mode = "manual_review"
+        else:
+            application_mode = "active"
+        search_context = _build_search_evidence_context(search_config, job=job)
+        profile_context = "\n".join(
+            part for part in (profile_evidence_context, search_context) if part
+        )
         result = score_job(
             resume_text,
             job,
             coursework_summary,
             coursework_skills_summary,
             profile_context,
+            schedule_exception=job_has_schedule_exception(effective_config, job),
+            application_mode=application_mode,
+            preferred_schedule=str(effective_config.get("preferred_schedule") or "any"),
+            require_part_time=bool(
+                effective_config.get("require_part_time")
+                or effective_config.get("customer_service_require_part_time")
+            ),
+            max_hours_per_week=(
+                effective_config.get("max_hours_per_week")
+                or effective_config.get("customer_service_max_hours_per_week")
+            ),
+            require_benefits=bool(effective_config.get("require_benefits")),
+            source_verification=str(job.get("source_verification") or ""),
         )
         result["url"] = job["url"]
         result["prior_score_attempts"] = int(job.get("score_attempts") or 0)

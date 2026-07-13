@@ -59,6 +59,39 @@ def _m0004_retryable_scoring(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_jobs_score_retry "
         "ON jobs(fit_score, score_attempts, score_retry_at)"
     )
+
+
+def _m0005_scoring_policy_v76(conn: sqlite3.Connection) -> None:
+    """Invalidate unapplied output produced before structured policy/provenance gates."""
+    conn.execute(
+        """
+        UPDATE jobs
+        SET fit_score = NULL,
+            llm_score = NULL,
+            keyword_score = NULL,
+            embedding_score = NULL,
+            composite_score = NULL,
+            score_breakdown = NULL,
+            score_reasoning = NULL,
+            matched_skills = NULL,
+            missing_skills = NULL,
+            keyword_hits = NULL,
+            risk_flags = NULL,
+            apply_or_skip_reason = NULL,
+            scored_at = NULL,
+            score_attempts = 0,
+            score_error = NULL,
+            score_retry_at = NULL,
+            tailored_resume_path = NULL,
+            tailored_at = NULL,
+            tailor_attempts = 0,
+            cover_letter_path = NULL,
+            cover_letter_at = NULL,
+            cover_attempts = 0
+        WHERE applied_at IS NULL
+          AND COALESCE(apply_status, '') NOT IN ('applied', 'screening', 'interview', 'offer')
+        """
+    )
     conn.execute(
         """
         UPDATE jobs
@@ -83,6 +116,7 @@ MIGRATIONS = (
     (2, "0002_application_events", _m0002_application_events),
     (3, "0003_hybrid_scoring_and_dedup", _m0003_hybrid_scoring_and_dedup),
     (4, "0004_retryable_scoring", _m0004_retryable_scoring),
+    (5, "0005_scoring_policy_v76", _m0005_scoring_policy_v76),
 )
 
 

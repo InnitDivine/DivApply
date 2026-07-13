@@ -2,6 +2,19 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.2
+
+- Made `divapply edit` preserve scoped query labels, location labels, full/part-time schedule semantics, and the runtime-authoritative skill representation.
+- Preserved every résumé header contact line so phone, email, LinkedIn, GitHub, and portfolio details survive PDF generation.
+- Prevented prose compensation policies from being formatted or submitted as dollar amounts; mandatory unsupported numbers now require human review.
+- Separated complete transcript storage from career-scoring context with completed-credit, relevance, and explicit coursework/skill filters.
+- Made public pip install examples upgrade-safe so existing installations do not silently remain on an older DivApply release.
+- Added typed per-market schedule, benefits, query-scope, and application-mode policy; discovery-only markets cannot auto-submit and unknown concrete locations require review.
+- Hardened remote-location classification so board tags cannot override concrete out-of-market locations without posting evidence.
+- Removed application/EEO/self-identification boilerplate from all LLM job context and calibrated equivalent-experience, keyword-heading, and degree-field reasoning.
+- Added compact Additional Experience résumé rendering without corrupting job chronology or one-page layouts.
+- Added a fail-closed distribution gate for archive paths, member types, size budgets, version binding, nested archives, and private-value collisions; release evidence revalidates package bytes and includes the exact manual JobSpy runtime in its SBOM.
+
 ## 0.5.1
 
 - Removed the compatibility-only `jobspy-upstream` extra so no published DivApply dependency path can resolve JobSpy's vulnerable `markdownify<0.14.1` requirement.

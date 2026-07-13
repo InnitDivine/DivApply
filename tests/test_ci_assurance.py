@@ -53,10 +53,29 @@ def test_private_applicant_artifacts_cannot_be_tracked() -> None:
     assert leaked == [], f"Private applicant artifacts are tracked: {leaked}"
 
 
+def test_sdist_uses_minimal_allowlist_without_global_artifact_bypass() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    build = project["tool"]["hatch"]["build"]
+    sdist = build["targets"]["sdist"]
+
+    assert "artifacts" not in build
+    assert set(sdist["include"]) == {
+        "/src/divapply/**/*.py",
+        "/src/divapply/config/employers.yaml",
+        "/src/divapply/config/searches.example.yaml",
+        "/src/divapply/config/sites.yaml",
+        "/src/divapply/mcp_runtime_assets/package-lock.json",
+        "/src/divapply/mcp_runtime_assets/package.json",
+        "/scripts/divapply",
+        "/scripts/divapply.cmd",
+    }
+
+
 def test_v48_public_location_fixtures_use_only_fictional_sentinels() -> None:
     fixture_paths = (
         ROOT / "profile.example.json",
         ROOT / "tests" / "test_apply_prompt.py",
+        ROOT / "tests" / "test_artifact_identity.py",
         ROOT / "tests" / "test_editor.py",
     )
     field_pattern = re.compile(
@@ -80,6 +99,17 @@ def test_v48_public_location_fixtures_use_only_fictional_sentinels() -> None:
                 )
 
     assert seen == {"address", "city", "city_state", "province_state", "postal_code"}
+
+
+def test_public_tests_use_fictional_windows_user_paths() -> None:
+    host_user_path = re.compile(r"C:[/\\]Users[/\\](?!ExampleUser(?:[/\\]|$))", re.IGNORECASE)
+    leaks = [
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "tests").rglob("*.py")
+        if host_user_path.search(path.read_text(encoding="utf-8"))
+    ]
+
+    assert leaks == []
 
 
 def test_v49_release_version_is_consistent_and_not_retired() -> None:
@@ -196,6 +226,7 @@ def test_release_verification_and_build_use_the_lockfile() -> None:
     assert release.count("uv sync --locked") >= 2
     assert "uv lock --check" in release
     assert "uv run pip-audit" in release
+    assert ".venv/bin/pip-audit --path" in release
     assert "pip install --upgrade pip build twine" not in release
     assert "python -m build --no-isolation" in release
     for workflow in (ci, release):
@@ -269,6 +300,64 @@ def test_release_builds_read_only_then_promotes_without_checkout() -> None:
         assert not (permissions.get("contents") == "write" and permissions.get("id-token") == "write")
 
 
+def test_release_smoke_is_isolated_and_every_promotion_revalidates_exact_subjects() -> None:
+    jobs = _workflow_data("publish.yml")["jobs"]
+    build_steps = jobs["build"]["steps"]
+    build_names = [step.get("name") for step in build_steps]
+
+    assert build_names.index("Assemble SBOM and checksum evidence") < build_names.index(
+        "Verify release evidence before smoke"
+    )
+    assert build_names.index("Verify release evidence before smoke") < build_names.index(
+        "Prepare isolated smoke wheel"
+    )
+    assert build_names.index("Prepare isolated smoke wheel") < build_names.index("Smoke test built wheel")
+    assert build_names.index("Smoke test built wheel") < build_names.index("Verify release evidence after smoke")
+    assert build_names.index("Verify release evidence after smoke") < build_names.index(
+        "Upload verified release bundle"
+    )
+
+    prepare = next(step for step in build_steps if step.get("name") == "Prepare isolated smoke wheel")["run"]
+    smoke = next(step for step in build_steps if step.get("name") == "Smoke test built wheel")["run"]
+    assert "release/packages/*.whl" in prepare
+    assert "$RUNNER_TEMP/divapply-smoke-wheel" in prepare
+    assert "$RUNNER_TEMP/divapply-smoke-wheel" in smoke
+    assert "dist/*.whl" not in smoke
+    assert "release/packages" not in smoke
+
+    promotion_actions = {
+        "attest-release": "actions/attest@",
+        "publish-pypi": "pypa/gh-action-pypi-publish@",
+        "publish-github": "softprops/action-gh-release@",
+    }
+    verifier_runs: list[str] = []
+    for job_name, promotion_action in promotion_actions.items():
+        steps = jobs[job_name]["steps"]
+        download_index = next(
+            index for index, step in enumerate(steps) if "actions/download-artifact@" in str(step.get("uses", ""))
+        )
+        verifier_index = next(
+            index for index, step in enumerate(steps) if step.get("name") == "Verify exact release subject set and checksums"
+        )
+        promotion_index = next(
+            index for index, step in enumerate(steps) if promotion_action in str(step.get("uses", ""))
+        )
+        assert download_index < verifier_index < promotion_index
+        verifier = str(steps[verifier_index].get("run", ""))
+        verifier_runs.append(verifier)
+        for contract_marker in (
+            "PurePosixPath",
+            "duplicate checksum subject",
+            "actual_files != set(entries)",
+            "stat.S_ISLNK",
+            "stat.S_ISREG",
+            "hashlib.sha256",
+            "SHA256SUMS",
+        ):
+            assert contract_marker in verifier
+    assert len(set(verifier_runs)) == 1
+
+
 def test_all_workflow_checkouts_disable_persisted_credentials() -> None:
     for workflow_name in ("ci.yml", "publish.yml"):
         jobs = _workflow_data(workflow_name)["jobs"]
@@ -295,8 +384,19 @@ def test_local_preflight_matches_ci_quality_and_supply_chain_gates() -> None:
     assert "pip install --upgrade build twine" not in preflight
     assert "tools/build_release_evidence.py" in preflight
     assert "tools/check_private_collisions.py" in preflight
+    assert "tools/check_distribution_contents.py" in preflight
     assert "--profile $privateProfile" in preflight
     assert "--dist-dir" in preflight
+    assert preflight.index('Remove-OwnedBuildOutput "dist"') < preflight.index('Invoke-Step "Build package"')
+    assert "[System.IO.FileAttributes]::ReparsePoint" in preflight
+    assert "PSIsContainer" in preflight
+    assert preflight.index("ReparsePoint") < preflight.index(
+        "Remove-Item -LiteralPath $target -Recurse -Force"
+    )
+    assert preflight.count("coverage erase") >= 2
+
+    publish = (WORKFLOW_DIR / "publish.yml").read_text(encoding="utf-8")
+    assert "tools/check_distribution_contents.py" in publish
 
 
 def test_local_quality_artifacts_are_ignored() -> None:

@@ -18,7 +18,12 @@ from pathlib import Path
 
 from divapply.artifacts import tailored_artifact_paths
 from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile, profile_skills
-from divapply.database import MEANINGFUL_FULL_DESCRIPTION_SQL, get_connection, get_jobs_by_stage
+from divapply.database import (
+    ACTIONABLE_JOB_SQL,
+    MEANINGFUL_FULL_DESCRIPTION_SQL,
+    get_connection,
+    get_jobs_by_stage,
+)
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
@@ -147,6 +152,7 @@ TITLE: Match the target role. Keep seniority (Senior/Lead/Staff). Drop company s
 SUMMARY: Rewrite from scratch. Position the candidate for the target role using verified evidence. Do not imply they previously held the target role unless the source facts say so. Exactly 2 sentences, max 42 words total.
 
 SKILLS: Reorder each category so the job's most relevant verified skills appear first. Max 5 items per category. Return skills_section_title as TECHNICAL SKILLS for IT/engineering roles or CORE QUALIFICATIONS for customer service, government, administrative, and health-operations roles. Use role-relevant category names; do not force operating-system/network/cloud categories into non-IT résumés.
+Copy every skill item exactly from SKILLS BOUNDARY or ACADEMIC SKILL MAP. Never derive, paraphrase, broaden, or import a skill phrase from the job posting.
 When using CORE QUALIFICATIONS, include only qualifications directly relevant to the posting. Omit low-relevance technical exposure categories even when those skills are supported.
 
 Reframe EVERY bullet for this role. Same real work, different angle. Every bullet must be reworded. Never copy verbatim.
@@ -513,9 +519,13 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
     lines.append(personal.get("full_name", ""))
     lines.append(sanitize_text(data.get("title", "Software Engineer")))
 
-    # Location from search config or profile -- leave blank if not available
-    # The location line is optional; the original used a hardcoded city.
-    # We omit it here; the LLM prompt can include it if the user sets it.
+    # Preserve current verified city/state for recruiter and ATS context without
+    # exposing a street address or substituting a planned destination.
+    city = str(personal.get("city") or "").strip()
+    state = str(personal.get("province_state") or "").strip()
+    location = ", ".join(part for part in (city, state) if part)
+    if location:
+        lines.append(location)
 
     # Contact line
     contact_parts: list[str] = []
@@ -858,10 +868,14 @@ def run_tailoring(
             """
             SELECT * FROM jobs
             WHERE url = ? AND fit_score >= ? AND {meaningful_full_description}
+              AND {actionable_job}
               AND archived_at IS NULL
               AND tailored_resume_path IS NULL
               AND COALESCE(tailor_attempts, 0) < ?
-            """.format(meaningful_full_description=MEANINGFUL_FULL_DESCRIPTION_SQL),
+            """.format(
+                meaningful_full_description=MEANINGFUL_FULL_DESCRIPTION_SQL,
+                actionable_job=ACTIONABLE_JOB_SQL,
+            ),
             (target_url, min_score, MAX_ATTEMPTS),
         ).fetchall()
         if jobs and not isinstance(jobs[0], dict):

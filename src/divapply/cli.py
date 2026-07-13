@@ -285,6 +285,7 @@ def import_coursework(
                         "course_title": item.get("course_title") or item.get("title") or item.get("name"),
                         "subject_area": item.get("subject_area") or item.get("subject") or item.get("category"),
                         "term": item.get("term") or item.get("semester") or item.get("session"),
+                        "status": item.get("status") or item.get("course_status"),
                         "credits": item.get("credits") or item.get("units"),
                         "grade": item.get("grade"),
                         "source": item.get("source") or path.name,
@@ -302,6 +303,7 @@ def import_coursework(
                 "course_title": row.get("course_title") or row.get("title") or row.get("name"),
                 "subject_area": row.get("subject_area") or row.get("subject") or row.get("category"),
                 "term": row.get("term") or row.get("semester") or row.get("session"),
+                "status": row.get("status") or row.get("course_status"),
                 "credits": row.get("credits") or row.get("units"),
                 "grade": row.get("grade"),
                 "source": path.name,
@@ -378,7 +380,11 @@ def add_url(
     location: Optional[str] = typer.Option(None, "--location", help="Job location, if known."),
     site: Optional[str] = typer.Option(None, "--site", help="Source/employer label, if known."),
     no_fetch: bool = typer.Option(False, "--no-fetch", help="Skip page fetch and use provided metadata only."),
-    prepare: bool = typer.Option(False, "--prepare", help="Score, tailor resume, and create cover letter for this URL."),
+    prepare: bool = typer.Option(
+        False,
+        "--prepare",
+        help="Score this URL; documents require a later verified official-source refresh.",
+    ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum score required before tailoring/cover generation."),
     validation: str = typer.Option("normal", "--validation", help="Validation mode for generated documents."),
 ) -> None:
@@ -387,7 +393,9 @@ def add_url(
 
     from datetime import datetime, timezone
 
+    from divapply.config import load_search_config
     from divapply.database import get_connection
+    from divapply.search_policy import market_policy_for_job
     from divapply.security import validate_external_url
 
     valid_modes = ("strict", "normal", "lenient", "none")
@@ -421,6 +429,10 @@ def add_url(
     apply_status = "failed" if inactive else None
     apply_error = "expired: posting appears inactive" if inactive else None
     apply_attempts = 99 if inactive else 0
+    market_label, _ = market_policy_for_job(
+        load_search_config(),
+        {"company": company_value, "location": location_value},
+    )
 
     conn = get_connection()
     conn.execute(
@@ -429,8 +441,10 @@ def add_url(
             url, canonical_key, title, company, salary, description,
             location, site, strategy, discovered_at, full_description,
             application_url, detail_scraped_at, detail_error,
-            apply_status, apply_error, apply_attempts, verification_confidence
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            apply_status, apply_error, apply_attempts, verification_confidence,
+            market_label, search_query, application_mode, employment_type,
+            hours_per_week, source_verification, official_url_verified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url) DO UPDATE SET
             title=excluded.title,
             company=excluded.company,
@@ -445,6 +459,13 @@ def add_url(
             apply_error=excluded.apply_error,
             apply_attempts=excluded.apply_attempts,
             verification_confidence=excluded.verification_confidence,
+            market_label=excluded.market_label,
+            search_query=excluded.search_query,
+            application_mode=excluded.application_mode,
+            employment_type=excluded.employment_type,
+            hours_per_week=excluded.hours_per_week,
+            source_verification=excluded.source_verification,
+            official_url_verified_at=excluded.official_url_verified_at,
             archived_at=NULL
         """,
         (
@@ -466,6 +487,13 @@ def add_url(
             apply_error,
             apply_attempts,
             "manual_url_inactive" if inactive else "manual_url",
+            market_label or None,
+            "manual_url",
+            "manual_review",
+            None,
+            None,
+            "unknown",
+            None,
         ),
     )
     conn.commit()
@@ -475,7 +503,7 @@ def add_url(
         console.print("[yellow]Posting appears inactive/expired, so it will not be queued for auto-apply.[/yellow]")
 
     if not prepare:
-        console.print("[dim]Run again with --prepare to score and generate documents for this URL.[/dim]")
+        console.print("[dim]Run again with --prepare to score this URL. Documents stay blocked until an official source verifies it.[/dim]")
         return
 
     from divapply.config import check_tier
@@ -498,6 +526,17 @@ def add_url(
     console.print(f"[green]Score:[/green] {score}")
     if score < min_score:
         console.print(f"[yellow]Score is below --min-score {min_score}; not generating documents.[/yellow]")
+        return
+
+    provenance = conn.execute(
+        "SELECT application_mode, source_verification FROM jobs WHERE url = ?",
+        (safe_url,),
+    ).fetchone()
+    if provenance["application_mode"] != "active" or provenance["source_verification"] != "official":
+        console.print(
+            "[yellow]Score saved, but documents were withheld.[/yellow] "
+            "Refresh this posting from a configured official employer source before tailoring or applying."
+        )
         return
 
     tailor_result = run_tailoring(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
@@ -776,7 +815,7 @@ def apply(
         get_apply_browser_label,
         get_chrome_path,
     )
-    from divapply.database import get_connection
+    from divapply.database import ACTIONABLE_JOB_SQL, get_connection
 
     # --- Utility modes (no browser agent needed) ---
 
@@ -831,7 +870,7 @@ def apply(
         conn = get_connection()
         ready = conn.execute(
             "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
-            "AND applied_at IS NULL AND archived_at IS NULL"
+            f"AND applied_at IS NULL AND archived_at IS NULL AND {ACTIONABLE_JOB_SQL}"
         ).fetchone()[0]
         if ready == 0:
             console.print(
@@ -1478,7 +1517,7 @@ def doctor() -> None:
             (
                 "python-jobspy",
                 warn_mark,
-                f"pip install 'divapply[full]' && pip install --no-deps '{JOBSPY_WHEEL_URL}'",
+                f"pip install --upgrade 'divapply[full]' && pip install --no-deps '{JOBSPY_WHEEL_URL}'",
             )
         )
 

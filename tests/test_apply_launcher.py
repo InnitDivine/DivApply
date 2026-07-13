@@ -551,7 +551,9 @@ def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
             apply_attempts INTEGER,
             agent_id TEXT,
             last_attempted_at TEXT,
-            archived_at TEXT
+            archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official'
         )
     """)
     conn.execute("""
@@ -604,7 +606,9 @@ def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
             apply_attempts INTEGER,
             agent_id TEXT,
             last_attempted_at TEXT,
-            archived_at TEXT
+            archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official'
         )
     """)
     conn.executemany("""
@@ -696,7 +700,9 @@ def test_acquire_job_honors_max_score(monkeypatch) -> None:
             apply_attempts INTEGER,
             agent_id TEXT,
             last_attempted_at TEXT,
-            archived_at TEXT
+            archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official'
         )
     """)
     conn.executemany("""
@@ -804,7 +810,9 @@ def test_acquire_job_skips_unsafe_apply_url_and_claims_next_job(monkeypatch) -> 
             apply_attempts INTEGER,
             agent_id TEXT,
             last_attempted_at TEXT,
-            archived_at TEXT
+            archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official'
         )
     """)
     conn.executemany("""
@@ -1334,6 +1342,32 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
     )
     assert not worker_dir.exists()
     assert not (app_dir / ".mcp-apply-0.json").exists()
+
+
+def test_acquire_job_rejects_unverified_discovery_job_for_queue_and_target(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    url = "https://aggregator.example/job"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts,
+            application_mode, source_verification
+        ) VALUES (?, 'Support', 'Example', 'Indeed', ?, 'resume.txt', 9,
+                  'Remote', 'Support role', 0, 'discovery_only', 'unverified_aggregator')
+        """,
+        (url, url),
+    )
+    conn.commit()
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+
+    assert launcher.acquire_job(min_score=7, worker_id=5) is None
+    assert launcher.acquire_job(target_url=url, worker_id=5) is None
+    row = conn.execute("SELECT apply_status, agent_id FROM jobs WHERE url = ?", (url,)).fetchone()
+    assert tuple(row) == (None, None)
+    close_connection(db_path)
 
 
 def test_prepare_worker_run_cleans_directory_when_staging_fails(tmp_path, monkeypatch) -> None:

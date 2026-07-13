@@ -54,6 +54,14 @@ def _money(value: float) -> str:
     return f"{value:,.0f}"
 
 
+def _codec_field(value: Any) -> str:
+    return urllib.parse.quote(str(value).strip(), safe=" ,.-_:/@()+#")
+
+
+def _decode_field(value: str) -> str:
+    return urllib.parse.unquote(value.strip())
+
+
 def _list_to_text(values: Any) -> str:
     if not isinstance(values, list):
         return ""
@@ -63,7 +71,12 @@ def _list_to_text(values: Any) -> str:
             query = str(value.get("query") or value.get("term") or "").strip()
             tier = value.get("tier")
             if query:
-                lines.append(f"{query} | {tier or 1}")
+                scopes = value.get("location_labels")
+                scope_text = "; ".join(
+                    _codec_field(scope) for scope in scopes if str(scope).strip()
+                ) if isinstance(scopes, list) else ""
+                line = f"{_codec_field(query)} | {tier or 1}"
+                lines.append(f"{line} | {scope_text}" if scope_text else line)
         else:
             text = str(value).strip()
             if text:
@@ -81,7 +94,14 @@ def _locations_to_text(values: Any) -> str:
             if not location:
                 continue
             remote = bool(value.get("remote", False))
-            lines.append(f"{location} | {'remote' if remote else 'onsite'}")
+            label = str(value.get("label") or "").strip()
+            mode = "remote" if remote else "onsite"
+            encoded_location = _codec_field(location)
+            lines.append(
+                f"{_codec_field(label)} | {encoded_location} | {mode}"
+                if label
+                else f"{encoded_location} | {mode}"
+            )
         else:
             text = str(value).strip()
             if text:
@@ -92,14 +112,24 @@ def _locations_to_text(values: Any) -> str:
 def _text_to_locations(value: str | None) -> list[dict[str, Any]]:
     locations: list[dict[str, Any]] = []
     for line in _text_to_list(value):
-        if "|" in line:
-            location, mode = [part.strip() for part in line.split("|", 1)]
+        parts = [part.strip() for part in line.split("|", 2)]
+        label = ""
+        if len(parts) == 3:
+            label, location, mode = parts
+        elif len(parts) == 2:
+            location, mode = parts
+        else:
+            location = parts[0]
+            mode = "onsite"
+        if len(parts) >= 2:
             remote = mode.lower() in {"remote", "true", "yes", "1"}
         else:
-            location = line
             remote = False
         if location:
-            locations.append({"location": location, "remote": remote})
+            item: dict[str, Any] = {"location": _decode_field(location), "remote": remote}
+            if label:
+                item["label"] = _decode_field(label)
+            locations.append(item)
     return locations
 
 
@@ -112,15 +142,46 @@ def _text_to_list(value: str | None) -> list[str]:
 def _text_to_queries(value: str | None) -> list[dict[str, Any]]:
     queries: list[dict[str, Any]] = []
     for line in _text_to_list(value):
-        if "|" in line:
-            query, tier_raw = [part.strip() for part in line.split("|", 1)]
+        parts = [part.strip() for part in line.split("|", 2)]
+        if len(parts) >= 2:
+            query, tier_raw = parts[:2]
             tier = _to_int(tier_raw, 1)
         else:
-            query = line
+            query = parts[0]
             tier = 1
         if query:
-            queries.append({"query": query, "tier": max(1, min(3, tier))})
+            item: dict[str, Any] = {"query": _decode_field(query), "tier": max(1, min(3, tier))}
+            if len(parts) == 3:
+                scopes = [_decode_field(scope) for scope in parts[2].split(";") if scope.strip()]
+                if scopes:
+                    item["location_labels"] = scopes
+            queries.append(item)
     return queries
+
+
+def _profile_skill_list(profile: dict[str, Any]) -> list[str]:
+    """Flatten the same skill representation used by the runtime."""
+    boundary = profile.get("skills_boundary")
+    if isinstance(boundary, dict) and boundary:
+        return [
+            str(item).strip()
+            for items in boundary.values()
+            if isinstance(items, list)
+            for item in items
+            if str(item).strip()
+        ]
+    skills = profile.get("skills")
+    if isinstance(skills, list):
+        return [str(item).strip() for item in skills if str(item).strip()]
+    if isinstance(skills, dict):
+        return [
+            str(item).strip()
+            for items in skills.values()
+            if isinstance(items, list)
+            for item in items
+            if str(item).strip()
+        ]
+    return []
 
 
 def _work_history_to_text(values: Any) -> str:
@@ -353,7 +414,24 @@ def _profile_values(profile: dict[str, Any], search_cfg: dict[str, Any]) -> dict
     personal = profile.get("personal", {}) if isinstance(profile.get("personal"), dict) else {}
 
     hourly = _to_float(compensation.get("target_hourly_rate"), 15.0)
-    schedule_type = "part_time" if search_cfg.get("require_part_time", True) else "either"
+    preferred_schedule = str(search_cfg.get("preferred_schedule") or "").strip().casefold()
+    legacy_max_hours = search_cfg.get("max_hours_per_week") or search_cfg.get(
+        "customer_service_max_hours_per_week"
+    )
+    try:
+        legacy_part_time_hours = 0 < int(str(legacy_max_hours).strip()) < 40
+    except (TypeError, ValueError):
+        legacy_part_time_hours = False
+    if search_cfg.get("require_part_time") or search_cfg.get("customer_service_require_part_time"):
+        schedule_type = "part_time"
+    elif legacy_part_time_hours:
+        schedule_type = "part_time"
+    elif preferred_schedule == "part_time":
+        schedule_type = "part_time"
+    elif preferred_schedule == "full_time":
+        schedule_type = "full_time"
+    else:
+        schedule_type = "either"
     if schedule_type not in {"part_time", "full_time", "either"}:
         schedule_type = "part_time"
     first_name, middle_name, last_name = _split_name(personal)
@@ -381,7 +459,7 @@ def _profile_values(profile: dict[str, Any], search_cfg: dict[str, Any]) -> dict
         "github_url": personal.get("github_url", ""),
         "website_url": personal.get("website_url", ""),
         "search_city": search_cfg.get("search_city") or first_location or personal.get("city") or "Exampletown, UT",
-        "skills": _list_to_text(profile.get("skills")),
+        "skills": _list_to_text(_profile_skill_list(profile)),
         "work_history": _work_history_to_text(profile.get("work_history")),
         "education": _education_to_text(profile.get("education_schools")),
         "certifications": _certifications_to_text(profile.get("certifications")),
@@ -716,7 +794,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
         <h2>Locations</h2>
         <label for="locations">Search these locations</label>
         <textarea id="locations" name="locations">{_esc(values['locations'])}</textarea>
-        <p class="hint">One per line. Use "Exampletown, UT | onsite" or "Remote | remote".</p>
+        <p class="hint">One per line. Use "Exampletown, UT | onsite" or preserve a scope label with "Current market | Exampletown, UT | onsite".</p>
       </section>
 
       <section>
@@ -737,7 +815,7 @@ def render_editor(profile: dict[str, Any], search_cfg: dict[str, Any], *, token:
         <h2>Queries</h2>
         <label for="queries">Search for these jobs</label>
         <textarea class="tall" id="queries" name="queries">{_esc(values['queries'])}</textarea>
-        <p class="hint">One search per line. Optional priority: "front desk | 1". Tiers are 1 high, 2 normal, 3 broad.</p>
+        <p class="hint">One search per line. Use "help desk | 1" or scope it with "help desk | 1 | Current market; Future market". Tiers are 1 high, 2 normal, 3 broad.</p>
       </section>
 
       <section>
@@ -838,7 +916,15 @@ def save_editor_settings(form: dict[str, str]) -> None:
 
     profile.pop("job_search", None)
     if "skills" in form:
-        profile["skills"] = _text_to_list(form.get("skills"))
+        edited_skills = _text_to_list(form.get("skills"))
+        prior_runtime_skills = _profile_skill_list(profile)
+        profile["skills"] = edited_skills
+        boundary = profile.get("skills_boundary")
+        if not (isinstance(boundary, dict) and boundary and edited_skills == prior_runtime_skills):
+            if edited_skills:
+                profile["skills_boundary"] = {"skills": edited_skills}
+            else:
+                profile.pop("skills_boundary", None)
     if "work_history" in form:
         work_history = _text_to_work_history(form.get("work_history"))
         work_history = _merge_records(profile.get("work_history"), work_history, ("title", "company"))
@@ -921,6 +1007,11 @@ def save_editor_settings(form: dict[str, str]) -> None:
     search_cfg["defaults"] = defaults
 
     search_cfg["require_part_time"] = schedule_type == "part_time"
+    search_cfg["preferred_schedule"] = {
+        "part_time": "part_time",
+        "full_time": "full_time",
+        "either": "any",
+    }[schedule_type]
     search_cfg.pop("search_terms", None)
     search_cfg.pop("nearby_locations", None)
     search_cfg.pop("reject_locations", None)
@@ -929,6 +1020,7 @@ def save_editor_settings(form: dict[str, str]) -> None:
     search_cfg.pop("customer_service_title_terms", None)
     search_cfg.pop("customer_service_require_part_time", None)
     search_cfg.pop("customer_service_max_hours_per_week", None)
+    search_cfg.pop("max_hours_per_week", None)
 
     write_private_text(PROFILE_PATH, json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
     write_private_text(SEARCH_CONFIG_PATH, yaml.safe_dump(search_cfg, sort_keys=False, allow_unicode=True))

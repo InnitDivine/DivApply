@@ -30,7 +30,12 @@ from rich.live import Live
 
 from divapply import config
 from divapply.artifacts import ArtifactCollisionError, ensure_job_artifacts_unshared, job_artifact_stem
-from divapply.database import add_application_event, get_connection, record_reliability_event
+from divapply.database import (
+    ACTIONABLE_JOB_SQL,
+    add_application_event,
+    get_connection,
+    record_reliability_event,
+)
 from divapply.apply import prompt as prompt_mod
 from divapply.apply.chrome import (
     launch_chrome, cleanup_worker, kill_all_chrome,
@@ -248,11 +253,13 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
 
             if target_url:
                 like = f"%{target_url.split('?')[0].rstrip('/')}%"
-                row = conn.execute("""
+                row = conn.execute(f"""
                     SELECT url, title, company, site, application_url, tailored_resume_path,
-                           fit_score, location, full_description, cover_letter_path
+                           fit_score, location, full_description, cover_letter_path,
+                           application_mode, source_verification
                     FROM jobs
                     WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
+                      AND {ACTIONABLE_JOB_SQL}
                       AND archived_at IS NULL
                       AND tailored_resume_path IS NOT NULL
                       AND (apply_status IS NULL OR apply_status IN ('failed', 'manual'))
@@ -276,9 +283,11 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                     params.extend(blocked_patterns)
                 row = conn.execute(f"""
                     SELECT url, title, company, site, application_url, tailored_resume_path,
-                           fit_score, location, full_description, cover_letter_path
+                           fit_score, location, full_description, cover_letter_path,
+                           application_mode, source_verification
                     FROM jobs
                     WHERE tailored_resume_path IS NOT NULL
+                      AND {ACTIONABLE_JOB_SQL}
                       AND archived_at IS NULL
                       AND (apply_status IS NULL OR apply_status = 'failed')
                       AND (apply_attempts IS NULL OR apply_attempts < ?)

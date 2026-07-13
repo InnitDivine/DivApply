@@ -25,6 +25,8 @@ def _jobs() -> list[dict[str, object]]:
         "tailored_resume_path": None,
         "tailor_attempts": 0,
         "discovered_at": "2026-01-01",
+        "application_mode": "active",
+        "source_verification": "official",
     }
     return [
         common | {"url": "https://jobs.example.test/posting/one"},
@@ -53,7 +55,9 @@ def _artifact_db(jobs: list[dict[str, object]]) -> sqlite3.Connection:
             cover_attempts INTEGER DEFAULT 0,
             discovered_at TEXT,
             apply_status TEXT,
-            archived_at TEXT
+            archived_at TEXT,
+            application_mode TEXT,
+            source_verification TEXT
         )
         """
     )
@@ -62,11 +66,11 @@ def _artifact_db(jobs: list[dict[str, object]]) -> sqlite3.Connection:
         INSERT INTO jobs (
             url, title, company, site, location, fit_score, full_description,
             tailored_resume_path, tailor_attempts, cover_letter_path, cover_attempts,
-            discovered_at
+            discovered_at, application_mode, source_verification
         ) VALUES (
             :url, :title, :company, :site, :location, :fit_score, :full_description,
             :tailored_resume_path, :tailor_attempts, :cover_letter_path, :cover_attempts,
-            :discovered_at
+            :discovered_at, :application_mode, :source_verification
         )
         """,
         jobs,
@@ -109,7 +113,7 @@ def test_same_title_jobs_generate_distinct_resume_and_cover_files(tmp_path, monk
         ),
     )
 
-    monkeypatch.setattr(cover_letter, "RESUME_PATH", resume_source)
+    monkeypatch.setattr(cover_letter, "TAILORED_DIR", tailored_dir)
     monkeypatch.setattr(cover_letter, "COVER_LETTER_DIR", cover_dir)
     monkeypatch.setattr(cover_letter, "load_profile", lambda: {})
     monkeypatch.setattr(cover_letter, "get_connection", lambda: conn)
@@ -117,6 +121,11 @@ def test_same_title_jobs_generate_distinct_resume_and_cover_files(tmp_path, monk
         cover_letter,
         "generate_cover_letter",
         lambda _resume, job, _profile, **_kwargs: f"cover for {job['url']}",
+    )
+    monkeypatch.setattr(
+        cover_letter,
+        "_read_tailored_resume_text",
+        lambda job: Path(job["tailored_resume_path"]).read_text(encoding="utf-8"),
     )
 
     from divapply.scoring import pdf
@@ -223,8 +232,8 @@ def test_valid_cover_persists_text_fallback_when_inline_pdf_fails(tmp_path, monk
     resume_source.write_text("source resume", encoding="utf-8")
     cover_dir = tmp_path / "cover"
 
-    monkeypatch.setattr(cover_letter, "RESUME_PATH", resume_source)
     monkeypatch.setattr(cover_letter, "COVER_LETTER_DIR", cover_dir)
+    monkeypatch.setattr(cover_letter, "_read_tailored_resume_text", lambda _job: "source resume")
     monkeypatch.setattr(cover_letter, "load_profile", lambda: {})
     monkeypatch.setattr(cover_letter, "get_connection", lambda: conn)
     monkeypatch.setattr(
@@ -252,7 +261,7 @@ def test_valid_cover_persists_text_fallback_when_inline_pdf_fails(tmp_path, monk
 
 def test_cover_uses_job_specific_address_for_generation_and_pdf(tmp_path, monkeypatch) -> None:
     job = _jobs()[0] | {
-        "location": "Roseville, CA",
+        "location": "Sample City, ZZ",
         "tailored_resume_path": str(tmp_path / "tailored.pdf"),
     }
     conn = _artifact_db([job])
@@ -260,15 +269,19 @@ def test_cover_uses_job_specific_address_for_generation_and_pdf(tmp_path, monkey
     resume_source.write_text("source resume", encoding="utf-8")
     cover_dir = tmp_path / "cover"
     profile = {
-        "personal": {"city": "Exampletown", "province_state": "UT"},
+        "personal": {"city": "Exampletown", "province_state": "YY"},
         "application_addresses": {
-            "california": {"city": "Roseville", "province_state": "CA"},
+            "sample_market": {
+                "is_current_legal_residence": True,
+                "city": "Sample City",
+                "province_state": "ZZ",
+            },
         },
     }
     seen: list[tuple[str, str]] = []
 
-    monkeypatch.setattr(cover_letter, "RESUME_PATH", resume_source)
     monkeypatch.setattr(cover_letter, "COVER_LETTER_DIR", cover_dir)
+    monkeypatch.setattr(cover_letter, "_read_tailored_resume_text", lambda _job: "source resume")
     monkeypatch.setattr(cover_letter, "load_profile", lambda: profile)
     monkeypatch.setattr(cover_letter, "get_connection", lambda: conn)
 
@@ -292,7 +305,7 @@ def test_cover_uses_job_specific_address_for_generation_and_pdf(tmp_path, monkey
     result = cover_letter.run_cover_letters()
 
     assert result["generated"] == 1
-    assert seen == [("Roseville", "CA"), ("Roseville", "CA")]
+    assert seen == [("Sample City", "ZZ"), ("Sample City", "ZZ")]
 
 
 def test_cover_does_not_persist_or_leave_artifact_after_concurrent_archive(
@@ -304,8 +317,8 @@ def test_cover_does_not_persist_or_leave_artifact_after_concurrent_archive(
     resume_source.write_text("source resume", encoding="utf-8")
     cover_dir = tmp_path / "cover"
 
-    monkeypatch.setattr(cover_letter, "RESUME_PATH", resume_source)
     monkeypatch.setattr(cover_letter, "COVER_LETTER_DIR", cover_dir)
+    monkeypatch.setattr(cover_letter, "_read_tailored_resume_text", lambda _job: "source resume")
     monkeypatch.setattr(cover_letter, "load_profile", lambda: {})
     monkeypatch.setattr(cover_letter, "get_connection", lambda: conn)
 

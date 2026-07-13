@@ -56,6 +56,8 @@ def _build_minimal_prompt(
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
@@ -98,6 +100,8 @@ def test_apply_prompt_keeps_company_and_source_separate(tmp_path, monkeypatch) -
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
@@ -145,6 +149,8 @@ def test_apply_prompt_uploads_cover_pdf_when_text_intermediate_was_removed(tmp_p
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_pdf),
             "cover_letter_path": str(cover_pdf.with_suffix(".txt")),
         },
@@ -206,6 +212,8 @@ def test_apply_prompt_ignores_credentials_saved_in_profile(tmp_path, monkeypatch
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
@@ -260,6 +268,8 @@ def test_apply_prompt_does_not_embed_saved_passwords(tmp_path, monkeypatch) -> N
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
@@ -282,6 +292,8 @@ def test_salary_section_uses_part_time_guidance_from_search_config() -> None:
                 "salary_range_min": "45000",
                 "salary_range_max": "65000",
                 "part_time_hourly_expectation": "Use posted hourly range.",
+                "target_hourly_rate": "20",
+                "part_time_hourly_floor": "18",
             },
         },
         {"require_part_time": True, "customer_service_max_hours_per_week": 20},
@@ -289,7 +301,72 @@ def test_salary_section_uses_part_time_guidance_from_search_config() -> None:
 
     assert "active searches.yaml filters target low-hour part-time work" in section
     assert "Use posted hourly range." in section
+    assert "Target hourly answer: $20 USD" in section
+    assert "Hard hourly floor: $18 USD" in section
+    assert "configured target clamped inside that range" in section
+    assert "posted maximum is below the floor, stop for human review" in section
+    assert "MIDPOINT of the posted hourly range" not in section
     assert "Do not apply unless the user explicitly selected it" in section
+
+
+def test_nonnumeric_salary_profile_never_formats_prose_as_money() -> None:
+    profile = {
+        "personal": {
+            "full_name": "Example Person",
+            "email": "person@example.com",
+            "phone": "555-0100",
+        },
+        "compensation": {
+            "salary_expectation": "Use the employer's posted range.",
+            "salary_currency": "USD",
+            "salary_range_min": "negotiable",
+            "salary_range_max": "posted range",
+        },
+    }
+
+    summary = prompt_mod._build_profile_summary(profile)
+    section = prompt_mod._build_salary_section(profile)
+
+    assert "$Use the employer's posted range" not in summary
+    assert "$Use the employer's posted range" not in section
+    assert "$negotiable" not in section
+    assert "human review" in summary.lower()
+    assert "human review" in section.lower()
+
+
+def test_voluntary_eeo_requires_explicit_submission_consent() -> None:
+    private_values = {
+        "submit_voluntary_eeo": False,
+        "gender": "Stored private gender value",
+        "race_ethnicity": "Stored private race value",
+        "veteran_status": "Stored private veteran value",
+        "disability_status": "Stored private disability value",
+    }
+    declined = prompt_mod._voluntary_eeo_answers({"eeo_voluntary": private_values})
+
+    assert set(declined.values()) == {"Decline to self-identify"}
+    assert not any("Stored private" in value for value in declined.values())
+
+    consented = prompt_mod._voluntary_eeo_answers(
+        {"eeo_voluntary": private_values | {"submit_voluntary_eeo": True}}
+    )
+    assert consented["gender"] == "Stored private gender value"
+    assert consented["race_ethnicity"] == "Stored private race value"
+
+
+def test_unbounded_numeric_salary_fails_closed_without_overflow() -> None:
+    profile = {
+        "compensation": {
+            "salary_expectation": "9" * 10_000,
+            "salary_range_min": "8" * 10_000,
+            "salary_range_max": "7" * 10_000,
+        }
+    }
+
+    section = prompt_mod._build_salary_section(profile)
+
+    assert "human review" in section.lower()
+    assert "$" + ("9" * 20) not in section
 
 
 def test_location_check_includes_employer_relocation_exception() -> None:
@@ -297,6 +374,7 @@ def test_location_check_includes_employer_relocation_exception() -> None:
         {"personal": {"city": "Exampletown"}},
         {
             "location": {"accept_patterns": ["Exampletown"]},
+            "locations": [{"location": "Exampletown, YY"}],
             "relocation_exception_employers": [
                 {
                     "name": "Example Health",
@@ -312,7 +390,75 @@ def test_location_check_includes_employer_relocation_exception() -> None:
     assert "before rejecting" in section
 
 
-def test_profile_for_matched_job_uses_configured_alternate_address() -> None:
+def test_location_check_uses_only_resolved_market_and_fails_unknown_closed() -> None:
+    section = prompt_mod._build_location_check(
+        {"personal": {"city": "Exampletown"}},
+        {
+            "location": {"accept_patterns": ["Exampletown", "Future City"]},
+            "locations": [
+                {
+                    "label": "Current market",
+                    "location": "Exampletown, YY",
+                    "match_patterns": ["Neighbor City, YY"],
+                }
+            ],
+        },
+    )
+
+    assert "Exampletown, YY, Neighbor City, YY" in section
+    assert "Future City" not in section
+    assert "Cannot determine the work location -> STOP for human review" in section
+
+
+def test_build_prompt_rejects_unknown_location_before_staging(monkeypatch) -> None:
+    monkeypatch.setattr(
+        prompt_mod.config,
+        "load_profile",
+        lambda: {"personal": {"full_name": "Example Person", "city": "Exampletown"}},
+    )
+    monkeypatch.setattr(
+        prompt_mod.config,
+        "load_search_config",
+        lambda: {
+            "default_market_label": "Current market",
+            "locations": [{"label": "Current market", "location": "Exampletown, YY"}],
+            "market_policies": {"Current market": {"application_mode": "active"}},
+        },
+    )
+
+    with pytest.raises(ValueError, match="manual review"):
+        prompt_mod.build_prompt(
+            job={
+                "title": "Part-Time IT Technician",
+                "location": "",
+                "application_mode": "active",
+                "source_verification": "official",
+            },
+            tailored_resume="resume",
+        )
+
+
+def test_screening_section_uses_verified_open_relocation_policy() -> None:
+    section = prompt_mod._build_screening_section(
+        {
+            "personal": {"city": "Exampletown"},
+            "work_authorization": {"legally_authorized_to_work": True},
+            "relocation_preferences": {
+                "target_area": "Sample City region",
+                "status": "Open to relocation for a qualifying full-time benefitted IT role",
+                "application_address_policy": "Use current legal residence until moved",
+            },
+        }
+    )
+
+    assert "lives in Exampletown" in section
+    assert "open to relocation" in section.lower()
+    assert "Sample City region" in section
+    assert "Use current legal residence until moved" in section
+    assert "cannot relocate" not in section
+
+
+def test_profile_for_matched_job_uses_verified_current_legal_address() -> None:
     profile = {
         "personal": {
             "full_name": "Example Person",
@@ -326,6 +472,7 @@ def test_profile_for_matched_job_uses_configured_alternate_address() -> None:
         },
         "application_addresses": {
             "alternate": {
+                "is_current_legal_residence": True,
                 "address": "200 Sample Street",
                 "city": "Sample City",
                 "province_state": "YY",
@@ -342,6 +489,90 @@ def test_profile_for_matched_job_uses_configured_alternate_address() -> None:
     assert adjusted["personal"]["province_state"] == "YY"
     assert adjusted["personal"]["postal_code"] == "00000"
     assert profile["personal"]["address"] == "100 Example Avenue"
+
+
+def test_profile_for_matched_job_ignores_planned_or_former_address() -> None:
+    profile = {
+        "personal": {
+            "address": "100 Example Avenue",
+            "city": "Exampletown",
+            "province_state": "ZZ",
+            "postal_code": "00000",
+        },
+        "application_addresses": {
+            "planned": {
+                "is_current_legal_residence": False,
+                "address": "200 Sample Street",
+                "city": "Sample City",
+                "province_state": "YY",
+                "postal_code": "00000",
+                "match_patterns": ["Targetville"],
+            }
+        },
+    }
+
+    adjusted = prompt_mod._profile_for_job_address(
+        profile,
+        {"title": "IT Technician", "location": "Targetville, YY"},
+    )
+
+    assert adjusted["personal"]["address"] == "100 Example Avenue"
+    assert adjusted["personal"]["city"] == "Exampletown"
+
+
+def test_build_prompt_rejects_discovery_only_market_before_staging(monkeypatch) -> None:
+    profile = {
+        "personal": {"full_name": "Example Person", "city": "Exampletown"},
+        "work_authorization": {"legally_authorized_to_work": True},
+    }
+    search_config = {
+        "default_market_label": "Current market",
+        "locations": [
+            {"label": "Current market", "location": "Exampletown, YY"},
+            {"label": "Future market", "location": "Sample City, ZZ"},
+        ],
+        "market_policies": {
+            "Current market": {"application_mode": "active"},
+            "Future market": {"application_mode": "discovery_only"},
+        },
+    }
+    monkeypatch.setattr(prompt_mod.config, "load_profile", lambda: profile)
+    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: search_config)
+
+    with pytest.raises(ValueError, match="discovery-only"):
+        prompt_mod.build_prompt(
+            job={"title": "IT Technician", "location": "Sample City, ZZ"},
+            tailored_resume="resume",
+        )
+
+
+def test_build_prompt_rejects_persisted_nonactionable_provenance(monkeypatch) -> None:
+    monkeypatch.setattr(
+        prompt_mod.config,
+        "load_profile",
+        lambda: {"personal": {"full_name": "Example Person", "city": "Exampletown"}},
+    )
+    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: {})
+
+    with pytest.raises(ValueError, match="verified official"):
+        prompt_mod.build_prompt(
+            job={
+                "title": "IT Technician",
+                "application_mode": "active",
+                "source_verification": "unknown",
+            },
+            tailored_resume="resume",
+        )
+
+    with pytest.raises(ValueError, match="not active"):
+        prompt_mod.build_prompt(
+            job={
+                "title": "IT Technician",
+                "application_mode": "discovery_only",
+                "source_verification": "official",
+            },
+            tailored_resume="resume",
+        )
 
 
 def test_profile_for_unmatched_job_keeps_default_address() -> None:
@@ -432,6 +663,8 @@ def test_apply_prompt_allows_normal_hourly_employee_applications(tmp_path, monke
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
@@ -476,6 +709,8 @@ def test_apply_prompt_requires_real_submission_confirmation(tmp_path, monkeypatc
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
@@ -524,6 +759,8 @@ def test_apply_prompt_dry_run_does_not_request_applied_result(tmp_path, monkeypa
             "company": "Real Employer",
             "site": "Indeed",
             "fit_score": 8,
+            "application_mode": "active",
+            "source_verification": "official",
             "tailored_resume_path": str(resume_txt),
         },
         tailored_resume="resume text",
