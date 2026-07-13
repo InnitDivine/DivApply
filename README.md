@@ -62,8 +62,6 @@ Use `divapply` without extras for the lightest install. Use `divapply[coursework
 
 On Windows, DivApply installs plain `divapply`/`divapply.cmd` launchers instead of relying on a generated `divapply.exe`, so managed PCs that block generated console-script executables can still run `divapply` directly from `cmd`.
 
-`divapply[jobspy-upstream]` is declared only for compatibility checks against upstream `python-jobspy` metadata. It is not part of the recommended install path because it allows pip to install the vulnerable upstream `markdownify` range.
-
 Auto-apply mode also needs Node.js 18+ and an agent CLI such as Codex or Claude Code. It uses `DIVAPPLY_BROWSER` when configured, otherwise it defaults to Playwright Chromium, which is installed by the quick-start command. Firefox is optional and only needed if you explicitly run `divapply apply --browser firefox`.
 
 ## Clone Setup

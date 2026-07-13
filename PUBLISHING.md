@@ -48,9 +48,9 @@ CHANGELOG.md
 Commit the version change, merge or fast-forward it onto `main`, then tag and push:
 
 ```bash
-git tag v0.5.0
+git tag vX.Y.Z
 git push origin main
-git push origin v0.5.0
+git push origin vX.Y.Z
 ```
 
 The `Publish release` workflow will lint, test, verify the tagged commit is the current `main` tip, verify the tag matches `pyproject.toml`, `src/divapply/__init__.py`, and `CHANGELOG.md`, and build the package once under read-only permissions. Separate no-checkout promotion jobs download that verified artifact: one owns only PyPI Trusted Publishing authority, and the other owns only GitHub Release authority. After the workflow succeeds, users can install with:

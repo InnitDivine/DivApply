@@ -1,12 +1,12 @@
 # DivApply Engineering Audit
 
-Audit date: 2026-07-12
+Audit date: 2026-07-13
 
 ## Outcome
 
 The current tree has no open Critical code or current-tree privacy finding. The end-to-end career pipeline now fails closed at strict document gates, uses canonical transcript facts, keeps private runtime data outside Git, and has parity between pending-work counts and worker eligibility.
 
-GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutable legacy branches, tags, releases, Actions artifacts, deployments, and caches were removed or regenerated from that clean root. PyPI releases `0.4.2` through `0.4.8` were permanently deleted. GitHub Support ticket `#4557836` remains open to dereference closed pull-request refs `#2` through `#6`, garbage-collect the old objects, and clear cached views. A verified `0.5.0` release may publish from the parentless clean root without restoring those legacy objects; the privacy incident remains open until GitHub Support confirms its server-side purge.
+GitHub `main` was replaced with a validated single-root `0.5.0` baseline and published through a credential-free Trusted Publishing workflow. The `0.5.1` source line removes the remaining compatibility-only dependency path that could resolve vulnerable Markdownify metadata. Mutable legacy branches, tags, releases, Actions artifacts, deployments, and caches were removed or regenerated from the clean root. PyPI releases `0.4.2` through `0.4.8` were permanently deleted. GitHub Support ticket `#4557836` remains open to dereference closed pull-request refs `#2` through `#6`, garbage-collect the old objects, and clear cached views; the privacy incident remains open until GitHub Support confirms its server-side purge.
 
 ## Findings and remediation
 
@@ -35,13 +35,14 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutabl
 
 ### Low
 
+- The compatibility-only `jobspy-upstream` extra could resolve `markdownify<0.14.1` even though supported installs already used the secure dependency floor. The unsafe extra is removed, the universal lock contains only patched Markdownify, and a regression rejects its return.
 - Known model grammar fragments, communication-channel overclaims, context relabeling, and PDF separator mojibake now have deterministic normalization or validation regressions.
 - Superseded private documents are moved to dated backups so only current packets remain in active artifact directories.
 - The retention test assumed POSIX no-follow symlink timestamp support. Its optional symlink fixture now degrades safely on Windows without suppressing the portable cleanup assertions.
 
 ## Verification
 
-- Tests: 455 passed, 2 skipped.
+- Tests: 456 passed, 2 skipped; 58% branch coverage.
 - Ruff: clean.
 - mypy: clean for Linux and Windows targets.
 - Offline selfcheck: all checks passed.
@@ -51,7 +52,7 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutabl
 - Privacy preflight: tracked tree, wheel, and sdist contain zero exact collisions with private identity, location, employment, education, or employer values; diagnostics redact source values.
 - SQLite: `integrity_check=ok`; free pages reduced from 9,523 to 0.
 - Document QA: two-page master résumé plus three one-page tailored résumés and three one-page cover letters rendered and visually inspected.
-- Docker: unavailable on the audit workstation; container build remains enforced by CI.
+- Docker: unavailable on the audit workstation; the GitHub CI container gate passes on the clean release line.
 
 ## Architecture recommendations
 
@@ -68,6 +69,7 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutabl
 3. Treat the Playwright origin guard as defense in depth; continue denying arbitrary code/evaluate tools and minimize applicant data included in agent prompts.
 4. Require successful CI, Python/npm audits, SBOM generation, checksums, and attestations before any tag publication.
 5. Preserve fail-closed ACL behavior and test Windows DACL handling on native Windows CI.
+6. Keep JobSpy outside published extras until upstream removes its vulnerable Markdownify upper bound; continue the exact, hashed/no-deps installation contract and dependency audit.
 
 ## Performance recommendations
 
@@ -85,3 +87,4 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline. Mutabl
 5. Target-family project selection based on structured project evidence rather than prompt preference alone.
 6. Native container verification on developer workstations where Docker is available.
 7. Raise branch coverage selectively in social integrations, discovery extraction, and CLI orchestration; prioritize security boundaries and failure paths over raw percentage.
+8. Reassess first-class JobSpy packaging when upstream publishes dependency metadata compatible with the secure Markdownify floor.

@@ -53,7 +53,7 @@ def test_pyproject_keeps_secure_jobspy_install_contract() -> None:
     extras = pyproject["project"]["optional-dependencies"]
 
     assert "soupsieve>=2.8.4" in dependencies
-    assert "python-jobspy==1.1.82; python_version < '3.13'" in extras["jobspy-upstream"]
+    assert "jobspy-upstream" not in extras
     assert "markdownify>=0.14.1" in extras["jobspy-runtime"]
     assert "markdownify>=0.14.1" in extras["full"]
     assert "pypdf>=6.13.3" in extras["coursework"]
@@ -64,6 +64,15 @@ def test_pyproject_keeps_secure_jobspy_install_contract() -> None:
     assert "python_jobspy-1.1.82-py3-none-any.whl" in bootstrap
     assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in bootstrap
     assert '"--no-deps", "python-jobspy")' not in bootstrap
+
+    lock = tomllib.loads((ROOT / "uv.lock").read_text(encoding="utf-8"))
+    markdownify_versions = {
+        tuple(int(part) for part in package["version"].split("."))
+        for package in lock["package"]
+        if package["name"] == "markdownify"
+    }
+    assert markdownify_versions
+    assert min(markdownify_versions) >= (0, 14, 1)
 
 
 def test_pyproject_uses_plain_script_launchers_for_windows_device_guard() -> None:
