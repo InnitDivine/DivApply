@@ -51,19 +51,49 @@ def test_pyproject_keeps_secure_jobspy_install_contract() -> None:
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     dependencies = pyproject["project"]["dependencies"]
     extras = pyproject["project"]["optional-dependencies"]
+    jobspy_runtime = {
+        "numpy==1.26.3; python_version < '3.13'",
+        "pydantic>=2.3.0,<3.0.0",
+        "requests>=2.31.0,<3.0.0",
+        "tls-client>=1.0.1,<2.0.0",
+        "regex>=2024.4.28,<2025.0.0",
+        "markdownify>=0.14.1",
+    }
 
     assert "soupsieve>=2.8.4" in dependencies
-    assert "python-jobspy==1.1.82; python_version < '3.13'" in extras["jobspy-upstream"]
-    assert "markdownify>=0.14.1" in extras["jobspy-runtime"]
-    assert "markdownify>=0.14.1" in extras["full"]
+    assert "beautifulsoup4>=4.12.2,<5.0.0" in dependencies
+    assert "pandas>=2.1.0,<3.0.0" in dependencies
+    assert "jobspy-upstream" not in extras
+    assert jobspy_runtime <= set(extras["jobspy-runtime"])
+    assert jobspy_runtime <= set(extras["full"])
     assert "pypdf>=6.13.3" in extras["coursework"]
     assert "pypdf>=6.13.3" in extras["full"]
     assert all("python-jobspy" not in dep for dep in extras["full"])
 
     bootstrap = (ROOT / "tools" / "bootstrap.ps1").read_text(encoding="utf-8")
-    assert "python_jobspy-1.1.82-py3-none-any.whl" in bootstrap
-    assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in bootstrap
+    installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+    cli_source = (ROOT / "src" / "divapply" / "cli.py").read_text(encoding="utf-8")
+    runtime_source = (ROOT / "src" / "divapply" / "jobspy_runtime.py").read_text(encoding="utf-8")
+    for install_surface in (bootstrap, installer, runtime_source):
+        assert "python_jobspy-1.1.82-py3-none-any.whl" in install_surface
+        assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in install_surface
+    assert "JOBSPY_WHEEL_URL" in cli_source
+    assert "divapply.jobspy_runtime" in bootstrap
+    assert "divapply.jobspy_runtime" in installer
     assert '"--no-deps", "python-jobspy")' not in bootstrap
+    assert "pip install --no-deps python-jobspy\n" not in installer
+
+    lock_text = (ROOT / "uv.lock").read_text(encoding="utf-8")
+    assert "jobspy-upstream" not in lock_text
+    assert 'name = "python-jobspy"' not in lock_text
+    lock = tomllib.loads(lock_text)
+    markdownify_versions = {
+        tuple(int(part) for part in package["version"].split("."))
+        for package in lock["package"]
+        if package["name"] == "markdownify"
+    }
+    assert markdownify_versions
+    assert min(markdownify_versions) >= (0, 14, 1)
 
 
 def test_pyproject_uses_plain_script_launchers_for_windows_device_guard() -> None:
@@ -121,22 +151,25 @@ def test_readme_common_commands_match_registered_cli_commands() -> None:
 
 
 def test_install_docs_use_full_editable_and_entrypoint_parity_checks() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    publishing = (ROOT / "PUBLISHING.md").read_text(encoding="utf-8")
     contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
     operations = (ROOT / "docs" / "OPERATIONS.md").read_text(encoding="utf-8")
     migration = (ROOT / "docs" / "MIGRATION.md").read_text(encoding="utf-8")
 
     assert 'python -m pip install -e ".[dev,full]"' in contributing
-    assert "uv pip install --python .venv --no-deps python-jobspy==1.1.82" in contributing
     assert "python -m divapply --version" in contributing
     assert "ruff check ." in contributing
 
     assert 'python -m pip install "divapply[full]"' in operations
-    assert "python -m pip install --no-deps python-jobspy==1.1.82" in operations
     assert "python -m divapply --version" in operations
 
     assert 'pip install ".[full]"' in migration
     assert 'pip install -e ".[dev,full]"' in migration
-    assert "pip install --no-deps python-jobspy==1.1.82" in migration
+    for document in (readme, publishing, contributing, operations, migration):
+        assert "python_jobspy-1.1.82-py3-none-any.whl" in document
+        assert "sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9" in document
+        assert "pip install --no-deps python-jobspy==1.1.82" not in document
 
 
 def test_short_help_flag_works_for_run_command() -> None:

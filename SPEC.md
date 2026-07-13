@@ -139,6 +139,8 @@
 - V51: ∀ unit test crossing DB-backed orchestration → explicit initialized temp DB or mocked DB boundary; ⊥ default/user DB state.
 - V52: ∀ cross-platform test → optional OS capability checked before use; unsupported symlink metadata operation cannot suppress portable core assertions or leak test artifacts.
 - V53: ∀ tag release → `GITHUB_SHA` = fetched `origin/main` tip; stale ancestor tag ⊥ publish.
+- V54: ∀ published dependency paths → no selectable extra resolves a known-vulnerable package; compatibility-only unsafe extras ⊥ ship.
+- V55: ∀ supported JobSpy setup → exact hashed `1.1.82`; non-Markdownify requirements stay inside upstream bounds; metadata/import surface smoke passes; retired extra absent from project+lock.
 
 ## §T
 
@@ -176,6 +178,8 @@
 |T30|add redacted tree/distribution private-value preflight|synthetic tree+wheel test + live private-profile scan; V50|x|
 |T31|make launcher DB + symlink-retention regressions hermetic on Linux/Windows|focused launcher/maintenance tests + full OS matrix; V51,V52|x|
 |T32|require tag release = current `main` tip|`test_v53_release_requires_exact_main_tip`; V53|x|
+|T33|remove vulnerable JobSpy compatibility extra|secure-install contract + lock/audit checks; V54|x|
+|T34|close residual JobSpy metadata/install drift|installer/CLI/lock/constraint + smoke checks; V55|x|
 
 ## §B
 
@@ -284,3 +288,8 @@
 |B101|Windows retention test raises `NotImplementedError` before assertions|test assumes no-follow symlink `utime` exists; Windows lacks capability|V52|T31|capability-safe optional symlink fixture cleanup; focused/full matrix|
 |B102|artifact-collision integration test silently opens user DB|mocked guard hid eager default `get_connection()` evaluation|V51|T31|inject fixture DB + exercise real collision guard before staging|
 |B103|tag release accepts stale `main` ancestor|guard checks ancestry, not exact current tip|V53|T32|`test_v53_release_requires_exact_main_tip`|
+|B104|Dependabot flags runtime `markdownify<0.14.1`|compatibility-only `jobspy-upstream` extra keeps unsafe transitive lock path|V54|T33|secure-install contract + lock/audit checks|
+|B105|retired extra survives in lock markers|obsolete `[tool.uv].conflicts` retained removed extra identity|V54,V55|T34|lock text absence regression|
+|B106|Unix installer + doctor suggest mutable JobSpy|exact hashed contract covered PowerShell/CI only|V24,V55|T34|all install-surface pin/hash regression|
+|B107|fresh `full` may resolve pandas 3/regex 2025+|secure floor omitted upstream non-Markdownify upper bounds|V55|T34|metadata bound + callable JobSpy smoke regression|
+|B108|runtime validator passes broken JobSpy import|metadata-only validator replaced prior import smoke|V55|T34|public API import success/failure regressions|

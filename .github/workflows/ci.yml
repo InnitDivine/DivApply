@@ -212,7 +212,9 @@ jobs:
           # DivApply installs the secure runtime floor first, then JobSpy itself
           # without transitive deps until upstream relaxes that pin.
           python -m pip install --no-deps "https://files.pythonhosted.org/packages/d5/2b/18863fcd3c544a69d81e351381a50036a33c21b61cc1c6de2a8f25931237/python_jobspy-1.1.82-py3-none-any.whl#sha256=93d638b35ffd30a714253e065907f68c5bac624e3937a3ad2ba09f618a072ee9"
-          python -c "import jobspy"
+          python -m divapply.jobspy_runtime
+          SMOKE_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
+          .venv/bin/pip-audit --path "$SMOKE_SITE_PACKAGES"
           divapply --version
           python -m divapply --version
           divapply selfcheck
