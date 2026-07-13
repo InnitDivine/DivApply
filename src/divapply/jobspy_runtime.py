@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib
 from importlib import metadata
 import re
 import sys
@@ -39,6 +40,14 @@ def _release_tuple(value: str) -> tuple[int, ...]:
 def validate_installed_jobspy() -> list[str]:
     """Return contract violations for the installed supported JobSpy runtime."""
     issues: list[str] = []
+    try:
+        jobspy = importlib.import_module("jobspy")
+    except Exception as exc:
+        issues.append(f"JobSpy import failed: {type(exc).__name__}")
+    else:
+        if not callable(getattr(jobspy, "scrape_jobs", None)):
+            issues.append("JobSpy public scrape_jobs API is unavailable")
+
     for distribution, (minimum, maximum, exact) in _BOUNDS.items():
         try:
             installed = metadata.version(distribution)

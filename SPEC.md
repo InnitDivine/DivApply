@@ -292,3 +292,4 @@
 |B105|retired extra survives in lock markers|obsolete `[tool.uv].conflicts` retained removed extra identity|V54,V55|T34|lock text absence regression|
 |B106|Unix installer + doctor suggest mutable JobSpy|exact hashed contract covered PowerShell/CI only|V24,V55|T34|all install-surface pin/hash regression|
 |B107|fresh `full` may resolve pandas 3/regex 2025+|secure floor omitted upstream non-Markdownify upper bounds|V55|T34|metadata bound + callable JobSpy smoke regression|
+|B108|runtime validator passes broken JobSpy import|metadata-only validator replaced prior import smoke|V55|T34|public API import success/failure regressions|

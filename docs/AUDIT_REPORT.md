@@ -42,7 +42,7 @@ GitHub `main` was replaced with a validated single-root `0.5.0` baseline and pub
 
 ## Verification
 
-- Tests: 458 passed, 2 skipped; 58% branch coverage.
+- Tests: 459 passed, 2 skipped; 58% branch coverage.
 - Ruff: clean.
 - mypy: clean for Linux and Windows targets.
 - Offline selfcheck: all checks passed.
