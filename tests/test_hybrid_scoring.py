@@ -147,6 +147,60 @@ def test_keyword_extraction_ignores_company_copy_and_application_boilerplate() -
     assert "e.g" not in keywords
 
 
+def test_keyword_extraction_ignores_state_application_and_salary_metadata() -> None:
+    jd = "\n".join(
+        [
+            "Position Details",
+            "Job Code",
+            "Information Technology Specialist II",
+            "Salary Information",
+            "New to State candidates will be hired at the minimum salary of the classification or minimum of alternate range when applicable.",
+            "# of Positions",
+            "1",
+            "Minimum Qualifications",
+            "Two years of information technology experience.",
+            "Special Requirements",
+            "Must pass a background investigation.",
+            "Must have experience troubleshooting Windows workstations.",
+            "Please Note:",
+            "A Statement of Qualifications must be submitted with the application.",
+            "Do not include confidential information in application documents.",
+            "You are required to complete employment history on the application form (STD 678).",
+            "Incomplete resumes will not take the place of employment history in the selection process.",
+            "Application Instructions",
+            "Who May Apply",
+            "Only qualified applicants may apply.",
+            "Required Application Package Documents",
+            "Complete the STD 678 State Application.",
+            "A resume is optional.",
+            "Include unofficial transcripts when using education to meet minimum qualifications.",
+        ]
+    )
+
+    keywords = extract_requirement_keywords(jd)
+
+    assert any("background investigation" in keyword for keyword in keywords)
+    assert any("troubleshooting windows workstations" in keyword for keyword in keywords)
+    assert "1" not in keywords
+    noise_terms = (
+        "alternate range",
+        "application",
+        "classification",
+        "confidential information",
+        "employment history",
+        "incomplete resumes",
+        "positions",
+        "please note",
+        "resume",
+        "salary",
+        "selection process",
+        "std 678",
+        "transcript",
+        "who may apply",
+    )
+    assert not any(noise in keyword for keyword in keywords for noise in noise_terms)
+
+
 def test_keyword_extraction_ignores_truncation_pay_and_location_fragments() -> None:
     jd = """Minimum Qualifications
 - Bachelor's degree and two years of technical consulting experience required.

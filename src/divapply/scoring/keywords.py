@@ -37,49 +37,81 @@ _PREFERRED_MARKERS = {
     "desired", "optional", "advantage",
 }
 _REQUIRED_LINE_RE = re.compile(
-    r"^(?:job\s+)?(?:required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
+    r"^(?:job\s+)?(?:special\s+requirements?|required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
     r"minimum(?:\s+qualifications)?|mandatory|qualifications?|responsibilities|duties)\b|"
     r"\b(?:must\s+have|required\s+to|is\s+required|are\s+required|minimum\s+of)\b",
     re.IGNORECASE,
 )
 _PREFERRED_LINE_RE = re.compile(
-    r"^(?:preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
+    r"^(?:desirable\s+qualifications?|preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
     r"nice[- ]to[- ]have|bonus|desired|optional|advantage)\b",
     re.IGNORECASE,
 )
 _REQUIREMENT_HEADING_RE = re.compile(
-    r"^(?:job\s+)?(?:required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
+    r"^(?:job\s+)?(?:special\s+requirements?|required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
     r"minimum(?:\s+qualifications)?|mandatory|qualifications?(?:\s*(?:&|and)\s*education)?|"
     r"responsibilities|duties|preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
-    r"nice[- ]to[- ]have|bonus|desired|optional|advantage)\s*:?[\s]*$",
+    r"desirable\s+qualifications?|nice[- ]to[- ]have|bonus|desired|optional|advantage)\s*:?[\s]*$",
     re.IGNORECASE,
 )
 _NON_REQUIREMENT_HEADINGS = {
     "additional information",
     "benefits",
+    "classification",
     "compensation",
+    "contact information",
+    "department information",
     "employee benefits",
     "hourly rate",
+    "job code",
+    "number of positions",
     "pay range",
     "perks",
+    "please note",
+    "position details",
     "salary",
+    "salary information",
     "what we offer",
+    "working title",
 }
 _NON_REQUIREMENT_LINE_RE = re.compile(
     r"^(?:\.\.\.\[?middle omitted\]?\.\.\.|additional information\b|about\b|"
     r"benefits?\b|compensation\b|employment type\b|hourly rate\b|job type\b|"
-    r"location\s*:|pay\b|salary\b|schedule\s*:|work arrangement\b|work location\b)",
+    r"#\s*of positions?\b|job code\b|location\s*:|new to state candidates?\b|"
+    r"number of positions?\b|pay\b|position\s*#|position details?\b|salary\b|"
+    r"schedule\s*:|telework\b|work arrangement\b|work location\b|working title\b)",
     re.IGNORECASE,
 )
 _BOILERPLATE_BOUNDARIES = {
+    "application instructions",
+    "application package checklist",
+    "application package documents",
     "applicants have rights under",
     "apply for this job",
     "eeo is the law",
     "equal opportunity and affirmative action",
     "equal opportunity employer",
+    "how to apply",
     "public burden statement",
+    "required application package documents",
+    "statement of qualifications",
+    "supplemental questionnaire",
     "voluntary self-identification",
+    "who may apply",
 }
+_ADMINISTRATIVE_PHRASE_RE = re.compile(
+    r"(?:"
+    r"\b(?:alternate range|hourly rate|new to state candidates?|pay range|salary)\b|"
+    r"\b(?:application (?:deadline|form|instructions?|materials?|package|process)|state application)\b|"
+    r"\b(?:statement of qualifications?|std\s*678|transcripts?)\b|"
+    r"\b(?:confidential information|employment history|filing date|how to apply|mailing address|selection process|"
+    r"who may apply)\b|"
+    r"\b(?:incomplete resumes?|please note)\b|"
+    r"^#?\s*(?:number\s+of\s+|of\s+)?positions?\b|"
+    r"^(?:classification|job code|position details?|working title)\b"
+    r")",
+    re.IGNORECASE,
+)
 _SKILL_HINTS = {
     "aws", "azure", "gcp", "linux", "windows", "python", "sql", "excel",
     "access", "administrative", "answering", "appointments", "billing", "cash",
@@ -154,6 +186,13 @@ def _clean_phrase(phrase: str) -> str:
     return " ".join(parts).strip()
 
 
+def _is_requirement_phrase(raw_phrase: str, clean_phrase: str) -> bool:
+    """Reject metadata and application prose that cannot be a candidate skill."""
+    if not re.search(r"[a-z]", clean_phrase, re.IGNORECASE):
+        return False
+    return _ADMINISTRATIVE_PHRASE_RE.search(f"{raw_phrase} {clean_phrase}") is None
+
+
 def _strip_marker_prefix(line: str) -> str:
     return re.sub(
         r"^(required|requirements|required skills|required qualifications|minimum qualifications|"
@@ -206,7 +245,7 @@ def _candidate_phrases(text: str, *, bucket: str = "required") -> list[str]:
     ordered: list[str] = []
     for phrase in phrases:
         clean = _clean_phrase(phrase)
-        if clean and clean not in seen and clean not in _STOPWORDS:
+        if clean and _is_requirement_phrase(phrase, clean) and clean not in seen and clean not in _STOPWORDS:
             seen.add(clean)
             ordered.append(clean)
     return ordered[:30]
