@@ -2,6 +2,10 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.3
+
+- Prevented public-sector salary, position, application, résumé, transcript, and questionnaire text from becoming false required-skill gaps while preserving real requirement sections.
+
 ## 0.5.2
 
 - Made `divapply edit` preserve scoped query labels, location labels, full/part-time schedule semantics, and the runtime-authoritative skill representation.
