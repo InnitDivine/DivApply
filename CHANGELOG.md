@@ -2,6 +2,11 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.6
+
+- Fixed GovernmentJobs agency boards that render a temporary zero before asynchronously loading current vacancies from the official agency endpoint.
+- Added support for the current agency-card layout, same-origin fragment validation, duplicate-card removal, and structured employment/salary extraction.
+
 ## 0.5.5
 
 - Added deterministic current-vacancy discovery for GovernmentJobs/SchoolJobs, JobAps, and bounded CalCareers searches, including official application links and filing-deadline checks.
