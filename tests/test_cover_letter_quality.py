@@ -29,6 +29,7 @@ def _valid_letter(body: str = "I built Python reporting workflows that match thi
     return "\n\n".join(
         [
             "Dear Hiring Manager,",
+            "The Reporting Analyst role matches my verified reporting background.",
             body,
             "Example Health needs clear reporting for patient support workflows. Let's discuss.",
             "Jane",
@@ -122,6 +123,83 @@ def test_validate_cover_letter_blocks_too_long_normal_mode() -> None:
     assert any("Too long" in error for error in report["errors"])
 
 
+def test_cover_validator_requires_exact_target_title_once() -> None:
+    missing = validate_cover_letter(
+        _valid_letter().replace("Reporting Analyst", "open role"),
+        mode="normal",
+        profile=_profile(),
+        job=_job(),
+    )
+    repeated = validate_cover_letter(
+        _valid_letter("Reporting Analyst work maps directly to this Reporting Analyst role."),
+        mode="normal",
+        profile=_profile(),
+        job=_job(),
+    )
+
+    assert any("exact target job title once" in error for error in missing["errors"])
+    assert any("exact target job title once" in error for error in repeated["errors"])
+
+
+def test_cover_validator_requires_three_body_paragraphs() -> None:
+    collapsed = _valid_letter().replace(
+        "\n\nExample Health needs",
+        " Example Health needs",
+    )
+
+    report = validate_cover_letter(collapsed, mode="normal", profile=_profile(), job=_job())
+
+    assert any("exactly 3 body paragraphs" in error for error in report["errors"])
+
+
+def test_cover_validator_requires_zero_it_anchor_before_hands_on_claim() -> None:
+    profile = _profile() | {"experience": {"years_of_professional_it_experience": "0"}}
+    resume = "Municipal customer service. County records. In my home lab, I troubleshoot Windows PCs."
+    bodies = (
+        "The work I have done in Windows support and home lab server administration maps to this role.",
+        "Those settings fit device support and network troubleshooting.",
+        "That mix fits device support and network troubleshooting.",
+        "My work in structured service settings and in my lab fits device support.",
+    )
+
+    for body in bodies:
+        report = validate_cover_letter(
+            _valid_letter(body),
+            mode="normal",
+            profile=profile,
+            resume_text=resume,
+            job=_job(),
+        )
+        assert any("hands-on IT claim" in error for error in report["errors"]), body
+
+
+def test_zero_it_anchor_check_ignores_device_support_inside_exact_job_title() -> None:
+    job = _job() | {
+        "title": "Device Support Technician I",
+        "company": "Sutter Health",
+        "full_description": "Install devices and maintain accurate support records.",
+    }
+    letter = "\n\n".join(
+        (
+            "Dear Hiring Manager,",
+            "For the Device Support Technician I role, my home-lab work provides hands-on practice with Windows PCs.",
+            "At Example Employer, I maintained accurate records and followed documented procedures.",
+            "Sutter Health emphasizes accurate device records. Let's discuss.",
+            "Jane",
+        )
+    )
+
+    report = validate_cover_letter(
+        letter,
+        mode="normal",
+        profile=_profile() | {"experience": {"years_of_professional_it_experience": "0"}},
+        resume_text="In my home lab, I troubleshoot Windows PCs. Example Employer records work.",
+        job=job,
+    )
+
+    assert not any("hands-on IT claim" in error for error in report["errors"]), report["errors"]
+
+
 def test_format_job_context_includes_safe_referral_context_only() -> None:
     text = format_job_context(
         _job()
@@ -159,6 +237,9 @@ def test_cover_prompt_keeps_transferable_work_and_availability_truthful() -> Non
     assert "Never merge separate projects" in prompt
     assert "client-sector list is company context, not candidate experience" in prompt
     assert "Keep each paid employer or paid-work setting in its own sentence" in prompt
+    assert "name the lab, project, coursework, or training before the first hands-on IT skill" in prompt
+    assert 'Never use "those settings"' in prompt
+    assert "exactly three body paragraphs separated by blank lines" in prompt
     assert "Known projects to reference" not in prompt
 
 
@@ -350,6 +431,53 @@ def test_cover_validator_rejects_city_and_county_duty_aggregation() -> None:
     assert any("distinct paid-work settings" in error for error in report["errors"])
 
 
+def test_cover_sanitizer_drops_only_mixed_paid_setting_sentence() -> None:
+    draft = (
+        "Dear Hiring Manager,\n\n"
+        "I handled technical questions in municipal and county settings. "
+        "At the City front desk, I routed technical issues. "
+        "At the County office, I maintained accurate records.\n\n"
+        "Let's discuss.\n\nJane"
+    )
+
+    cleaned = cover_letter._drop_mixed_paid_setting_sentences(draft)
+
+    assert "municipal and county" not in cleaned
+    assert "At the City front desk" in cleaned
+    assert "At the County office" in cleaned
+
+
+def test_cover_sanitizer_repairs_unanchored_zero_it_closing() -> None:
+    draft = (
+        "Sutter Health's focus on device support and network troubleshooting "
+        "fits the work I have done in service and systems settings."
+    )
+
+    cleaned = cover_letter._repair_unanchored_zero_it_closing(
+        draft,
+        {"company": "Sutter Health"},
+        {"experience": {"years_of_professional_it_experience": "0"}},
+    )
+
+    assert "work I have done" not in cleaned
+    assert "is a practical next step for my home-lab and training foundation" in cleaned
+
+
+def test_cover_sanitizer_drops_ambiguous_zero_it_bridge_sentence() -> None:
+    draft = (
+        "In my home lab, I troubleshoot Windows PCs. "
+        "That mix fits device support and network troubleshooting."
+    )
+
+    cleaned = cover_letter._drop_ambiguous_zero_it_bridge_sentences(
+        draft,
+        {"experience": {"years_of_professional_it_experience": "0"}},
+    )
+
+    assert "In my home lab" in cleaned
+    assert "That mix" not in cleaned
+
+
 def test_cover_validator_rejects_client_relabel_without_resume_evidence() -> None:
     report = validate_cover_letter(
         _valid_letter("My municipal public-counter work and home lab provide a mix of client-facing problem solving."),
@@ -385,10 +513,15 @@ def test_generate_cover_letter_raises_after_validation_retries_are_exhausted(
     monkeypatch,
 ) -> None:
     class InvalidClient:
+        def __init__(self) -> None:
+            self.messages: list[list[dict[str, str]]] = []
+
         def chat(self, *_args, **_kwargs) -> str:
+            self.messages.append(_args[0])
             return _valid_letter("I am writing to express my interest in this role.")
 
-    monkeypatch.setattr(cover_letter, "get_client_for_stage", lambda _stage: InvalidClient())
+    client = InvalidClient()
+    monkeypatch.setattr(cover_letter, "get_client_for_stage", lambda _stage: client)
 
     import pytest
 
@@ -400,3 +533,42 @@ def test_generate_cover_letter_raises_after_validation_retries_are_exhausted(
             max_retries=1,
             validation_mode="strict",
         )
+
+    retry_request = client.messages[1][1]["content"]
+    assert "REJECTED DRAFT" in retry_request
+    assert "I am writing to express my interest" in retry_request
+    assert "Revise the rejected draft" in retry_request
+
+
+def test_cover_retry_supplies_safe_zero_it_opener(monkeypatch) -> None:
+    class RevisionClient:
+        def __init__(self) -> None:
+            self.messages: list[list[dict[str, str]]] = []
+            self.outputs = iter(
+                (
+                    _valid_letter(
+                        "The work I have done in Windows support and home lab server administration maps here."
+                    ),
+                    _valid_letter("In my home lab, I troubleshoot Windows PCs for reporting workflows."),
+                )
+            )
+
+        def chat(self, messages, **_kwargs) -> str:
+            self.messages.append(messages)
+            return next(self.outputs)
+
+    client = RevisionClient()
+    monkeypatch.setattr(cover_letter, "get_client_for_stage", lambda _stage: client)
+
+    letter = cover_letter.generate_cover_letter(
+        "In my home lab, I troubleshoot Windows PCs.",
+        _job(),
+        _profile() | {"experience": {"years_of_professional_it_experience": "0"}},
+        max_retries=1,
+        validation_mode="normal",
+    )
+
+    assert "In my home lab" in letter
+    retry_prompt = client.messages[1][0]["content"]
+    assert "For the Reporting Analyst role, my home-lab work" in retry_prompt
+    assert "is a practical next step for my home-lab and training foundation" in retry_prompt

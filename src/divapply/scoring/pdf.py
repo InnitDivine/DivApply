@@ -6,13 +6,41 @@ and exports to PDF using headless Chromium via Playwright.
 
 import logging
 import re
+import tempfile
+import unicodedata
+from collections import Counter
 from html import escape as _html_escape
 from pathlib import Path
+from typing import TypedDict
+
+from pypdf import PdfReader
 
 from divapply.config import TAILORED_DIR
 from divapply.security import protect_file
 
 log = logging.getLogger(__name__)
+
+ATS_MIN_TOKEN_COVERAGE = 0.97
+
+
+class ATSPDFReport(TypedDict):
+    pages: int
+    source_tokens: int
+    extracted_tokens: int
+    token_coverage: float
+    sections_in_order: bool
+
+
+ATS_SECTION_LABELS = {
+    "SUMMARY": "SUMMARY",
+    "TECHNICAL SKILLS": "TECHNICAL SKILLS",
+    "CORE QUALIFICATIONS": "CORE QUALIFICATIONS",
+    "EXPERIENCE": "EXPERIENCE",
+    "ADDITIONAL EXPERIENCE": "ADDITIONAL EXPERIENCE",
+    "PROJECTS": "PROJECTS HOME LAB",
+    "CERTIFICATIONS": "CERTIFICATIONS LICENSES",
+    "EDUCATION": "EDUCATION",
+}
 
 SECTION_ALIASES = {
     "SUMMARY": "SUMMARY",
@@ -307,7 +335,7 @@ def build_html(resume: dict) -> str:
                 return k
         return None
 
-    # Skills â€” two-column grid
+    # Skills - one linear column so ATS readers and humans share one order.
     skills_html = ""
     skills_key = _find_key(sections, "SKILL", "QUALIFICATION")
     if skills_key:
@@ -344,13 +372,15 @@ def build_html(resume: dict) -> str:
                 subtitle_text = e["subtitle"] if e["subtitle"] and e["subtitle"] != company_or_date else ""
 
             bullets = "".join(f"<li>{_esc(b)}</li>" for b in e["bullets"])
-            date_html = f'<div class="entry-date">{_esc(date)}</div>' if date else ""
-            sub_html = f'<div class="entry-subtitle">{_esc(company_or_date)}</div>' if company_or_date else ""
-            if subtitle_text:
-                sub_html += f'<div class="entry-subtitle">{_esc(subtitle_text)}</div>'
+            meta_parts = [part for part in (company_or_date, subtitle_text, date) if part]
+            meta_html = (
+                f'<div class="entry-meta">{" | ".join(_esc(part) for part in meta_parts)}</div>'
+                if meta_parts
+                else ""
+            )
             items += f"""<div class="entry">
-  <div class="entry-header"><div class="entry-title">{_esc(job_title)}</div>{date_html}</div>
-  {sub_html}
+  <div class="entry-title">{_esc(job_title)}</div>
+  {meta_html}
   <ul>{bullets}</ul>
 </div>"""
         return f'<div class="section"><div class="section-title">{section_label}</div>{items}</div>'
@@ -440,7 +470,7 @@ def build_html(resume: dict) -> str:
     display_name = _esc(resume["name"])
 
     return f"""<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <style>
@@ -468,10 +498,7 @@ body {{
     margin-bottom: 6px;
 }}
 .header-top {{
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 1rem;
+    display: block;
 }}
 .name {{
     font-family: Georgia, 'Times New Roman', serif;
@@ -488,18 +515,15 @@ body {{
     font-size: 9pt;
     color: #8b6f47;
     font-weight: 400;
-    text-align: right;
-    flex-shrink: 0;
+    text-align: left;
     line-height: 1.4;
-    max-width: 280px;
+    margin-top: 2px;
 }}
 .contact {{
     font-size: 8.2pt;
     color: #7a6a58;
     margin-top: 2px;
-    display: flex;
-    gap: 1.5rem;
-    flex-wrap: wrap;
+    display: block;
 }}
 .contact a {{
     color: #7a6a58;
@@ -543,14 +567,13 @@ body {{
 
 /* â”€â”€ Skills â”€â”€ */
 .skills-grid {{
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 1px 12px;
+    display: block;
 }}
 .skill-row {{
     font-size: 8.5pt;
     line-height: 1.25;
     color: #3a2e22;
+    margin-bottom: 1px;
 }}
 .skill-cat {{
     font-weight: 600;
@@ -565,28 +588,12 @@ body {{
     padding-left: 8px;
     border-left: 2px solid #e8dcc8;
 }}
-.entry-header {{
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    gap: 8px;
-    margin-bottom: 1px;
-}}
 .entry-title {{
     font-weight: 600;
     font-size: 9pt;
     color: #2c2416;
 }}
-.entry-date {{
-    font-size: 7.8pt;
-    color: #c17f3e;
-    font-weight: 500;
-    white-space: nowrap;
-    flex-shrink: 0;
-    font-family: Arial, 'Segoe UI', sans-serif;
-    letter-spacing: 0.03em;
-}}
-.entry-subtitle {{
+.entry-meta {{
     font-size: 8.5pt;
     color: #8b6f47;
     font-weight: 500;
@@ -796,6 +803,71 @@ def render_pdf(html: str, output_path: str) -> None:
         browser.close()
 
 
+def _ats_tokens(text: str) -> list[str]:
+    """Normalize document text into stable ATS-comparison tokens."""
+    normalized = unicodedata.normalize("NFKC", str(text or "")).casefold()
+    return re.findall(r"[a-z0-9]+(?:[+.#/-][a-z0-9]+)*\+?", normalized)
+
+
+def _ats_token_coverage(source_tokens: list[str], extracted_tokens: list[str]) -> float:
+    """Return source-token multiset coverage in extracted PDF text."""
+    if not source_tokens:
+        return 0.0
+    source_counts = Counter(source_tokens)
+    extracted_counts = Counter(extracted_tokens)
+    matched = sum(min(count, extracted_counts[token]) for token, count in source_counts.items())
+    return matched / len(source_tokens)
+
+
+def _sections_appear_in_order(extracted_tokens: list[str], required_sections: list[str]) -> bool:
+    """Verify standard section headings occur once in the intended linear order."""
+    extracted = " ".join(extracted_tokens)
+    cursor = -1
+    for section in required_sections:
+        label = ATS_SECTION_LABELS.get(str(section).strip().upper(), str(section).strip().upper())
+        phrase = " ".join(_ats_tokens(label))
+        if not phrase:
+            continue
+        position = extracted.find(phrase, cursor + 1)
+        if position < 0:
+            return False
+        cursor = position
+    return True
+
+
+def validate_ats_pdf(
+    source_text: str,
+    pdf_path: Path,
+    *,
+    required_sections: list[str] | None = None,
+) -> ATSPDFReport:
+    """Fail closed unless a generated PDF retains a complete linear text layer."""
+    try:
+        reader = PdfReader(str(pdf_path))
+        if reader.is_encrypted or not reader.pages:
+            raise ValueError("encrypted or empty PDF")
+        extracted_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+        raise RuntimeError("Generated PDF is not ATS-readable: text extraction failed") from exc
+
+    source_tokens = _ats_tokens(source_text)
+    extracted_tokens = _ats_tokens(extracted_text)
+    coverage = _ats_token_coverage(source_tokens, extracted_tokens)
+    sections = list(required_sections or [])
+    sections_in_order = _sections_appear_in_order(extracted_tokens, sections)
+    if "\ufffd" in extracted_text or coverage < ATS_MIN_TOKEN_COVERAGE or not sections_in_order:
+        raise RuntimeError(
+            "Generated PDF is not ATS-readable: text coverage or section order validation failed"
+        )
+    return {
+        "pages": len(reader.pages),
+        "source_tokens": len(source_tokens),
+        "extracted_tokens": len(extracted_tokens),
+        "token_coverage": coverage,
+        "sections_in_order": sections_in_order,
+    }
+
+
 # â”€â”€ Public API â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
@@ -835,9 +907,11 @@ def convert_to_pdf(
             except Exception:
                 profile = {}
         html = build_cover_letter_html(text, profile)
+        required_sections: list[str] = []
     else:
         resume = parse_resume(text)
         html = build_html(resume)
+        required_sections = list(resume["sections"])
 
     if html_only:
         out = output_path or text_path.with_suffix(".html")
@@ -849,9 +923,30 @@ def convert_to_pdf(
 
     out = output_path or text_path.with_suffix(".pdf")
     out = Path(out)
-    render_pdf(html, str(out))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{out.stem}.ats-",
+            suffix=".pdf",
+            dir=out.parent,
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+        render_pdf(html, str(temporary_path))
+        report = validate_ats_pdf(text, temporary_path, required_sections=required_sections)
+        temporary_path.replace(out)
+    except Exception:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+        raise
     protect_file(out)
-    log.info("PDF generated: %s", out)
+    log.info(
+        "ATS-readable PDF generated: %s (%s pages, %.1f%% source-token coverage)",
+        out,
+        report["pages"],
+        float(report["token_coverage"]) * 100,
+    )
     return out
 
 

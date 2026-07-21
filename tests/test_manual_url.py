@@ -38,6 +38,27 @@ def test_extract_job_posting_schema_handles_nested_graph() -> None:
     }
 
 
+def test_v99_extract_job_posting_schema_normalizes_employment_type_array() -> None:
+    soup = BeautifulSoup(
+        """
+        <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Device Support Technician I",
+          "description": "Support endpoints and users.",
+          "employmentType": ["FULL_TIME"]
+        }
+        </script>
+        """,
+        "html.parser",
+    )
+
+    result = extract_job_posting_schema(soup)
+
+    assert result["employment_type"] == "full_time"
+    assert "[" not in result["employment_type"]
+
+
 def test_job_location_text_accepts_strings_and_address_objects() -> None:
     assert job_location_text([
         "Remote",

@@ -587,6 +587,24 @@ def validate_json_fields(
 # â”€â”€ Full Resume Text Validation â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
+def _hands_on_it_match(sentence: str) -> re.Match[str] | None:
+    return re.search(
+        r"\b(?:it support|windows support|end[- ]user(?: support| issues?)|windows(?:\s+\d+(?:/\d+)?)?|pcs?|"
+        r"hardware|network(?:ing| troubleshooting| support)?|device(?: support| setup| deployment| "
+        r"troubleshooting)?|active directory|system administration|server administration)\b",
+        sentence.casefold(),
+    )
+
+
+def _has_paid_setting_it_attribution(sentence: str) -> bool:
+    """Return whether one sentence joins paid public-service and hands-on IT contexts."""
+    lowered = sentence.casefold()
+    has_paid_setting = bool(
+        re.search(r"\b(?:city|municipal|county|front[ -]desk|public-sector|paid (?:work|role))\b", lowered)
+    )
+    return has_paid_setting and _hands_on_it_match(lowered) is not None
+
+
 def validate_tailored_resume(
     text: str,
     profile: dict,
@@ -706,6 +724,23 @@ def validate_tailored_resume(
     non_education_text = text.replace(_section_text(text, "EDUCATION", ()), "")
     _add_unsupported_credential_findings(non_education_text.lower(), evidence_text, errors)
 
+    # 8d. When the candidate has no professional IT tenure, hands-on IT work
+    # must not be moved into a paid public-service setting unless the original
+    # source contains that same context pairing.
+    professional_it_years = str(
+        (profile.get("experience") or {}).get("years_of_professional_it_experience", "")
+    ).strip().casefold()
+    if professional_it_years in {"0", "0.0", "none"}:
+        original_supports_pairing = any(
+            _has_paid_setting_it_attribution(sentence)
+            for sentence in re.split(r"(?<=[.!?])\s+|\n+", original_text)
+        )
+        if not original_supports_pairing and any(
+            _has_paid_setting_it_attribution(sentence)
+            for sentence in re.split(r"(?<=[.!?])\s+|\n+", text)
+        ):
+            errors.append("Hands-on IT practice is attributed to an unsupported paid-work setting.")
+
     # 9. Em dashes (should be auto-fixed by sanitize_text, but safety net)
     if "\u2014" in text or "\u2013" in text:
         errors.append("Contains em dash or en dash.")
@@ -789,6 +824,63 @@ def validate_cover_letter(
         return {"passed": True, "errors": [], "warnings": []}
 
     text_lower = text.lower()
+
+    target_title = " ".join(str((job or {}).get("title") or "").casefold().split())
+    normalized_cover_text = " ".join(text.casefold().split())
+    if target_title and normalized_cover_text.count(target_title) != 1:
+        errors.append("Cover letter must name the exact target job title once.")
+
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text.strip()) if block.strip()]
+    body_blocks = blocks[1:-1] if len(blocks) >= 2 else []
+    if len(body_blocks) != 3:
+        errors.append("Cover letter must contain exactly 3 body paragraphs between salutation and sign-off.")
+
+    professional_it_years = str(
+        ((profile or {}).get("experience") or {}).get("years_of_professional_it_experience", "")
+    ).strip().casefold()
+    if professional_it_years in {"0", "0.0", "none"}:
+        source_supports_paid_it = any(
+            _has_paid_setting_it_attribution(sentence)
+            for sentence in re.split(r"(?<=[.!?])\s+|\n+", resume_text)
+        )
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text):
+            lowered_sentence = sentence.casefold()
+            evidence_sentence = lowered_sentence
+            if target_title:
+                evidence_sentence = re.sub(
+                    re.escape(target_title),
+                    lambda match: " " * len(match.group()),
+                    evidence_sentence,
+                    count=1,
+                )
+            it_match = _hands_on_it_match(evidence_sentence)
+            if it_match is None:
+                continue
+            if re.search(
+                r"\b(?:(?:those|these|both) (?:settings|contexts|roles|experiences)|(?:that|this) mix)\b",
+                evidence_sentence,
+            ):
+                errors.append("Candidate hands-on IT claim ambiguously bridges distinct evidence settings.")
+                break
+            candidate_claim = bool(
+                re.search(
+                    r"\b(?:i|my)\b.{0,100}\b(?:have|bring|work|worked|done|background|experience|"
+                    r"support|troubleshoot|administer|configure|manage)",
+                    evidence_sentence,
+                )
+                or re.search(r"\bwork i have done\b", evidence_sentence)
+            )
+            if not candidate_claim:
+                continue
+            if _has_paid_setting_it_attribution(evidence_sentence) and source_supports_paid_it:
+                continue
+            anchor = re.search(
+                r"\b(?:home[ -]lab|personal project|project work|coursework|training|certificate program|lab work)\b",
+                evidence_sentence,
+            )
+            if anchor is None or anchor.start() > it_match.start():
+                errors.append("Candidate hands-on IT claim lacks a preceding lab, project, or coursework anchor.")
+                break
 
     # 1. Em dashes â€” always an error (sanitize_text should have caught these)
     if "\u2014" in text or "\u2013" in text:

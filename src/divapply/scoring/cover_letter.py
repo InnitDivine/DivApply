@@ -97,6 +97,80 @@ def _delete_unpersisted_artifact(path_value: str | None) -> None:
 # â”€â”€ Prompt Builder (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
+def _drop_mixed_paid_setting_sentences(text: str) -> str:
+    """Remove sentences that ambiguously combine City and County evidence."""
+    cleaned_blocks: list[str] = []
+    removed = 0
+    for block in re.split(r"\n{2,}", text.strip()):
+        kept: list[str] = []
+        for sentence in re.split(r"(?<=[.!?])\s+", block.strip()):
+            lowered = sentence.casefold()
+            has_city_setting = bool(re.search(r"\b(?:city|municipal|front[ -]desk)\b", lowered))
+            has_county_setting = bool(re.search(r"\bcounty\b", lowered))
+            if has_city_setting and has_county_setting:
+                removed += 1
+                continue
+            if sentence.strip():
+                kept.append(sentence.strip())
+        if kept:
+            cleaned_blocks.append(" ".join(kept))
+    if removed:
+        log.debug("Removed %d ambiguous mixed-paid-setting sentence(s) before validation.", removed)
+    return "\n\n".join(cleaned_blocks)
+
+
+def _repair_unanchored_zero_it_closing(text: str, job: dict, profile: dict) -> str:
+    """Replace employer-specific closing overclaims with a truthful next-step statement."""
+    professional_it_years = str(
+        (profile.get("experience") or {}).get("years_of_professional_it_experience", "")
+    ).strip().casefold()
+    company = str(job.get("company") or job.get("site") or "").strip()
+    if professional_it_years not in {"0", "0.0", "none"} or not company:
+        return text
+    pattern = re.compile(
+        rf"(?P<prefix>\b{re.escape(company)}(?:'s|’s)?\b[^.!?]*?)\s+"
+        r"(?:fits|matches|aligns with)\s+(?=[^.!?]*(?:\bi\b|\bmy\b))[^.!?]*[.!?]",
+        re.IGNORECASE,
+    )
+    return pattern.sub(
+        lambda match: (
+            match.group("prefix").rstrip()
+            + " is a practical next step for my home-lab and training foundation."
+        ),
+        text,
+    )
+
+
+def _drop_ambiguous_zero_it_bridge_sentences(text: str, profile: dict) -> str:
+    """Remove vague pronoun bridges from mixed evidence to hands-on IT duties."""
+    professional_it_years = str(
+        (profile.get("experience") or {}).get("years_of_professional_it_experience", "")
+    ).strip().casefold()
+    if professional_it_years not in {"0", "0.0", "none"}:
+        return text
+    blocks: list[str] = []
+    for block in re.split(r"\n{2,}", text.strip()):
+        kept: list[str] = []
+        for sentence in re.split(r"(?<=[.!?])\s+", block.strip()):
+            lowered = sentence.casefold()
+            bridge = re.search(
+                r"\b(?:(?:those|these|both) (?:settings|contexts|roles|experiences)|(?:that|this) mix)\b",
+                lowered,
+            )
+            it_duty = re.search(
+                r"\b(?:it support|windows|hardware|network(?:ing| troubleshooting)?|device support|"
+                r"ticket resolution|troubleshoot\w*)\b",
+                lowered,
+            )
+            if bridge and it_duty:
+                continue
+            if sentence.strip():
+                kept.append(sentence.strip())
+        if kept:
+            blocks.append(" ".join(kept))
+    return "\n\n".join(blocks)
+
+
 def _build_cover_letter_prompt(profile: dict) -> str:
     """Build the cover letter system prompt from the user's profile.
 
@@ -146,6 +220,7 @@ def _build_cover_letter_prompt(profile: dict) -> str:
     return f"""Write a cover letter for {sign_off_name}. The goal is to get an interview.
 
 STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
+- Output exactly three body paragraphs separated by blank lines, plus the salutation and sign-off as their own blocks.
 
 PARAGRAPH 1 (2-3 sentences): Open with the strongest verified fact from the candidate's background that directly matches the job. Use the same rule for every role.
 
@@ -175,6 +250,8 @@ EXPERIENCE AND AVAILABILITY BOUNDARY:
 - In every sentence, name the setting that proves an IT skill. Do not join Windows, Microsoft 365, end-user, or technical-question claims to municipal, county, front-desk, or generic customer-service experience.
 - Never say a list of IT skills was used "across" paid/public-sector and lab/project settings. Attribute paid-work evidence and home-lab/training evidence in separate clauses or sentences.
 - When professional IT experience is zero, never put a paid/public-sector setting and a home-lab/project setting in the same sentence as an IT skill. Use separate sentences so each skill has one unambiguous evidence source.
+- When professional IT experience is zero, name the lab, project, coursework, or training before the first hands-on IT skill in every candidate-experience sentence.
+- Never use "those settings", "these roles", "that mix", or a similar pronoun bridge to map multiple paid/project contexts to IT duties.
 - A company or client-sector list is company context, not candidate experience. Never imply the candidate worked in every sector the target employer serves; state only candidate sectors directly supported by RESUME.
 - Keep each paid employer or paid-work setting in its own sentence. Never combine duties from municipal/city and county roles under one shared verb or requirement list.
 - Do not say the candidate is already doing the target job, works in the same professional environment, or has target-industry tenure when only transferable duties map.
@@ -295,6 +372,7 @@ def generate_cover_letter(
 
     avoid_notes: list[str] = []
     letter = ""
+    rejected_draft = ""
     last_errors: list[str] = []
     client = get_client_for_stage("cover")
     cl_prompt_base = _build_cover_letter_prompt(profile)
@@ -304,6 +382,28 @@ def generate_cover_letter(
         prompt = cl_prompt_base
         if avoid_notes:
             prompt += "\n\n## AVOID THESE ISSUES:\n" + "\n".join(f"- {n}" for n in avoid_notes[-5:])
+        if any("hands-on it claim" in note.casefold() for note in avoid_notes):
+            title = str(job.get("title") or "the target")
+            company = str(job.get("company") or job.get("site") or "The employer")
+            prompt += (
+                "\n- Use this safe opening pattern exactly, filling only verified skills: "
+                f'"For the {title} role, my home-lab work provides hands-on practice with [verified skills]." '
+                "Delete any candidate IT sentence where the lab/project/training anchor comes after the skill. "
+                "Use this safe closing pattern: "
+                f'"{company}\'s [verified job detail] is a practical next step for my home-lab and training '
+                'foundation. Happy to walk through any of this in more detail."'
+            )
+
+        if rejected_draft:
+            draft_request = (
+                "REJECTED DRAFT:\n"
+                f"{rejected_draft}\n\n"
+                "Revise the rejected draft to fix every validation error above. Preserve only supported facts. "
+                "Keep each named paid employer or paid-work setting in a separate sentence, and return only "
+                "the corrected cover letter."
+            )
+        else:
+            draft_request = "Write the cover letter:"
 
         messages = [
             {"role": "system", "content": prompt},
@@ -312,14 +412,17 @@ def generate_cover_letter(
                 "content": (
                     f"RESUME:\n{resume_text}\n\n---\n\nTARGET JOB:\n{job_text}\n\n"
                     "RECORDED CANDIDATE EVIDENCE GAPS (never claim these as performed skills, including "
-                    f"synonyms or transferable labels): {gap_block}\n\nWrite the cover letter:"
+                    f"synonyms or transferable labels): {gap_block}\n\n{draft_request}"
                 ),
             },
         ]
 
-        letter = client.chat(messages, max_tokens=1024, temperature=0.2)
+        letter = client.chat(messages, max_tokens=1024, temperature=0.0 if avoid_notes else 0.2)
         letter = sanitize_text(letter)  # auto-fix em dashes, smart quotes
         letter = _strip_preamble(letter)  # remove any "Here is the letter:" prefix
+        letter = _drop_mixed_paid_setting_sentences(letter)
+        letter = _repair_unanchored_zero_it_closing(letter, job, profile)
+        letter = _drop_ambiguous_zero_it_bridge_sentences(letter, profile)
 
         validation = validate_cover_letter(
             letter,
@@ -332,6 +435,7 @@ def generate_cover_letter(
             return letter
 
         last_errors = list(validation["errors"])
+        rejected_draft = letter
         avoid_notes.extend(last_errors)
         # Warnings never block â€” only hard errors trigger a retry
         log.debug(

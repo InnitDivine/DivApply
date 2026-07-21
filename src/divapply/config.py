@@ -6,6 +6,7 @@ import os
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 # User data directory - all user-specific files live here.
 #
@@ -929,6 +930,32 @@ def load_sites_config() -> dict:
     data = data if isinstance(data, dict) else {}
     _YAML_CACHE[cache_key] = (stat.st_mtime_ns, stat.st_size, data)
     return data
+
+
+def configured_official_source_name(url: str) -> str | None:
+    """Return the configured official source sharing this exact HTTPS origin."""
+    target = urlparse(str(url or ""))
+    if target.scheme.casefold() != "https" or not target.hostname:
+        return None
+    cfg = load_sites_config()
+    default_verification = str(cfg.get("default_source_verification") or "unknown").strip().casefold()
+    sites = cfg.get("sites")
+    if not isinstance(sites, list):
+        return None
+    for item in sites:
+        if not isinstance(item, dict):
+            continue
+        verification = str(item.get("source_verification") or default_verification).strip().casefold()
+        source = urlparse(str(item.get("url") or ""))
+        if (
+            verification == "official"
+            and source.scheme.casefold() == "https"
+            and source.hostname
+            and source.hostname.casefold() == target.hostname.casefold()
+            and (source.port or 443) == (target.port or 443)
+        ):
+            return str(item.get("name") or target.hostname).strip() or target.hostname
+    return None
 
 
 def load_credentials(path: Path | None = None) -> dict:

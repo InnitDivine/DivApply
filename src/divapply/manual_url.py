@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import json
+import re
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -13,6 +14,21 @@ from divapply.security import UnsafeUrlError, validate_external_url, validate_na
 
 
 MAX_MANUAL_REDIRECTS = 5
+
+_EMPLOYMENT_TYPE_ALIASES = {
+    "fulltime": "full_time",
+    "full_time": "full_time",
+    "parttime": "part_time",
+    "part_time": "part_time",
+    "perdiem": "per_diem",
+    "per_diem": "per_diem",
+    "contractor": "contract",
+    "contract": "contract",
+    "temporary": "temporary",
+    "intern": "internship",
+    "internship": "internship",
+    "volunteer": "volunteer",
+}
 
 
 def _fetch_job_page(client: httpx.Client, url: str, *, headers: dict[str, str]) -> httpx.Response:
@@ -86,6 +102,16 @@ def job_location_text(value: object) -> str:
     return "; ".join(parts)
 
 
+def employment_type_text(value: object) -> str:
+    """Normalize schema.org employmentType scalar/list values for scoring."""
+    values = value if isinstance(value, list) else [value]
+    for item in values:
+        token = re.sub(r"[^a-z0-9]+", "_", str(item or "").strip().casefold()).strip("_")
+        if token:
+            return _EMPLOYMENT_TYPE_ALIASES.get(token, token)
+    return ""
+
+
 def clean_job_description(text: str) -> str:
     """Convert HTML-ish job description text into readable plain text."""
     if not text:
@@ -135,7 +161,7 @@ def extract_job_posting_schema(soup: BeautifulSoup) -> dict[str, str]:
             if location:
                 result["location"] = location
             if node.get("employmentType"):
-                result["employment_type"] = str(node["employmentType"])
+                result["employment_type"] = employment_type_text(node["employmentType"])
             if node.get("datePosted"):
                 result["date_posted"] = str(node["datePosted"])
             if node.get("validThrough"):
@@ -258,5 +284,7 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
         "site": host,
         "location": schema_job.get("location", ""),
         "description": description,
+        "employment_type": schema_job.get("employment_type", ""),
+        "job_posting_schema": bool(schema_job),
         "inactive": inactive,
     }

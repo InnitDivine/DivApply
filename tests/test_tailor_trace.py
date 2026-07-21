@@ -160,6 +160,7 @@ def test_tailor_prompt_requires_target_positioning_without_assumed_role_or_metri
     assert "Use a metric only when the source resume or verified profile supplies it" in prompt
     assert "Do NOT claim phone, email, or chat support experience" in prompt
     assert "Do NOT relabel residents, members, visitors" in prompt
+    assert "anchor hands-on IT claims to the lab, project, or coursework" in prompt
     assert "CORE QUALIFICATIONS" in prompt
     assert "do not force operating-system/network/cloud categories" in prompt
     assert "Provisioned and administer" in prompt

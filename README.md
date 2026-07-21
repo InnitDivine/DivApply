@@ -19,7 +19,7 @@ DivApply works from your profile, resume, search preferences, and optional cours
 - Full-posting enrichment and canonical application links.
 - Hybrid keyword, local-similarity, and optional LLM scoring.
 - Required-versus-preferred qualification handling.
-- Factual, job-specific resumes and cover letters.
+- Factual, job-specific resumes and cover letters with fail-closed ATS text validation.
 - Local dashboard, lifecycle tracking, analytics, and safe exports.
 - Hidden coursework context without automatic transcript disclosure.
 - Confirmation-gated browser assistance with dedicated worker profiles.
@@ -139,6 +139,7 @@ Run selected stages or inspect one posting:
 divapply run discover enrich
 divapply run score tailor cover pdf
 divapply add-url JOB_URL
+divapply add-url JOB_URL --prepare --min-score 5
 divapply explain JOB_URL
 divapply rescore
 ```
@@ -193,6 +194,8 @@ divapply explain JOB_URL
 ```
 
 Treat `profile.json` and your master resume as factual sources. Imported structured education fields are canonical for their academic values, and coursework may provide additional academic context. Generated documents may rephrase or prioritize supported facts, but must not turn coursework, labs, projects, or in-progress education into paid experience or earned credentials.
+
+Resume PDFs use a one-column layout and are checked after rendering for selectable text, source-token coverage, and standard section order. A PDF that fails those machine-readability checks is not saved or offered for upload.
 
 Validation modes are available when generating documents:
 

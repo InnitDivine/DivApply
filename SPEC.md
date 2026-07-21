@@ -69,6 +69,8 @@
 - I33: structured score policy carries `preferred_schedule`, `require_part_time`, optional `max_hours_per_week`, `require_benefits`, + `application_mode`; posting-derived evidence cannot override config.
 - I34: each discovered job persists `market_label`, `search_query`, `application_mode`, normalized schedule/hours, + `source_verification`; unresolved aggregators stay non-actionable.
 - I35: release cleanup helper validates containment + every link/reparse boundary before recursive mutation.
+- I36: configured official Phenom source → deterministic embedded-DDO search adapter; exact live `JobPosting` URL may enter official refresh path.
+- I37: `validate_ats_pdf(source_text,pdf_path,required_sections) -> report`; missing/scrambled text layer → raise + delete output.
 
 ## §R
 
@@ -196,6 +198,11 @@
 - V94: fresh-install audit invokes locked developer `pip-audit` by explicit project-venv path against smoke site-packages; runtime extra need not/shall not supply audit tooling.
 - V95: 0.5.2 changed-method complexity check has no CodeFactor `Complex Method`/`Very Complex Method` finding; helper extraction preserves public behavior + V74-V94 gates.
 - V96: bounded integer config accepts only non-bool integers/base-10 integer strings within range; Linux + Windows mypy gates pass.
+- V97: ∀ configured official Phenom search/detail → embedded live job state parsed without LLM/browser; exact-origin job URLs validated; Apply-enabled refresh clears only synthetic expired failure state on unapplied reused requisition.
+- V98: ∀ generated resume PDF → selectable text layer preserves ≥97% normalized source tokens + section order; one-column standard-heading DOM; failed ATS validation → ⊥ persist/upload.
+- V99: schema.org `employmentType` scalar|array → canonical schedule token (`full_time|part_time|...`); serialized container text ∉ DB/scoring evidence.
+- V100: verified professional IT experience=0 → resume/cover hands-on IT claim has preceding same-sentence lab/project/coursework anchor; no sentence attaches/bridges it to municipal/county/front-desk paid settings absent exact source evidence.
+- V101: persisted cover has exact target title once + exactly 3 nonempty body paragraphs between salutation/sign-off.
 
 ## §T
 
@@ -257,6 +264,7 @@
 |T54|add deterministic official ATS adapters|Greenhouse API extraction/live refresh + URL/provenance regressions; V73,V78,V86,V87|x|
 |T55|bind packet generation to candidate evidence + exact tailored artifact|job-only skill rejection, artifact-read, strict packet regeneration/visual QA; V38,V40,V85,V90|x|
 |T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|x|
+|T57|make Phenom discovery + generated PDFs deterministic/ATS-readable/truthful|Phenom current/reopen tests + schedule normalization + ATS extraction/order/render inspection + evidence-context/title/structure regressions + full gates; V73,V78,V86,V87,V97-V101,I36,I37|x|
 
 ## §B
 
@@ -455,3 +463,9 @@
 |B191|2 live-handle V93 regressions accept oversized replacement ZIP/TAR|opened descriptor metadata is unchecked|V93|T52|shared descriptor verifier before raw preflight; rerun release gates|
 |B192|PR #11 CodeFactor fails with 12 complex + 1 very-complex changed method|policy/scoring/discovery/release logic accumulated multi-branch orchestration|V95|T56|extract cohesive helpers; preserve tests/security gates; rerun CodeFactor|
 |B193|release preflight stops on `_bounded_integer(object)` mypy error|helper annotation exposed unchecked numeric coercion + float acceptance|V96|T56|fail-closed scalar narrowing + named regression; rerun both mypy gates|
+|B194|live reused Sutter requisition absent/stale-inactive|generic dynamic-site extraction lacks Phenom DDO adapter; official refresh preserves synthetic expired apply failure|V97|T57|deterministic adapter + reopen regression + live refresh|
+|B195|PDF may look polished but ATS parse unverified|two-column/flex layout + no post-render text/order gate|V98|T57|one-column template + extraction validator + visual QA|
+|B196|live official full-time row stores `['full_time']`|schema `employmentType` list cast to container string|V99|T57|scalar/list canonicalizer + live re-ingest|
+|B197|tailored IT resume says troubleshooting occurred in municipal/county settings|resume validator checks vocabulary but not paid-setting attribution when professional IT experience is zero|V90,V100|T57|resume context-boundary + cover-title regressions; regenerate/visual QA|
+|B198|regenerated cover implies paid Windows support, bridges unrelated settings, + collapses closing paragraph|anchor order/pronoun bridge/body structure unchecked|V100,V101|T57|zero-IT anchor/bridge + 3-body-paragraph gates; regenerate/visual QA|
+|B199|full mypy rejects ATS coverage formatting|validator report typed as `dict[str,object]` instead of numeric field contract|V14,V98|T57|typed ATS report + rerun mypy/full gates|
