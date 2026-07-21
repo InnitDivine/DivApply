@@ -216,6 +216,7 @@
 - V110: ambiguous tool name triggers fabrication guard only with technical context; season/date phrase `Spring 2026` ≠ Spring framework claim.
 - V111: GovernmentJobs agency landing placeholder ≠ authoritative zero; validated same-origin agency fragment fetched + current cards deduped before availability decision.
 - V112: structured job-description HTML/entities decoded to readable plain text before persistence/scoring; qualification wording retained, markup discarded.
+- V113: bounded scoring context retains requirement bodies under Experience/Training/Education headings; linked qualification preamble alone ≠ sufficient evidence.
 
 ## §T
 
@@ -281,6 +282,7 @@
 |T58|repair official-government availability + market-specific discovery|GovernmentJobs/JobAps/CalCareers fixture/live canaries + archive/market/title/detail/document regressions + local DB repair; V32,V38,V64,V73,V78,V86,V101-V110,I38,I39|x|
 |T59|repair async GovernmentJobs agency discovery|`test_v111_governmentjobs_agency_board_fetches_fragment` + false-zero/dedup regressions + Roseville live canary; V102,V105,V111,I39|x|
 |T60|decode structured job descriptions before scoring|encoded JSON-LD qualification regression + target rescore; V38,V73,V112|x|
+|T61|preserve government qualification bodies in score context|linked-preamble + Experience/Training truncation regression + target rescore; V38,V73,V113|x|
 
 ## §B
 
@@ -501,3 +503,4 @@
 |B213|Roseville board shows 10 live jobs after async load; DivApply returns 0|agency landing placeholder treated authoritative; official fragment never fetched|V111|T59|fragment fetch + card dedup regression + live rediscovery|
 |B214|version parity gate sees lock `0.5.5`|unqualified `uv` absent from PATH; lock update never ran|V14,V49|T59|invoke `.venv/Scripts/uv.exe`; rerun parity gate|
 |B215|Database Analyst score says qualifications unavailable while stored text contains `&lt;...&gt;` degree rules|JSON-LD cleaner parses before decoding HTML entities|V112|T60|decode entities, strip markup, regression + rescore|
+|B216|clean Database Analyst text has bachelor rule; score context retains only `click HERE` preamble|requirement window stops at the next heading but does not sample Experience/Training bodies|V113|T61|recognize bounded requirement subheadings + rescore|

@@ -304,6 +304,30 @@ def test_format_job_context_preserves_middle_minimum_qualifications() -> None:
     assert "Applications close Friday" in text
 
 
+def test_v113_job_context_preserves_experience_and_training_requirement_bodies() -> None:
+    description = (
+        "Role overview and database duties.\n"
+        + ("opening detail " * 80)
+        + "\nFor a complete list of minimum qualifications, please click HERE.\n"
+        + "Experience and Training\n"
+        + "Experience:\nNo professional experience is required.\nAND\n"
+        + "Training:\nA Bachelor’s degree from an accredited college or university, preferably with "
+        + "major course work in computer science, information systems, GIS or a related field.\n"
+        + "License or Certificate:\nPossession of a valid California driver’s license by date of appointment.\n"
+        + ("later detail " * 80)
+        + "\nApplications close Sunday."
+    )
+
+    text = format_job_context(
+        {"title": "Database Analyst I", "company": "Example City", "full_description": description},
+        description_limit=1100,
+    )
+
+    assert "No professional experience is required." in text
+    assert "A Bachelor’s degree" in text
+    assert "valid California driver’s license" in text
+
+
 def test_composite_score_returns_breakdown_json() -> None:
     result = composite_score(
         job_description="Required: Python, SQL, Kubernetes.",
