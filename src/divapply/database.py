@@ -26,7 +26,8 @@ MEANINGFUL_FULL_DESCRIPTION_SQL = (
     f"full_description IS NOT NULL AND length(trim(full_description)) >= {MIN_FULL_DESCRIPTION_CHARS}"
 )
 ACTIONABLE_JOB_SQL = (
-    "application_mode = 'active' AND source_verification = 'official'"
+    "application_mode = 'active' AND source_verification = 'official' "
+    "AND COALESCE(availability_state, 'unknown') != 'closed'"
 )
 
 # Thread-local connection storage - each thread gets its own connection
@@ -222,7 +223,11 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
             apply_duration_ms     INTEGER,
             apply_task_id         TEXT,
             verification_confidence TEXT,
-            archived_at           TEXT
+            archived_at           TEXT,
+            archive_reason        TEXT,
+            availability_state    TEXT,
+            availability_checked_at TEXT,
+            last_seen_at          TEXT
         )
     """)
     conn.commit()
@@ -311,6 +316,10 @@ _ALL_COLUMNS: dict[str, str] = {
     "apply_task_id": "TEXT",
     "verification_confidence": "TEXT",
     "archived_at": "TEXT",
+    "archive_reason": "TEXT",
+    "availability_state": "TEXT",
+    "availability_checked_at": "TEXT",
+    "last_seen_at": "TEXT",
 }
 
 
@@ -366,6 +375,10 @@ def ensure_job_indexes(conn: sqlite3.Connection | None = None) -> None:
         "CREATE INDEX IF NOT EXISTS idx_jobs_apply_ready ON jobs(tailored_resume_path, applied_at, application_url)"
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_jobs_archived_at ON jobs(archived_at)")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_jobs_availability "
+        "ON jobs(availability_state, availability_checked_at)"
+    )
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_jobs_dashboard_score "
         "ON jobs(fit_score DESC, site, title) WHERE archived_at IS NULL"
@@ -1207,8 +1220,15 @@ def get_stats(conn: sqlite3.Connection | None = None) -> dict:
     return stats
 
 
-def archive_job(url: str, conn: sqlite3.Connection | None = None) -> bool:
+def archive_job(
+    url: str,
+    conn: sqlite3.Connection | None = None,
+    *,
+    reason: str = "user",
+) -> bool:
     """Archive one job by URL without deleting its application history."""
+    if reason not in {"user", "policy", "source_closed"}:
+        raise ValueError("archive reason must be user, policy, or source_closed")
     if conn is None:
         conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
@@ -1228,11 +1248,12 @@ def archive_job(url: str, conn: sqlite3.Connection | None = None) -> bool:
         cursor = conn.execute(
             """
             UPDATE jobs
-            SET archived_at = ?
+            SET archived_at = ?,
+                archive_reason = ?
             WHERE url = ?
               AND archived_at IS NULL
             """,
-            (now, url),
+            (now, reason, url),
         )
     from divapply.archive import delete_job_artifacts
 

@@ -8,7 +8,7 @@
 - G4: bind every generated application artifact to one stable job identity; ⊥ wrong-job upload/delete.
 - G5: preserve recoverability: transient provider failure remains retryable; backup captures active committed DB state.
 - G6: bound network retry cost; make Windows/release/container paths reproducible + least privilege.
-- G7: current market → part-time career-building IT/health-data/public-sector systems; destination markets → well-paid benefited full-time IT/health-tech/public-sector systems.
+- G7: current market → part-time work incl IT/office/customer-service/hospitality/retail/warehouse; fast-food/quick-service excluded. Destination markets → well-paid benefited full-time IT/health-tech/public-sector/office pathways.
 
 ## §C
 
@@ -29,7 +29,7 @@
 - C15: search priority + location scope explicit/configurable; absent new keys preserves old behavior.
 - C16: current transcript rows all eligible for bounded scoring context; selection deterministic + recent/relevant-first.
 - C17: résumé/tailor language may position target fit; ⊥ imply prior target-role employment or invent metrics.
-- C18: food/retail/hospitality/warehouse/sales/generic customer service ∉ target/fallback; ⊥ active recommendation.
+- C18: current-market full-time + fast-food/quick-service ⊥ active; destination part-time/service-industry ⊥ active; destination office support allowed.
 - C19: in-progress Public Health B.S. + IT training inform target fit; ⊥ earned/completed wording before conferral.
 
 ## §I
@@ -71,6 +71,8 @@
 - I35: release cleanup helper validates containment + every link/reparse boundary before recursive mutation.
 - I36: configured official Phenom source → deterministic embedded-DDO search adapter; exact live `JobPosting` URL may enter official refresh path.
 - I37: `validate_ats_pdf(source_text,pdf_path,required_sections) -> report`; missing/scrambled text layer → raise + delete output.
+- I38: official discovery row → `availability_state`, `availability_checked_at`, `last_seen_at`; archive lifecycle → `archive_reason=user|policy|legacy|source_closed`.
+- I39: official-government adapters → GovernmentJobs/SchoolJobs rendered listing parser; JobAps table parser; CalCareers bounded postback parser; no selector-cache/LLM trust decision.
 
 ## §R
 
@@ -203,6 +205,15 @@
 - V99: schema.org `employmentType` scalar|array → canonical schedule token (`full_time|part_time|...`); serialized container text ∉ DB/scoring evidence.
 - V100: verified professional IT experience=0 → resume/cover hands-on IT claim has preceding same-sentence lab/project/coursework anchor; no sentence attaches/bridges it to municipal/county/front-desk paid settings absent exact source evidence.
 - V101: persisted cover has exact target title once + exactly 3 nonempty body paragraphs between salutation/sign-off.
+- V102: official `availability_state=open` requires exact current listing + valid same-origin job/apply URL; generic landing/static/class-spec page cannot assert open.
+- V103: `archive_reason=user` remains archived on rediscovery; exact verified-open refresh may reopen only `legacy|source_closed`; closed/unknown/unverified rows cannot reopen.
+- V104: result concrete location re-resolves market policy; query target label cannot override conflicting result location or leak schedule/title policy across markets.
+- V105: supported government boards bypass stale selector cache + LLM; bounded deterministic parser returns current jobs or authoritative zero, else fails closed.
+- V106: current-market title policy permits configured non-fast-food part-time fallback; destination fallback/service titles cannot authorize active destination rows.
+- V107: configured title include/exclude term → token/phrase-boundary match; `office` ≠ `officer`; `IT` ≠ substring inside another word.
+- V108: enrichment stage never assigns fit score/irrelevance or skips a discovered row by hard-coded candidate title; discovery policy + scoring own relevance.
+- V109: supported official-government detail URL → deterministic 200+ character job evidence + exact validated official listing/application entry; no LLM or arbitrary content-link promotion.
+- V110: ambiguous tool name triggers fabrication guard only with technical context; season/date phrase `Spring 2026` ≠ Spring framework claim.
 
 ## §T
 
@@ -265,6 +276,7 @@
 |T55|bind packet generation to candidate evidence + exact tailored artifact|job-only skill rejection, artifact-read, strict packet regeneration/visual QA; V38,V40,V85,V90|x|
 |T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|x|
 |T57|make Phenom discovery + generated PDFs deterministic/ATS-readable/truthful|Phenom current/reopen tests + schedule normalization + ATS extraction/order/render inspection + evidence-context/title/structure regressions + full gates; V73,V78,V86,V87,V97-V101,I36,I37|x|
+|T58|repair official-government availability + market-specific discovery|GovernmentJobs/JobAps/CalCareers fixture/live canaries + archive/market/title/detail/document regressions + local DB repair; V32,V38,V64,V73,V78,V86,V101-V110,I38,I39|x|
 
 ## §B
 
@@ -469,3 +481,16 @@
 |B197|tailored IT resume says troubleshooting occurred in municipal/county settings|resume validator checks vocabulary but not paid-setting attribution when professional IT experience is zero|V90,V100|T57|resume context-boundary + cover-title regressions; regenerate/visual QA|
 |B198|regenerated cover implies paid Windows support, bridges unrelated settings, + collapses closing paragraph|anchor order/pronoun bridge/body structure unchecked|V100,V101|T57|zero-IT anchor/bridge + 3-body-paragraph gates; regenerate/visual QA|
 |B199|full mypy rejects ATS coverage formatting|validator report typed as `dict[str,object]` instead of numeric field contract|V14,V98|T57|typed ATS report + rerun mypy/full gates|
+|B200|live government jobs absent while official boards list them|generic cached CSS plans stale; CalCareers static target never submits search|V102,V105|T58|deterministic board adapters + live canaries|
+|B201|verified-open legacy row remains hidden + cannot produce packet|archive stores timestamp only; official upsert never distinguishes dismissal from stale archive|V103|T58|typed archive reason + verified reopen regression|
+|B202|Logan fallback omitted while query label can misclassify result market|global title filter + target-first market resolution cross policy boundaries|V104,V106|T58|result-location market overlay + market-specific title policy|
+|B203|focused gate cannot import pytest|plain `python` resolves clean runtime venv intentionally lacking dev tools|V94|T58|invoke locked project `.venv` explicitly|
+|B204|migration regression expects schema version 5|fixture hardcodes prior latest version after v6 addition|V51|T58|advance exact expectation + rerun migration gate|
+|B205|live government adapter raises missing `url` argument|new parser tests used variadic fetch mocks that hid hardened fetcher client/headers contract|V102,V105|T58|real-signature mocks + bounded client calls + live rerun|
+|B206|private search config rejects county match patterns|CalCareers emits county-only locations while strict policy requires state-qualified tokens|V31,V104|T58|normalize CalCareers county to `County, CA`; qualify config patterns|
+|B207|correctional/probation officer rows pass destination office allowlist|include-title filter uses raw substring containment|V107|T58|boundary matcher + policy archive regression + local cleanup|
+|B208|allowed Logan dispatcher/custodian marked score 1 before enrichment|detail stage embeds candidate-specific title rejection and mutates score state|V108|T58|remove title prefilter + stage-ownership regression + reset affected rows|
+|B209|CalCareers rows cannot score; one apply URL becomes unrelated SafeLinks PDF|generic detail cascade lacks official DOM adapter and promotes arbitrary page links|V109|T58|official detail parser + exact application-entry regression + bounded DB repair|
+|B210|valid score-5 government résumé has no cover after four drafts|model repeatedly shortens long parenthetical target title; exact-title gate has no deterministic repair|V101|T58|idempotent exact-title normalization + failed-stage rerun|
+|B211|title-repaired cover still exhausts on unsupported `spring`|fabrication watchlist treats academic season/date as Spring software framework|V38,V110|T58|technical-context matcher + season/framework regression + failed-stage rerun|
+|B212|full gate has 9 `no such column` fixture failures|hand-built unit schemas omit v6 availability/archive fields and bypass migrations|V51,V103|T58|advance minimal fixture schemas; keep production gates intact|

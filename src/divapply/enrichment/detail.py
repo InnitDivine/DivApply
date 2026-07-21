@@ -17,7 +17,7 @@ import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
@@ -27,89 +27,6 @@ from divapply.llm import get_client
 from divapply.security import sanitize_external_url, validate_external_url, validate_navigation_url
 
 log = logging.getLogger(__name__)
-
-# â”€â”€ Title-based pre-filter â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# Jobs whose titles match these patterns are clearly irrelevant and should
-# be skipped before wasting LLM tokens or scrape time on them.
-# Case-insensitive substring matching.
-_TITLE_REJECT_KEYWORDS = [
-    # Public safety / sworn
-    "police", "firefighter", "fire fighter", "fire chief", "fire captain",
-    "fire engineer", "fire marshal", "dispatcher", "911",
-    "correctional officer", "probation officer", "deputy sheriff",
-    "detention", "sworn",
-    # Engineering (civil, structural, electrical, etc.) â€” not IT
-    "civil engineer", "structural engineer", "electrical engineer",
-    "mechanical engineer", "traffic engineer", "city engineer",
-    "water engineer", "environmental engineer", "transportation engineer",
-    # Trades / heavy labor
-    "plumber", "electrician", "hvac", "welder", "carpenter",
-    "heavy equipment operator", "equipment mechanic",
-    "lineworker", "line worker",
-    # Medical / clinical
-    "registered nurse", "licensed vocational nurse", "lvn", "rn ",
-    "physician", "dentist", "pharmacist", "paramedic", "emt",
-    "medical doctor", "surgeon", "psychiatrist", "psychologist",
-    "veterinarian", "clinical",
-    # Legal
-    "attorney", "judge", "magistrate", "court administrator",
-    "public defender", "district attorney", "paralegal",
-    # Senior / director / executive (user says not qualified)
-    "senior ", "sr ", "director", "chief ", "superintendent",
-    "deputy director", "assistant director", "division manager",
-    "principal ", "lead ",
-    # Specialized certifications user doesn't have
-    "licensed architect", "surveyor", "appraiser", "real estate",
-    "building inspector", "plans examiner", "code enforcement",
-    # Trades / parks / maintenance / food / childcare
-    "camp chef", "camp caretaker", "cook ", "custodian",
-    "aquatics", "lifeguard", "swim ", "pool ",
-    "animal control", "animal care", "animal services",
-    "horticulture", "arborist", "tree trimmer",
-    "soccer official", "sports official", "referee",
-    "fitness instructor", "recreation leader", "child care",
-    "ballfield", "gym attendant",
-    # Finance / accounting (specialized)
-    "accountant", "auditor", "treasurer",
-    # Seasonal / temporary labor
-    "seasonal helper", "seasonal worker", "seasonal ",
-    # Other clearly irrelevant
-    "librarian", "museum ", "interpretive",
-    "landscape architect", "golf course",
-    # Scam / data harvesting job titles
-    "brand ambassador", "mystery shopper", "secret shopper",
-    "product tester", "amazon reviewer", "social media evaluator",
-    "chat agent", "chat support agent", "virtual assistant" ,
-    "data collector", "survey taker", "online rater",
-    "work from home assembl", "assembly work",
-    "make money", "earn money", "earn from home",
-    "envelope stuffer", "envelope stuffing",
-]
-
-# Titles containing these indicate IT/admin/clerical roles we DO want
-_TITLE_ALLOW_KEYWORDS = [
-    "it ", "information technology", "technician", "tech support",
-    "help desk", "helpdesk", "desktop support", "support specialist",
-    "system", "network", "database", "analyst", "clerk",
-    "administrative", "admin ", "office ", "customer service",
-    "program ", "coordinator", "specialist", "assistant",
-    "data ", "computer", "cyber", "security",
-    "telecommunications", "telecom",
-]
-
-
-def _title_is_irrelevant(title: str) -> bool:
-    """Return True if the job title is clearly irrelevant for the candidate."""
-    t = title.lower().strip()
-    # If it matches an allow keyword, never reject it
-    for allow in _TITLE_ALLOW_KEYWORDS:
-        if allow in t:
-            return False
-    # If it matches a reject keyword, skip it
-    for reject in _TITLE_REJECT_KEYWORDS:
-        if reject in t:
-            return True
-    return False
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
@@ -424,6 +341,56 @@ DESCRIPTION_SELECTORS = [
     '.job-posting-content',
 ]
 
+_GOVERNMENT_DETAIL_HOSTS = {
+    "governmentjobs.com",
+    "www.governmentjobs.com",
+    "schooljobs.com",
+    "www.schooljobs.com",
+}
+_CALCAREERS_DETAIL_HOSTS = {"calcareers.ca.gov", "www.calcareers.ca.gov"}
+_CALCAREERS_DETAIL_SECTIONS = (
+    "#pnlPositionDetails",
+    "#pnlJobDescription",
+    "#pnlWorkingConditions",
+    "#pnlSpecialRequirements",
+    "#pnlApplicationInstructions",
+    "#pnlDesirableQualifications",
+)
+
+
+def extract_official_government_detail(page_html: str, page_url: str) -> dict[str, str] | None:
+    """Extract supported government detail pages without LLM or link guessing."""
+    safe_url = validate_external_url(page_url, field="official government job URL")
+    parsed = urlparse(safe_url)
+    host = (parsed.hostname or "").casefold()
+    path = parsed.path.casefold()
+    soup = BeautifulSoup(page_html, "html.parser")
+
+    if host in _GOVERNMENT_DETAIL_HOSTS and re.search(r"/jobs/\d+(?:-\d+)?(?:/|$)", path):
+        node = soup.select_one(".job-details-content")
+        description = clean_description(node.get_text("\n", strip=True)) if node else ""
+    elif host in _CALCAREERS_DETAIL_HOSTS and path == "/calhrpublic/jobs/jobposting.aspx":
+        query = parse_qs(parsed.query)
+        control_id = next(
+            (values[0] for key, values in query.items() if key.casefold() == "jobcontrolid" and values),
+            "",
+        )
+        if re.fullmatch(r"\d{1,12}", control_id) is None:
+            return None
+        sections: list[str] = []
+        for selector in _CALCAREERS_DETAIL_SECTIONS:
+            node = soup.select_one(selector)
+            text = clean_description(node.get_text("\n", strip=True)) if node else ""
+            if text and text not in sections:
+                sections.append(text)
+        description = "\n\n".join(sections)
+    else:
+        return None
+
+    if len(description) < 200:
+        return None
+    return {"full_description": description, "application_url": safe_url}
+
 
 def extract_apply_url_deterministic(page) -> str | None:
     """Try known CSS patterns for apply buttons/links."""
@@ -697,6 +664,17 @@ def scrape_detail_page(page, url: str) -> dict:
         result["elapsed"] = time.time() - t0
         return result
 
+    try:
+        official_detail = extract_official_government_detail(page.content(), page.url)
+    except Exception:
+        official_detail = None
+    if official_detail is not None:
+        result.update(official_detail)
+        result["tier_used"] = 2
+        result["status"] = "ok"
+        result["elapsed"] = time.time() - t0
+        return result
+
     intel = collect_detail_intelligence(page)
 
     # Tier 1: JSON-LD
@@ -805,7 +783,7 @@ def scrape_site_batch(
                 if status in ("ok", "partial"):
                     stats[status] += 1
                     db_conn.execute(
-                        "UPDATE jobs SET full_description = ?, application_url = ?, "
+                        "UPDATE jobs SET full_description = ?, application_url = COALESCE(?, application_url), "
                         "detail_scraped_at = ?, detail_error = NULL "
                         "WHERE url = ? AND archived_at IS NULL",
                         (result.get("full_description"), result.get("application_url"), now, url),
@@ -854,31 +832,6 @@ def _run_detail_scraper(
 
     if not rows:
         log.info("No pending jobs to scrape.")
-        return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
-
-    # â”€â”€ Title pre-filter: skip obviously irrelevant jobs â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    filtered_rows = []
-    skipped = 0
-    for row in rows:
-        url, title, site = row[0], row[1], row[2]
-        if _title_is_irrelevant(title):
-            # Mark as scraped with score 1 so it never comes back
-            conn.execute(
-                "UPDATE jobs SET detail_scraped_at = ?, fit_score = 1, "
-                "score_reasoning = 'Title pre-filtered as irrelevant' "
-                "WHERE url = ? AND archived_at IS NULL",
-                (datetime.now(timezone.utc).isoformat(), url),
-            )
-            skipped += 1
-        else:
-            filtered_rows.append(row)
-    if skipped:
-        conn.commit()
-        log.info("Title pre-filter: skipped %d irrelevant jobs", skipped)
-    rows = filtered_rows
-
-    if not rows:
-        log.info("No pending jobs after title filter.")
         return {"processed": 0, "ok": 0, "partial": 0, "error": 0}
 
     site_jobs: dict[str, list[tuple]] = {}

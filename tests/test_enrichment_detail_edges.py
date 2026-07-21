@@ -148,10 +148,69 @@ def test_extract_description_deterministic_skips_hidden_inactive_block() -> None
     assert "This job is inactive" not in result
 
 
-def test_title_prefilter_allows_it_senior_specialist_but_rejects_public_safety() -> None:
-    assert detail._title_is_irrelevant("Senior IT Support Specialist") is False
-    assert detail._title_is_irrelevant("Police Records Clerk") is False
-    assert detail._title_is_irrelevant("Police Officer") is True
+def test_v108_enrichment_does_not_pre_score_allowed_title(tmp_path, monkeypatch) -> None:
+    conn = init_db(tmp_path / "jobs.db")
+    url = "https://www.governmentjobs.com/jobs/52290-1/part-time-dispatcher"
+    conn.execute(
+        "INSERT INTO jobs (url, title, site) VALUES (?, ?, ?)",
+        (url, "Part-Time Dispatcher", "GovernmentJobs.com"),
+    )
+    conn.commit()
+    captured: list[tuple] = []
+
+    def fake_batch(_conn, _site, jobs, **_kwargs):
+        captured.extend(jobs)
+        return {"processed": 1, "ok": 1, "partial": 0, "error": 0, "tiers": {1: 1, 2: 0, 3: 0}}
+
+    monkeypatch.setattr(detail, "scrape_site_batch", fake_batch)
+
+    detail._run_detail_scraper(conn, sites=["GovernmentJobs.com"])
+
+    assert captured == [(url, "Part-Time Dispatcher")]
+    row = conn.execute(
+        "SELECT fit_score, score_reasoning, detail_scraped_at FROM jobs WHERE url = ?",
+        (url,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None)
+
+
+def test_v109_official_government_detail_parsers_keep_exact_application_entry() -> None:
+    government_url = "https://www.governmentjobs.com/jobs/52290-1/part-time-dispatcher"
+    government_html = """
+    <div class="job-details-content">
+      <h2>Description</h2>
+      <p>A successful candidate receives and prioritizes emergency and non-emergency calls,
+      maintains accurate unit status, operates dispatch systems, and communicates clearly.</p>
+      <h2>Qualifications</h2>
+      <p>Applicants need a high school diploma, accurate data entry, calm judgment, and
+      availability for assigned part-time shifts in Logan.</p>
+    </div>
+    """
+    government = detail.extract_official_government_detail(government_html, government_url)
+
+    assert government is not None
+    assert len(government["full_description"]) >= 200
+    assert government["application_url"] == government_url
+
+    calcareers_url = (
+        "https://calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=523814"
+    )
+    calcareers_html = """
+    <div id="pnlJobDescription"><h2>Job Description and Duties</h2><p>
+      Support endpoints, accounts, mobile devices, ticket queues, documentation, and customers.
+      Diagnose hardware and software issues and coordinate escalations with technical teams.
+    </p></div>
+    <div id="pnlSpecialRequirements"><h2>Special Requirements</h2><p>
+      Submit a complete application demonstrating communication, troubleshooting, and support
+      experience. Follow all stated filing instructions and document requirements.
+    </p></div>
+    <a href="https://example.invalid/unrelated-brochure.pdf">Apply today brochure</a>
+    """
+    calcareers = detail.extract_official_government_detail(calcareers_html, calcareers_url)
+
+    assert calcareers is not None
+    assert len(calcareers["full_description"]) >= 200
+    assert calcareers["application_url"] == calcareers_url
 
 
 def test_scrape_site_batch_commits_before_inter_job_delay(tmp_path, monkeypatch) -> None:

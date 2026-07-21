@@ -419,6 +419,19 @@ def _term_in_text(term: str, text: str) -> bool:
     return bool(re.search(r"(?<![\w+#.])" + re.escape(term) + r"(?![\w+#.])", text))
 
 
+def _tool_term_in_text(term: str, text: str) -> bool:
+    """Require technical context for tool names that are ordinary words."""
+    if term == "spring":
+        return bool(
+            re.search(
+                r"\b(?:spring\s+(?:boot|framework|mvc|security|cloud|data|webflux|batch|integration|application)|"
+                r"(?:java|kotlin)\s+spring)\b",
+                text,
+            )
+        )
+    return _term_in_text(term, text)
+
+
 def _add_cover_letter_tool_findings(
     text_lower: str,
     profile: dict | None,
@@ -439,7 +452,7 @@ def _add_cover_letter_tool_findings(
         for term in COVER_LETTER_TOOL_TERMS:
             if term in allowed:
                 continue
-            if _term_in_text(term, text_lower) and not _term_in_text(term, evidence):
+            if _tool_term_in_text(term, text_lower) and not _tool_term_in_text(term, evidence):
                 errors.append(f"Unsupported tool or credential mentioned: '{term}'")
                 return
 
@@ -450,9 +463,9 @@ def _add_cover_letter_tool_findings(
         str(job.get(key) or "") for key in ("title", "company", "site", "location", "full_description", "description")
     ).lower()
     for term in COVER_LETTER_TOOL_TERMS:
-        if term in allowed or _term_in_text(term, evidence):
+        if term in allowed or _tool_term_in_text(term, evidence):
             continue
-        if _term_in_text(term, job_text) and _term_in_text(term, text_lower):
+        if _tool_term_in_text(term, job_text) and _tool_term_in_text(term, text_lower):
             errors.append(f"Job-only tool or credential claimed: '{term}'")
             return
 

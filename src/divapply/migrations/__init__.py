@@ -92,6 +92,22 @@ def _m0005_scoring_policy_v76(conn: sqlite3.Connection) -> None:
           AND COALESCE(apply_status, '') NOT IN ('applied', 'screening', 'interview', 'offer')
         """
     )
+
+
+def _m0006_job_availability_lifecycle(conn: sqlite3.Connection) -> None:
+    """Type pre-existing archives without guessing that the user dismissed them."""
+    _add_column(conn, "jobs", "archive_reason", "TEXT")
+    _add_column(conn, "jobs", "availability_state", "TEXT")
+    _add_column(conn, "jobs", "availability_checked_at", "TEXT")
+    _add_column(conn, "jobs", "last_seen_at", "TEXT")
+    conn.execute(
+        """
+        UPDATE jobs
+        SET archive_reason = 'legacy'
+        WHERE archived_at IS NOT NULL
+          AND COALESCE(archive_reason, '') = ''
+        """
+    )
     conn.execute(
         """
         UPDATE jobs
@@ -117,6 +133,7 @@ MIGRATIONS = (
     (3, "0003_hybrid_scoring_and_dedup", _m0003_hybrid_scoring_and_dedup),
     (4, "0004_retryable_scoring", _m0004_retryable_scoring),
     (5, "0005_scoring_policy_v76", _m0005_scoring_policy_v76),
+    (6, "0006_job_availability_lifecycle", _m0006_job_availability_lifecycle),
 )
 
 

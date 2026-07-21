@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from divapply.scoring.context import format_job_context
-from divapply.scoring.cover_letter import _build_cover_letter_prompt, _read_tailored_resume_text, _strip_preamble
+from divapply.scoring.cover_letter import (
+    _build_cover_letter_prompt,
+    _ensure_exact_target_title_once,
+    _read_tailored_resume_text,
+    _strip_preamble,
+)
 from divapply.scoring import cover_letter
 from divapply.scoring.validator import validate_cover_letter
 
@@ -96,6 +101,26 @@ def test_validate_cover_letter_blocks_job_only_tool_claim() -> None:
     assert any("salesforce" in error.lower() for error in report["errors"])
 
 
+def test_v110_cover_validator_disambiguates_spring_season_from_framework() -> None:
+    season = validate_cover_letter(
+        _valid_letter("My Spring 2026 coursework strengthened my Python reporting practice."),
+        mode="normal",
+        profile=_profile(),
+        resume_text="Python reporting coursework.",
+        job=_job(),
+    )
+    framework = validate_cover_letter(
+        _valid_letter("I built Spring Boot services for reporting workflows."),
+        mode="normal",
+        profile=_profile(),
+        resume_text="Python reporting coursework.",
+        job=_job(),
+    )
+
+    assert not any("'spring'" in error.lower() for error in season["errors"])
+    assert any("'spring'" in error.lower() for error in framework["errors"])
+
+
 def test_validate_cover_letter_blocks_private_credential_language() -> None:
     report = validate_cover_letter(
         _valid_letter("I used login tokens to automate Python reporting workflows."),
@@ -139,6 +164,29 @@ def test_cover_validator_requires_exact_target_title_once() -> None:
 
     assert any("exact target job title once" in error for error in missing["errors"])
     assert any("exact target job title once" in error for error in repeated["errors"])
+
+
+def test_v101_cover_title_repair_is_exact_once_and_idempotent() -> None:
+    job = _job() | {
+        "title": "Administrative Legal Clerk - Entry (Sheriff's Office - Corrections Division)"
+    }
+    missing = _valid_letter().replace("Reporting Analyst", "administrative clerk")
+    repaired = _ensure_exact_target_title_once(missing, job)
+    repeated = repaired.replace(
+        "Example Health needs",
+        f"{job['title']} work matters. Example Health needs",
+    )
+
+    assert repaired.casefold().count(job["title"].casefold()) == 1
+    assert _ensure_exact_target_title_once(repaired, job) == repaired
+    deduplicated = _ensure_exact_target_title_once(repeated, job)
+    assert deduplicated.casefold().count(job["title"].casefold()) == 1
+    assert validate_cover_letter(
+        deduplicated,
+        mode="normal",
+        profile=_profile(),
+        job=job,
+    )["errors"] == []
 
 
 def test_cover_validator_requires_three_body_paragraphs() -> None:

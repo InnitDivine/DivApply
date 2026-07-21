@@ -726,6 +726,19 @@ def _validate_market_policy_entry(
     for key in ("require_part_time", "require_benefits"):
         if key in policy and not isinstance(policy[key], bool):
             errors.append(f"{prefix}.{key} must be boolean")
+    for key in (
+        "include_titles",
+        "company_blacklist",
+        "required_keywords",
+        "excluded_keywords",
+        "customer_service_title_terms",
+        "trusted_local_sites",
+    ):
+        if key in policy and (
+            not isinstance(policy[key], list)
+            or any(not isinstance(item, str) for item in policy[key])
+        ):
+            errors.append(f"{prefix}.{key} must be a list of strings")
     application_mode = str(policy.get("application_mode") or "manual_review").strip().casefold()
     if application_mode not in {"active", "discovery_only", "manual_review"}:
         errors.append(f"{prefix}.application_mode is invalid")

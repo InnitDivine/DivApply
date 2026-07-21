@@ -553,7 +553,8 @@ def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
             last_attempted_at TEXT,
             archived_at TEXT,
             application_mode TEXT DEFAULT 'active',
-            source_verification TEXT DEFAULT 'official'
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
         )
     """)
     conn.execute("""
@@ -608,7 +609,8 @@ def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
             last_attempted_at TEXT,
             archived_at TEXT,
             application_mode TEXT DEFAULT 'active',
-            source_verification TEXT DEFAULT 'official'
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
         )
     """)
     conn.executemany("""
@@ -702,7 +704,8 @@ def test_acquire_job_honors_max_score(monkeypatch) -> None:
             last_attempted_at TEXT,
             archived_at TEXT,
             application_mode TEXT DEFAULT 'active',
-            source_verification TEXT DEFAULT 'official'
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
         )
     """)
     conn.executemany("""
@@ -812,7 +815,8 @@ def test_acquire_job_skips_unsafe_apply_url_and_claims_next_job(monkeypatch) -> 
             last_attempted_at TEXT,
             archived_at TEXT,
             application_mode TEXT DEFAULT 'active',
-            source_verification TEXT DEFAULT 'official'
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
         )
     """)
     conn.executemany("""
