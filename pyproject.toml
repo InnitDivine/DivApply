@@ -1,6 +1,6 @@
 [project]
 name = "divapply"
-version = "0.5.3"
+version = "0.5.4"
 description = "DivApply: AI-assisted end-to-end job application pipeline"
 readme = "README.md"
 license = "AGPL-3.0-only"
@@ -27,6 +27,7 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "pyyaml>=6.0",
     "pandas>=2.1.0,<3.0.0",
+    "pypdf>=6.13.3",
 ]
 
 [project.optional-dependencies]

@@ -263,3 +263,29 @@ def test_validate_tailored_resume_rejects_unsupported_license_claim() -> None:
 
     assert not report["passed"]
     assert any("Unsupported credential or degree claim" in error for error in report["errors"])
+
+
+def test_validate_tailored_resume_rejects_paid_setting_it_attribution_when_zero_it() -> None:
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "IT support candidate with experience troubleshooting Windows PCs, hardware, networking, and end-user "
+        "issues in municipal and county settings.",
+    )
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "experience": {"years_of_professional_it_experience": "0"},
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text=(
+            "Municipal customer service and county records. "
+            "Separate home lab Windows PC and networking practice."
+        ),
+        mode="normal",
+    )
+
+    assert not report["passed"]
+    assert any("paid-work setting" in error for error in report["errors"])

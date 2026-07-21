@@ -187,6 +187,7 @@ Keep compound verbs in the same tense. Write "Provision and administer" for ongo
 - You MAY reframe bullets to emphasize relevant transferable skills, but NEVER add duties that did not happen in that role.
 - Do NOT claim phone, email, or chat support experience unless that communication channel is explicit in the source resume or verified profile.
 - Do NOT relabel residents, members, visitors, or public-counter customers as software clients, software users, or government users. Do not claim customer follow-up unless the source facts explicitly contain follow-up work.
+- If verified professional IT experience is zero, anchor hands-on IT claims to the lab, project, or coursework that proves them. Describe paid municipal/county/front-desk work separately as transferable evidence; never say hands-on IT work occurred in those paid settings unless the source explicitly does.
 - Do not steer toward one job family over another. Use the same factual standard for every role.
 - Do NOT invent metrics or percentages (e.g. "99% accuracy rate", "reduced time by 40%", "processed 500+ transactions daily"). If the original resume does not contain a specific number, do NOT add one. Use qualitative descriptions instead.
 - Do NOT add tools, systems, certifications, licenses, degrees, employers, or coursework the candidate has not actually used or completed.

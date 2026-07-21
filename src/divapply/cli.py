@@ -383,7 +383,7 @@ def add_url(
     prepare: bool = typer.Option(
         False,
         "--prepare",
-        help="Score this URL; documents require a later verified official-source refresh.",
+        help="Score this URL; documents require configured official-source verification.",
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum score required before tailoring/cover generation."),
     validation: str = typer.Option("normal", "--validation", help="Validation mode for generated documents."),
@@ -410,6 +410,8 @@ def add_url(
         "site": "Manual URL",
         "location": "",
         "description": f"Manual job URL: {safe_url}",
+        "employment_type": "",
+        "job_posting_schema": False,
         "inactive": False,
     }
     if not no_fetch:
@@ -429,14 +431,52 @@ def add_url(
     apply_status = "failed" if inactive else None
     apply_error = "expired: posting appears inactive" if inactive else None
     apply_attempts = 99 if inactive else 0
-    market_label, _ = market_policy_for_job(
-        load_search_config(),
+    search_config = load_search_config()
+    market_label, market_policy = market_policy_for_job(
+        search_config,
         {"company": company_value, "location": location_value},
+    )
+    from divapply.config import configured_official_source_name
+
+    official_source = (
+        configured_official_source_name(safe_url)
+        if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch
+        else None
     )
 
     conn = get_connection()
-    conn.execute(
-        """
+    if official_source:
+        from divapply.discovery.smartextract import _store_jobs_filtered
+
+        _store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": safe_url,
+                    "application_url": safe_url,
+                    "title": title_value,
+                    "company": company_value,
+                    "location": location_value,
+                    "description": description_value,
+                    "full_description": description_value,
+                    "employment_type": str(metadata.get("employment_type") or ""),
+                }
+            ],
+            site=official_source,
+            strategy="manual_url_official",
+            accept_locs=[location_value] if location_value else [],
+            reject_locs=[],
+            title_excludes=[],
+            filter_rules={"allow_unknown_location": True},
+            market_label=market_label,
+            search_query="manual_url",
+            application_mode=str(market_policy.get("application_mode") or "manual_review"),
+            source_verification="official",
+            search_config=search_config,
+        )
+    else:
+        conn.execute(
+            """
         INSERT INTO jobs (
             url, canonical_key, title, company, salary, description,
             location, site, strategy, discovered_at, full_description,
@@ -467,43 +507,51 @@ def add_url(
             source_verification=excluded.source_verification,
             official_url_verified_at=excluded.official_url_verified_at,
             archived_at=NULL
-        """,
-        (
-            safe_url,
-            f"{title_value}|{company_value}|{location_value}".casefold(),
-            title_value,
-            company_value,
-            "",
-            description_value,
-            location_value,
-            site_value,
-            "manual_url",
-            now,
-            description_value,
-            safe_url,
-            now,
-            "Posting appears inactive." if inactive else None,
-            apply_status,
-            apply_error,
-            apply_attempts,
-            "manual_url_inactive" if inactive else "manual_url",
-            market_label or None,
-            "manual_url",
-            "manual_review",
-            None,
-            None,
-            "unknown",
-            None,
-        ),
-    )
-    conn.commit()
+            """,
+            (
+                safe_url,
+                f"{title_value}|{company_value}|{location_value}".casefold(),
+                title_value,
+                company_value,
+                "",
+                description_value,
+                location_value,
+                site_value,
+                "manual_url",
+                now,
+                description_value,
+                safe_url,
+                now,
+                "Posting appears inactive." if inactive else None,
+                apply_status,
+                apply_error,
+                apply_attempts,
+                "manual_url_inactive" if inactive else "manual_url",
+                market_label or None,
+                "manual_url",
+                "manual_review",
+                None,
+                None,
+                "unknown",
+                None,
+            ),
+        )
+        conn.commit()
 
     console.print(f"[green]Added:[/green] {title_value} @ {company_value}")
+    if official_source:
+        console.print(f"[green]Verified from configured official source:[/green] {official_source}")
     if inactive:
         console.print("[yellow]Posting appears inactive/expired, so it will not be queued for auto-apply.[/yellow]")
 
     if not prepare:
-        console.print("[dim]Run again with --prepare to score this URL. Documents stay blocked until an official source verifies it.[/dim]")
+        if official_source:
+            console.print("[dim]Run again with --prepare to score this verified URL and create eligible documents.[/dim]")
+        else:
+            console.print(
+                "[dim]Run again with --prepare to score this URL. "
+                "Documents stay blocked until an official source verifies it.[/dim]"
+            )
         return
 
     from divapply.config import check_tier

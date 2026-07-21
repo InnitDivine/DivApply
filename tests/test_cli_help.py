@@ -490,6 +490,73 @@ def test_add_url_is_manual_review_until_official_source_refresh(tmp_path, monkey
     database.close_connection(db_path)
 
 
+def test_v97_add_url_accepts_configured_official_jobposting_evidence(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = database.init_db(db_path)
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        config,
+        "load_search_config",
+        lambda: {
+            "locations": [{"label": "Destination market", "location": "Example City, ZZ"}],
+            "market_policies": {"Destination market": {"application_mode": "active"}},
+        },
+    )
+    monkeypatch.setattr(
+        config,
+        "load_sites_config",
+        lambda: {
+            "default_source_verification": "official",
+            "sites": [
+                {
+                    "name": "Example Health",
+                    "url": "https://careers.example.com/us/en/search-results",
+                    "type": "static",
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        cli,
+        "_extract_manual_job_metadata",
+        lambda _url: {
+            "title": "Device Support Technician I",
+            "company": "Example Health",
+            "site": "careers.example.com",
+            "location": "Example City, ZZ",
+            "description": "Current official job description with Windows and network troubleshooting.",
+            "employment_type": "FULL_TIME",
+            "job_posting_schema": True,
+            "inactive": False,
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        ["add-url", "https://careers.example.com/us/en/job/R-100/Device-Support-Technician-I"],
+    )
+
+    assert result.exit_code == 0
+    row = conn.execute(
+        "SELECT site, strategy, market_label, search_query, application_mode, employment_type, "
+        "source_verification, official_url_verified_at FROM jobs"
+    ).fetchone()
+    assert dict(row) == {
+        "site": "Example Health",
+        "strategy": "manual_url_official",
+        "market_label": "Destination market",
+        "search_query": "manual_url",
+        "application_mode": "active",
+        "employment_type": "full_time",
+        "source_verification": "official",
+        "official_url_verified_at": row["official_url_verified_at"],
+    }
+    assert row["official_url_verified_at"]
+    assert "configured official source" in result.output
+    database.close_connection(db_path)
+
+
 def test_add_url_metadata_prefers_jobposting_schema_over_hidden_inactive(monkeypatch) -> None:
     html = """
     <html>

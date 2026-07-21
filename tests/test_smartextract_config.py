@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from divapply import config
 from divapply.database import close_connection, init_db
 from divapply.discovery import smartextract
@@ -275,3 +277,150 @@ def test_greenhouse_api_extracts_full_official_description(monkeypatch) -> None:
     assert result["total"] == 1
     assert result["jobs"][0]["full_description"] == "Part-time role supporting systems and users."
     assert "<p>" not in result["jobs"][0]["full_description"]
+
+
+def test_v97_phenom_target_uses_explicit_deterministic_adapter() -> None:
+    targets = smartextract.build_scrape_targets(
+        sites=[
+            {
+                "name": "Example Health",
+                "url": "https://careers.example.com/us/en/search-results?keywords={query_encoded}",
+                "type": "search",
+                "adapter": "phenom",
+                "source_verification": "official",
+                "location_labels": ["Destination market"],
+            }
+        ],
+        search_cfg={
+            "queries": [
+                {
+                    "query": "device support technician",
+                    "location_labels": ["Destination market"],
+                }
+            ],
+            "locations": [
+                {
+                    "label": "Destination market",
+                    "location": "Example City, ZZ",
+                }
+            ],
+            "market_policies": {
+                "Destination market": {"application_mode": "active"},
+            },
+        },
+    )
+
+    assert len(targets) == 1
+    assert targets[0]["adapter"] == "phenom"
+    assert targets[0]["source_verification"] == "official"
+    assert targets[0]["application_mode"] == "active"
+    assert "device+support+technician" in targets[0]["url"]
+
+
+def test_v97_phenom_ddo_extracts_validated_current_jobs(monkeypatch) -> None:
+    app_config = {
+        "baseUrl": "https://careers.example.com/us/en/",
+        "baseDomain": "https://careers.example.com",
+        "refNum": "EXAMPLE",
+        "pageName": "search-results",
+    }
+    ddo = {
+        "eagerLoadRefineSearch": {
+            "status": 200,
+            "hits": 1,
+            "data": {
+                "jobs": [
+                    {
+                        "jobId": "R-100",
+                        "jobSeqNo": "EXAMPLER100EXTERNALENUS",
+                        "title": "Device Support Technician I",
+                        "location": "Example City, ZZ",
+                        "descriptionTeaser": "Support Windows devices, users, and basic network troubleshooting.",
+                        "JobSchedule": "Full Time",
+                        "scheduledWeeklyHours": "40",
+                    }
+                ]
+            },
+        }
+    }
+    page = (
+        "<html><script>var phApp = phApp || "
+        f"{json.dumps(app_config)}; phApp.ddo = {json.dumps(ddo)}; phApp.pageName = 'search-results';"
+        "</script></html>"
+    )
+
+    class Response:
+        text = page
+
+    monkeypatch.setattr(smartextract, "validate_external_url", lambda url, **_kwargs: url)
+    monkeypatch.setattr(smartextract, "_fetch_job_page", lambda *_args, **_kwargs: Response())
+
+    result = smartextract._run_phenom_search(
+        "Example Health",
+        "https://careers.example.com/us/en/search-results?keywords=device+support",
+    )
+
+    assert result["status"] == "PASS"
+    assert result["strategy"] == "phenom_ddo"
+    assert result["total"] == 1
+    assert result["jobs"] == [
+        {
+            "url": "https://careers.example.com/us/en/job/R-100/Device-Support-Technician-I",
+            "application_url": "https://careers.example.com/us/en/job/R-100/Device-Support-Technician-I",
+            "title": "Device Support Technician I",
+            "company": "Example Health",
+            "location": "Example City, ZZ",
+            "description": "Support Windows devices, users, and basic network troubleshooting.",
+            "employment_type": "Full Time",
+            "hours_per_week": "40",
+        }
+    ]
+
+
+def test_v97_official_refresh_reopens_only_synthetic_expired_failure(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    url = "https://careers.example.com/us/en/job/R-100/Device-Support-Technician-I"
+    conn.execute(
+        "INSERT INTO jobs (url, title, location, strategy, discovered_at, apply_status, apply_error, "
+        "apply_attempts, application_mode, source_verification) "
+        "VALUES (?, 'Device Support Technician I', 'Example City, ZZ', 'manual_url_inactive', "
+        "'2026-07-19', 'failed', 'expired: posting appears inactive', 99, 'manual_review', 'unknown')",
+        (url,),
+    )
+    conn.commit()
+
+    smartextract._store_jobs_filtered(
+        conn,
+        [
+            {
+                "url": url,
+                "title": "Device Support Technician I",
+                "company": "Example Health",
+                "location": "Example City, ZZ",
+                "description": "Current official listing.",
+            }
+        ],
+        site="Example Health",
+        strategy="phenom_ddo",
+        accept_locs=["Example City"],
+        reject_locs=[],
+        market_label="Destination market",
+        search_query="device support technician",
+        application_mode="active",
+        source_verification="official",
+    )
+
+    row = conn.execute(
+        "SELECT apply_status, apply_error, apply_attempts, application_mode, source_verification "
+        "FROM jobs WHERE url = ?",
+        (url,),
+    ).fetchone()
+    assert dict(row) == {
+        "apply_status": None,
+        "apply_error": None,
+        "apply_attempts": 0,
+        "application_mode": "active",
+        "source_verification": "official",
+    }
+    close_connection(db_path)

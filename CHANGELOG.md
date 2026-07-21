@@ -2,6 +2,14 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.4
+
+- Added deterministic Phenom employer-site discovery and current-state refresh so reused, open requisitions do not remain falsely expired.
+- Made configured official job URLs immediately verifiable and eligible for targeted `add-url --prepare` scoring and document generation.
+- Rebuilt resume PDFs as one-column ATS documents with selectable-text, token-coverage, and section-order gates that fail closed before persistence.
+- Tightened resume and cover-letter evidence boundaries for early-career candidates, including paid-work/lab separation, exact target titles, and three-paragraph cover structure.
+- Normalized scalar and array schema.org employment types into canonical schedule values.
+
 ## 0.5.3
 
 - Prevented public-sector salary, position, application, résumé, transcript, and questionnaire text from becoming false required-skill gaps while preserving real requirement sections.

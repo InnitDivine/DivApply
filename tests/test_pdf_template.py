@@ -6,6 +6,7 @@ import types
 import pytest
 
 from divapply.scoring import cover_letter as cover_letter_mod
+from divapply.scoring import pdf as pdf_mod
 from divapply.scoring import tailor as tailor_mod
 from divapply.scoring.pdf import (
     build_cover_letter_html,
@@ -65,6 +66,110 @@ Example College | 2024
     assert "font-family: Georgia, 'Times New Roman', serif" in html
     assert "Technical Skills" in html
     assert "fonts.googleapis.com" not in html
+    assert "grid-template-columns: 1fr 1fr" not in html
+    assert html.index("Real Employer") < html.index("2025 - Present")
+
+
+def test_v98_ats_pdf_validator_accepts_complete_linear_text(monkeypatch, tmp_path) -> None:
+    source = """Example Person
+person@example.com
+
+SUMMARY
+Support professional with Windows troubleshooting experience.
+
+EXPERIENCE
+Support Assistant | Example Employer | 2024 - Present
+- Documented support requests and resolved user issues.
+
+EDUCATION
+Associate Degree
+Example College | 2024
+"""
+
+    class Page:
+        def extract_text(self) -> str:
+            return source
+
+    class Reader:
+        is_encrypted = False
+        pages = [Page()]
+
+    monkeypatch.setattr(pdf_mod, "PdfReader", lambda _path: Reader(), raising=False)
+
+    report = pdf_mod.validate_ats_pdf(
+        source,
+        tmp_path / "resume.pdf",
+        required_sections=["SUMMARY", "EXPERIENCE", "EDUCATION"],
+    )
+
+    assert report["token_coverage"] == 1.0
+    assert report["sections_in_order"] is True
+
+
+def test_v98_ats_pdf_validator_rejects_scrambled_section_order(monkeypatch, tmp_path) -> None:
+    source = """Example Person
+
+SUMMARY
+Windows support experience.
+
+EXPERIENCE
+Support Assistant
+
+EDUCATION
+Example College
+"""
+    extracted = """Example Person
+
+EDUCATION
+Example College
+
+SUMMARY
+Windows support experience.
+
+EXPERIENCE
+Support Assistant
+"""
+
+    class Page:
+        def extract_text(self) -> str:
+            return extracted
+
+    class Reader:
+        is_encrypted = False
+        pages = [Page()]
+
+    monkeypatch.setattr(pdf_mod, "PdfReader", lambda _path: Reader(), raising=False)
+
+    with pytest.raises(RuntimeError, match="ATS-readable"):
+        pdf_mod.validate_ats_pdf(
+            source,
+            tmp_path / "resume.pdf",
+            required_sections=["SUMMARY", "EXPERIENCE", "EDUCATION"],
+        )
+
+
+def test_v98_convert_to_pdf_deletes_output_when_ats_validation_fails(monkeypatch, tmp_path) -> None:
+    source = tmp_path / "resume.txt"
+    output = tmp_path / "resume.pdf"
+    source.write_text("Example Person\n\nSUMMARY\nSupport experience.", encoding="utf-8")
+
+    def fake_render(_html: str, output_path: str) -> None:
+        from pathlib import Path
+
+        Path(output_path).write_bytes(b"%PDF-1.4\n")
+
+    monkeypatch.setattr(pdf_mod, "render_pdf", fake_render)
+    monkeypatch.setattr(
+        pdf_mod,
+        "validate_ats_pdf",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("not ATS-readable")),
+        raising=False,
+    )
+
+    with pytest.raises(RuntimeError, match="ATS-readable"):
+        pdf_mod.convert_to_pdf(source, output_path=output)
+
+    assert not output.exists()
 
 
 def test_resume_html_escapes_resume_controlled_text() -> None:

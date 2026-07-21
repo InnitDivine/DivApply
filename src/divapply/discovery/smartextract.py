@@ -21,7 +21,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
-from urllib.parse import quote_plus, urljoin, urlparse
+from urllib.parse import quote, quote_plus, urljoin, urlparse
 
 import httpx
 import yaml
@@ -79,6 +79,12 @@ _OFFICIAL_REFRESH_INVALIDATES_SQL = """(
         )
         OR jobs.application_url IS NOT excluded.application_url
     )
+)"""
+_SYNTHETIC_EXPIRED_APPLY_SQL = """(
+    jobs.applied_at IS NULL
+    AND jobs.apply_status = 'failed'
+    AND jobs.apply_attempts = 99
+    AND jobs.apply_error LIKE 'expired:%'
 )"""
 
 
@@ -164,6 +170,123 @@ def _run_greenhouse_board(name: str, url: str) -> dict:
         "titles": sum(1 for job in jobs if job.get("title")),
         "jobs": jobs,
         "strategy": "greenhouse_api",
+    }
+
+
+def _embedded_json_object(page: str, marker_pattern: str) -> dict | None:
+    """Decode one JSON object assigned by an inline bootstrap script."""
+    marker = re.search(marker_pattern, page)
+    if marker is None:
+        return None
+    start = page.find("{", marker.end())
+    if start < 0:
+        return None
+    try:
+        value, _ = json.JSONDecoder().raw_decode(page[start:])
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _same_https_origin(left: str, right: str) -> bool:
+    """Require two validated URLs to share one exact HTTPS origin."""
+    left_url = urlparse(left)
+    right_url = urlparse(right)
+    return (
+        left_url.scheme.casefold() == "https"
+        and right_url.scheme.casefold() == "https"
+        and (left_url.hostname or "").casefold() == (right_url.hostname or "").casefold()
+        and (left_url.port or 443) == (right_url.port or 443)
+    )
+
+
+def _phenom_job_url(base_url: str, item: dict, *, name: str) -> str | None:
+    """Build one same-origin Phenom detail URL from bounded feed fields."""
+    job_id = str(item.get("jobId") or item.get("reqId") or "").strip()
+    title = str(item.get("title") or "").strip()
+    if not title or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}", job_id) is None:
+        return None
+    slug = re.sub(r"[^A-Za-z0-9]+", "-", title).strip("-")[:160] or "Job"
+    candidate = urljoin(base_url.rstrip("/") + "/", f"job/{quote(job_id, safe='')}/{quote(slug, safe='-')}")
+    try:
+        job_url = validate_external_url(candidate, field=f"{name} Phenom job URL")
+    except (UnsafeUrlError, ValueError):
+        return None
+    return job_url if _same_https_origin(base_url, job_url) else None
+
+
+def _phenom_description(item: dict) -> str:
+    """Return bounded readable listing text from Phenom's public result row."""
+    parser_data = item.get("ml_job_parser")
+    if not isinstance(parser_data, dict):
+        parser_data = {}
+    raw = item.get("descriptionTeaser") or parser_data.get("descriptionTeaser_ats") or ""
+    decoded = html.unescape(str(raw))
+    return BeautifulSoup(decoded, "html.parser").get_text("\n", strip=True)[:6000]
+
+
+def _run_phenom_search(name: str, url: str) -> dict:
+    """Read an official Phenom search page through its embedded public DDO."""
+    strategy = "phenom_ddo"
+    try:
+        search_url = validate_external_url(url, field=f"{name} Phenom search URL")
+        with httpx.Client(follow_redirects=False, timeout=20) as client:
+            response = _fetch_job_page(client, search_url, headers={"User-Agent": UA})
+        page = response.text
+        app_config = _embedded_json_object(page, r"\bvar\s+phApp\s*=\s*phApp\s*\|\|\s*")
+        ddo = _embedded_json_object(page, r"phApp\.ddo\s*=\s*")
+        if app_config is None or ddo is None:
+            raise ValueError("Phenom bootstrap data is missing")
+        if str(app_config.get("pageName") or "").strip().casefold() != "search-results":
+            raise ValueError("Phenom page is not a search-results feed")
+        base_url = validate_external_url(str(app_config.get("baseUrl") or ""), field=f"{name} Phenom base URL")
+        if not _same_https_origin(search_url, base_url):
+            raise ValueError("Phenom base URL origin does not match configured source")
+        result_data = ddo.get("eagerLoadRefineSearch")
+        if not isinstance(result_data, dict) or str(result_data.get("status")) not in {"200", "success"}:
+            raise ValueError("Phenom search feed is unavailable")
+        data = result_data.get("data")
+        raw_jobs = data.get("jobs") if isinstance(data, dict) else None
+        if not isinstance(raw_jobs, list):
+            raise ValueError("Phenom search feed has no jobs collection")
+    except Exception as exc:
+        log.warning("Phenom feed failed for %s: %s", name, exc)
+        return {"name": name, "status": "FAIL", "total": 0, "titles": 0, "jobs": [], "strategy": strategy}
+
+    ref_num = str(app_config.get("refNum") or "").strip()
+    jobs: list[dict] = []
+    for item in raw_jobs:
+        if not isinstance(item, dict):
+            continue
+        job_seq = str(item.get("jobSeqNo") or "").strip()
+        if ref_num and job_seq and not job_seq.casefold().startswith(ref_num.casefold()):
+            continue
+        job_url = _phenom_job_url(base_url, item, name=name)
+        if job_url is None:
+            continue
+        jobs.append(
+            {
+                "url": job_url,
+                "application_url": job_url,
+                "title": str(item.get("title") or "").strip(),
+                "company": name,
+                "location": str(item.get("location") or item.get("cityStateCountry") or "").strip(),
+                "description": _phenom_description(item),
+                "employment_type": str(
+                    item.get("JobSchedule") or item.get("jobSchedule") or item.get("type") or ""
+                ).strip(),
+                "hours_per_week": str(
+                    item.get("scheduledWeeklyHours") or item.get("scheduledWeeklyHoursValue") or ""
+                ).strip(),
+            }
+        )
+    return {
+        "name": name,
+        "status": "PASS" if jobs else "FAIL",
+        "total": len(jobs),
+        "titles": sum(1 for job in jobs if job.get("title")),
+        "jobs": jobs,
+        "strategy": strategy,
     }
 
 
@@ -451,7 +574,10 @@ def _store_jobs_filtered(
             f"tailor_attempts=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN 0 ELSE jobs.tailor_attempts END, "
             f"cover_letter_path=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.cover_letter_path END, "
             f"cover_letter_at=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.cover_letter_at END, "
-            f"cover_attempts=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN 0 ELSE jobs.cover_attempts END "
+            f"cover_attempts=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN 0 ELSE jobs.cover_attempts END, "
+            f"apply_status=CASE WHEN {_SYNTHETIC_EXPIRED_APPLY_SQL} THEN NULL ELSE jobs.apply_status END, "
+            f"apply_error=CASE WHEN {_SYNTHETIC_EXPIRED_APPLY_SQL} THEN NULL ELSE jobs.apply_error END, "
+            f"apply_attempts=CASE WHEN {_SYNTHETIC_EXPIRED_APPLY_SQL} THEN 0 ELSE jobs.apply_attempts END "
             "WHERE excluded.source_verification='official'",
             (
                 url,
@@ -1495,7 +1621,8 @@ def build_scrape_targets(
                         .get("application_mode", "manual_review")
                     ),
                     "source_verification": verification,
-                    "adapter": "greenhouse" if _greenhouse_board_token(safe_url) else None,
+                    "adapter": str(site.get("adapter") or "").strip().casefold()
+                    or ("greenhouse" if _greenhouse_board_token(safe_url) else None),
                 })
         else:
             expanded_url = site_url
@@ -1511,7 +1638,8 @@ def build_scrape_targets(
                 "query": None,
                 "application_mode": "manual_review",
                 "source_verification": verification,
-                "adapter": "greenhouse" if _greenhouse_board_token(safe_url) else None,
+                "adapter": str(site.get("adapter") or "").strip().casefold()
+                or ("greenhouse" if _greenhouse_board_token(safe_url) else None),
             })
 
     return targets
@@ -1522,6 +1650,8 @@ def build_scrape_targets(
 
 def _run_target_with_cache(target: dict, cache: dict, cache_lock) -> dict:
     """Run one target and retry discovery when a cached plan has gone stale."""
+    if target.get("adapter") == "phenom":
+        return _run_phenom_search(target["name"], target["url"])
     if target.get("adapter") == "greenhouse":
         return _run_greenhouse_board(target["name"], target["url"])
     with cache_lock:

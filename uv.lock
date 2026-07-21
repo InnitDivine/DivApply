@@ -441,13 +441,14 @@ wheels = [
 
 [[package]]
 name = "divapply"
-version = "0.5.3"
+version = "0.5.4"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
     { name = "httpx" },
     { name = "pandas" },
     { name = "playwright" },
+    { name = "pypdf" },
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -504,6 +505,7 @@ requires-dist = [
     { name = "playwright", specifier = ">=1.40" },
     { name = "pydantic", marker = "extra == 'full'", specifier = ">=2.3.0,<3.0.0" },
     { name = "pydantic", marker = "extra == 'jobspy-runtime'", specifier = ">=2.3.0,<3.0.0" },
+    { name = "pypdf", specifier = ">=6.13.3" },
     { name = "pypdf", marker = "extra == 'coursework'", specifier = ">=6.13.3" },
     { name = "pypdf", marker = "extra == 'full'", specifier = ">=6.13.3" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
