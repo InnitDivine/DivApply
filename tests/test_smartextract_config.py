@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+from datetime import date
 
 from divapply import config
-from divapply.database import close_connection, init_db
+from divapply.database import archive_job, close_connection, init_db
 from divapply.discovery import smartextract
 
 
@@ -424,3 +425,312 @@ def test_v97_official_refresh_reopens_only_synthetic_expired_failure(tmp_path) -
         "source_verification": "official",
     }
     close_connection(db_path)
+
+
+def test_v102_v105_governmentjobs_adapter_parses_only_same_origin_open_rows(monkeypatch) -> None:
+    page = """
+    <html><body><div>2 jobs found</div><ul>
+      <li class="job-item" data-job-id="52290-1">
+        <h3><a class="job-details-link" href="/jobs/52290-1/part-time-dispatcher">Part-Time Dispatcher</a></h3>
+        <div class="primaryInfo job-organization">City of Exampletown</div>
+        <div class="primaryInfo"><span class="job-location">Exampletown, YY</span></div>
+        <div class="primaryInfo">Part-Time Regular | $17.11 - $18.62 Hourly</div>
+      </li>
+      <li class="job-item" data-job-id="hostile">
+        <h3><a class="job-details-link" href="https://attacker.example/jobs/1">Hostile row</a></h3>
+        <div class="primaryInfo job-organization">Unknown</div>
+        <div class="primaryInfo"><span class="job-location">Exampletown, YY</span></div>
+      </li>
+    </ul></body></html>
+    """
+
+    class Response:
+        text = page
+
+    def fake_fetch(_client, _url, *, headers):
+        assert headers["User-Agent"]
+        return Response()
+
+    monkeypatch.setattr(smartextract, "_fetch_job_page", fake_fetch)
+
+    result = smartextract._run_governmentjobs_search(
+        "GovernmentJobs.com",
+        "https://www.governmentjobs.com/jobs?keyword=part+time&location=Exampletown%2C+YY",
+    )
+
+    assert result["status"] == "PASS"
+    assert result["strategy"] == "governmentjobs_html"
+    assert result["total"] == 1
+    assert result["jobs"] == [
+        {
+            "url": "https://www.governmentjobs.com/jobs/52290-1/part-time-dispatcher",
+            "application_url": "https://www.governmentjobs.com/jobs/52290-1/part-time-dispatcher",
+            "title": "Part-Time Dispatcher",
+            "company": "City of Exampletown",
+            "location": "Exampletown, YY",
+            "salary": "$17.11 - $18.62 Hourly",
+            "description": "Part-Time Regular | $17.11 - $18.62 Hourly",
+            "employment_type": "Part-Time Regular",
+            "availability_state": "open",
+        }
+    ]
+
+
+def test_v102_v105_jobaps_adapter_requires_applyable_same_origin_board_row(monkeypatch) -> None:
+    page = """
+    <html><body><table>
+      <tr>
+        <th class="JobTitle">
+          <a class="JobTitle" href="https://www.jobapscloud.com/Example/sup/bulpreview.asp?R1=2026&amp;R2=12351&amp;R3=02">Administrative Legal Clerk - Entry</a>
+          <input id="rowJobProps_1" value="{&quot;url&quot;:&quot;https://www.jobapscloud.com/Example/sup/bulpreview.asp?R1=2026&amp;R2=12351&amp;R3=02&quot;,&quot;apply&quot;:&quot;https://www.jobapscloud.com/Example/NewRegPages/TermsOfUse.asp?RecruitNum1=2026&amp;RecruitNum2=12351&amp;RecruitNum3=02&quot;,&quot;noapply&quot;:&quot;0&quot;}" />
+        </th>
+        <td class="Locs">Sample City, ZZ<br/>Example County, ZZ</td>
+        <td class="Dept">Sheriff</td>
+        <td class="Salary">$23.45 - $29.32/hour</td>
+        <td class="Deadline">Continuous</td>
+      </tr>
+      <tr>
+        <th class="JobTitle">
+          <a class="JobTitle" href="https://attacker.example/job">Hostile row</a>
+          <input id="rowJobProps_2" value="{&quot;url&quot;:&quot;https://attacker.example/job&quot;,&quot;apply&quot;:&quot;https://attacker.example/apply&quot;,&quot;noapply&quot;:&quot;0&quot;}" />
+        </th>
+      </tr>
+    </table></body></html>
+    """
+
+    class Response:
+        text = page
+
+    def fake_fetch(_client, _url, *, headers):
+        assert headers["User-Agent"]
+        return Response()
+
+    monkeypatch.setattr(smartextract, "_fetch_job_page", fake_fetch)
+
+    result = smartextract._run_jobaps_board(
+        "Example County",
+        "https://www.jobapscloud.com/Example/JobBoard.asp",
+    )
+
+    assert result["status"] == "PASS"
+    assert result["strategy"] == "jobaps_html"
+    assert result["total"] == 1
+    assert result["jobs"][0]["title"] == "Administrative Legal Clerk - Entry"
+    assert result["jobs"][0]["location"] == "Sample City, ZZ Example County, ZZ"
+    assert result["jobs"][0]["application_url"].startswith("https://www.jobapscloud.com/Example/")
+    assert result["jobs"][0]["availability_state"] == "open"
+
+
+def test_v103_verified_open_refresh_reopens_legacy_but_not_sticky_archive(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    legacy_url = "https://www.governmentjobs.com/jobs/1/legacy"
+    user_url = "https://www.governmentjobs.com/jobs/2/user-dismissed"
+    policy_url = "https://www.governmentjobs.com/jobs/3/policy-mismatch"
+    conn.executemany(
+        "INSERT INTO jobs (url, title, location, archived_at, archive_reason) VALUES (?, ?, ?, ?, ?)",
+        [
+            (legacy_url, "Legacy role", "Exampletown, YY", "2026-01-01", "legacy"),
+            (user_url, "User role", "Exampletown, YY", None, None),
+            (policy_url, "Policy role", "Exampletown, YY", None, None),
+        ],
+    )
+    conn.commit()
+    assert archive_job(user_url, conn=conn) is True
+    assert archive_job(policy_url, conn=conn, reason="policy") is True
+
+    smartextract._store_jobs_filtered(
+        conn,
+        [
+            {
+                "url": legacy_url,
+                "title": "Legacy role",
+                "location": "Exampletown, YY",
+                "availability_state": "open",
+            },
+            {
+                "url": user_url,
+                "title": "User role",
+                "location": "Exampletown, YY",
+                "availability_state": "open",
+            },
+            {
+                "url": policy_url,
+                "title": "Policy role",
+                "location": "Exampletown, YY",
+                "availability_state": "open",
+            },
+        ],
+        site="Official Board",
+        strategy="governmentjobs_html",
+        accept_locs=["Exampletown"],
+        reject_locs=[],
+        application_mode="active",
+        source_verification="official",
+    )
+
+    rows = {
+        row["url"]: dict(row)
+        for row in conn.execute(
+            "SELECT url, archived_at, archive_reason, availability_state, availability_checked_at, last_seen_at "
+            "FROM jobs WHERE url IN (?, ?, ?)",
+            (legacy_url, user_url, policy_url),
+        )
+    }
+    assert rows[legacy_url]["archived_at"] is None
+    assert rows[legacy_url]["archive_reason"] is None
+    assert rows[legacy_url]["availability_state"] == "open"
+    assert rows[legacy_url]["availability_checked_at"]
+    assert rows[legacy_url]["last_seen_at"]
+    assert rows[user_url]["archived_at"]
+    assert rows[user_url]["archive_reason"] == "user"
+    assert rows[policy_url]["archived_at"]
+    assert rows[policy_url]["archive_reason"] == "policy"
+    close_connection(db_path)
+
+
+def test_v104_v106_result_location_drives_market_and_title_policy(tmp_path) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = init_db(db_path)
+    search_config = {
+        "default_market_label": "Current market",
+        "locations": [
+            {"label": "Current market", "location": "Exampletown, YY"},
+            {"label": "Destination market", "location": "Sample City, ZZ"},
+        ],
+        "market_policies": {
+            "Current market": {
+                "application_mode": "active",
+                "include_titles": ["dispatcher", "custodian"],
+            },
+            "Destination market": {
+                "application_mode": "active",
+                "include_titles": ["IT assistant", "administrative clerk"],
+            },
+        },
+    }
+
+    smartextract._store_jobs_filtered(
+        conn,
+        [
+            {
+                "url": "https://www.governmentjobs.com/jobs/1/dispatcher",
+                "title": "Part-Time Dispatcher",
+                "location": "Exampletown, YY",
+                "availability_state": "open",
+            },
+            {
+                "url": "https://www.governmentjobs.com/jobs/2/bartender",
+                "title": "Bartender",
+                "location": "Sample City, ZZ",
+                "availability_state": "open",
+            },
+            {
+                "url": "https://www.governmentjobs.com/jobs/3/it-assistant",
+                "title": "IT Assistant",
+                "location": "Sample City, ZZ",
+                "availability_state": "open",
+            },
+        ],
+        site="GovernmentJobs.com",
+        strategy="governmentjobs_html",
+        accept_locs=["Exampletown", "Sample City"],
+        reject_locs=[],
+        filter_rules={"include_titles": ["dispatcher", "bartender", "IT assistant"]},
+        market_label="Current market",
+        application_mode="active",
+        source_verification="official",
+        search_config=search_config,
+    )
+
+    rows = conn.execute("SELECT title, market_label FROM jobs ORDER BY title").fetchall()
+    assert [tuple(row) for row in rows] == [
+        ("IT Assistant", "Destination market"),
+        ("Part-Time Dispatcher", "Current market"),
+    ]
+    close_connection(db_path)
+
+
+def test_v105_calcareers_parser_extracts_current_cards() -> None:
+    page = """
+    <html><body><div>1 job(s) found.</div>
+      <div class="card-block">
+        <a class="lead" href="https://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=524385">INFORMATION TECHNOLOGY ASSOCIATE</a>
+        <div class="working-title details row"><div class="job-details">Technical Analyst</div></div>
+        <div class="salary-range details row"><div class="job-details">$4935.00 - $8740.00</div></div>
+        <div class="schedule details row"><div class="job-details">Permanent Fulltime</div></div>
+        <div class="department details row"><div class="job-details">Example Department</div></div>
+        <div class="location details row"><div class="job-details">Sample County</div></div>
+        <div class="telework details row"><div class="job-details">Hybrid</div></div>
+        <div class="filing-date details row"><div class="job-label">Filing Deadline:</div><div class="job-details">12/31/2099</div></div>
+      </div>
+    </body></html>
+    """
+
+    jobs = smartextract._parse_calcareers_results(page, "State of Example")
+
+    assert jobs == [
+        {
+            "url": "https://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=524385",
+            "application_url": "https://www.calcareers.ca.gov/CalHrPublic/Jobs/JobPosting.aspx?JobControlId=524385",
+            "title": "INFORMATION TECHNOLOGY ASSOCIATE — Technical Analyst",
+            "company": "Example Department",
+            "location": "Sample County, CA",
+            "salary": "$4935.00 - $8740.00",
+            "description": "Permanent Fulltime; Hybrid; Filing Deadline: 12/31/2099",
+            "employment_type": "Permanent Fulltime",
+            "availability_state": "open",
+        }
+    ]
+
+
+def test_v102_past_filing_deadline_is_not_open() -> None:
+    today = date(2026, 7, 21)
+
+    assert smartextract._filing_deadline_is_past("7/20/2026", today=today) is True
+    assert smartextract._filing_deadline_is_past("7/21/2026", today=today) is False
+    assert smartextract._filing_deadline_is_past("Continuous", today=today) is False
+
+
+def test_v105_official_board_targets_use_deterministic_adapters_and_site_query_allowlist() -> None:
+    search_config = {
+        "queries": [
+            {"query": "information technology associate", "location_labels": ["Destination market"]},
+            {"query": "office assistant", "location_labels": ["Destination market"]},
+        ],
+        "locations": [{"label": "Destination market", "location": "Sample City, ZZ"}],
+        "market_policies": {"Destination market": {"application_mode": "active"}},
+    }
+    targets = smartextract.build_scrape_targets(
+        sites=[
+            {
+                "name": "GovernmentJobs.com",
+                "url": "https://www.governmentjobs.com/jobs?keyword={query_encoded}&location={location_encoded}",
+                "type": "search",
+                "source_verification": "official",
+            },
+            {
+                "name": "Example County",
+                "url": "https://www.jobapscloud.com/Example/JobBoard.asp",
+                "type": "static",
+                "source_verification": "official",
+            },
+            {
+                "name": "State of Example",
+                "url": "https://www.calcareers.ca.gov/CalHRPublic/Search/JobSearchResults.aspx",
+                "type": "search",
+                "adapter": "calcareers",
+                "queries": ["information technology associate"],
+                "location_labels": ["Destination market"],
+                "source_verification": "official",
+            },
+        ],
+        search_cfg=search_config,
+    )
+
+    assert [(target["name"], target["query"], target["adapter"]) for target in targets] == [
+        ("GovernmentJobs.com", "information technology associate", "governmentjobs"),
+        ("GovernmentJobs.com", "office assistant", "governmentjobs"),
+        ("Example County", None, "jobaps"),
+        ("State of Example", "information technology associate", "calcareers"),
+    ]

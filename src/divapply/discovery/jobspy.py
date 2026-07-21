@@ -211,8 +211,7 @@ def _title_include_ok(title: str | None, includes: list[str]) -> bool:
         return True
     if not title:
         return False
-    t = title.lower()
-    return any(term in t for term in includes)
+    return any(term_in_text(title, term) for term in includes)
 
 
 def _row_text(row) -> str:

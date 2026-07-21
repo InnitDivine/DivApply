@@ -304,6 +304,29 @@ def _strip_preamble(text: str) -> str:
     return text
 
 
+def _ensure_exact_target_title_once(text: str, job: dict) -> str:
+    """Insert or deduplicate the exact title without changing candidate claims."""
+    title = " ".join(str(job.get("title") or "").split())
+    if not title:
+        return text
+    pattern = re.compile(
+        r"(?<!\w)" + r"\s+".join(re.escape(part) for part in title.split()) + r"(?!\w)",
+        re.IGNORECASE,
+    )
+    matches = list(pattern.finditer(text))
+    if matches:
+        repaired = text
+        for match in reversed(matches[1:]):
+            repaired = repaired[: match.start()] + "the role" + repaired[match.end() :]
+        return repaired
+
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text.strip()) if block.strip()]
+    if len(blocks) < 3:
+        return text
+    blocks[1] = f"I am applying for the {title} position. {blocks[1]}"
+    return "\n\n".join(blocks)
+
+
 def _read_tailored_resume_text(job: dict) -> str:
     """Read only the exact persisted, owned tailored-resume artifact."""
     raw_path = str(job.get("tailored_resume_path") or "").strip()
@@ -423,6 +446,7 @@ def generate_cover_letter(
         letter = _drop_mixed_paid_setting_sentences(letter)
         letter = _repair_unanchored_zero_it_closing(letter, job, profile)
         letter = _drop_ambiguous_zero_it_bridge_sentences(letter, profile)
+        letter = _ensure_exact_target_title_once(letter, job)
 
         validation = validate_cover_letter(
             letter,

@@ -181,6 +181,8 @@ boards:
 
 Tier 1 is the strongest target, tier 2 is an adjacent path, and tier 3 is a broader fallback. Titles belong in `queries`; places belong in `locations`; schedule, benefits, market, and application-mode policy should remain structured search configuration.
 
+Configured official GovernmentJobs/SchoolJobs, JobAps, and CalCareers sources use deterministic current-vacancy adapters. A row is marked open only when the current official board exposes an exact job/application entry; expired filing deadlines are excluded. Rediscovery may restore a legacy or source-closed row, but it never overrides a job you archived yourself or one excluded by search policy.
+
 Legacy aliases still load, but `divapply selfcheck` reports migration guidance.
 
 ## Scoring and Resume Safety

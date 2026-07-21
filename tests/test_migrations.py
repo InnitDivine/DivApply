@@ -16,9 +16,40 @@ def test_init_db_sets_schema_user_version(tmp_path) -> None:
 
     columns = {row[1] for row in conn.execute("PRAGMA table_info(jobs)").fetchall()}
 
-    assert version >= 5
-    assert {"score_attempts", "score_error", "score_retry_at"}.issubset(columns)
+    assert version >= 6
+    assert {
+        "score_attempts",
+        "score_error",
+        "score_retry_at",
+        "archive_reason",
+        "availability_state",
+        "availability_checked_at",
+        "last_seen_at",
+    }.issubset(columns)
     assert event_table is not None
+    close_connection(db_path)
+
+
+def test_v103_migration_marks_existing_archives_as_legacy(tmp_path) -> None:
+    db_path = tmp_path / "legacy-archive.db"
+    legacy = sqlite3.connect(db_path)
+    legacy.execute("CREATE TABLE jobs (url TEXT PRIMARY KEY, archived_at TEXT)")
+    legacy.execute(
+        "INSERT INTO jobs (url, archived_at) VALUES (?, ?)",
+        ("https://example.com/archived", "2026-01-01T00:00:00Z"),
+    )
+    legacy.execute("PRAGMA user_version = 5")
+    legacy.commit()
+    legacy.close()
+
+    conn = init_db(db_path)
+    row = conn.execute(
+        "SELECT archived_at, archive_reason FROM jobs WHERE url = ?",
+        ("https://example.com/archived",),
+    ).fetchone()
+
+    assert row["archived_at"] == "2026-01-01T00:00:00Z"
+    assert row["archive_reason"] == "legacy"
     close_connection(db_path)
 
 
@@ -202,7 +233,7 @@ def test_policy_v5_invalidates_unapplied_scores_and_generated_documents(tmp_path
 
     assert tuple(unapplied) == (None, None, None, None, None, None)
     assert tuple(applied) == (8, "implied ticketing", "Apply now", "old-resume.txt", "old-cover.txt")
-    assert conn.execute("PRAGMA user_version").fetchone()[0] == 5
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == 6
     close_connection(db_path)
 
 

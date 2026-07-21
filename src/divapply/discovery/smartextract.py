@@ -20,12 +20,13 @@ import sqlite3
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from urllib.parse import quote, quote_plus, urljoin, urlparse
 
 import httpx
 import yaml
 from bs4 import BeautifulSoup
+from bs4.element import Tag
 from playwright.sync_api import sync_playwright
 
 from divapply import config
@@ -38,7 +39,12 @@ from divapply.discovery.filters import (
     term_in_text,
     title_ok,
 )
-from divapply.search_policy import market_policy_for_job, scoped_query_locations
+from divapply.search_policy import (
+    _is_broad_remote_or_unknown,
+    effective_search_config,
+    market_policy_for_job,
+    scoped_query_locations,
+)
 from divapply.llm import get_client
 from divapply.manual_url import _fetch_job_page, flatten_json_ld_items, json_ld_type_matches
 from divapply.security import UnsafeUrlError, sanitize_external_url, validate_external_url, validate_navigation_url
@@ -78,6 +84,10 @@ _OFFICIAL_REFRESH_INVALIDATES_SQL = """(
             AND jobs.full_description IS NOT excluded.full_description
         )
         OR jobs.application_url IS NOT excluded.application_url
+        OR (
+            excluded.availability_state = 'open'
+            AND COALESCE(jobs.archive_reason, 'legacy') IN ('legacy', 'source_closed')
+        )
     )
 )"""
 _SYNTHETIC_EXPIRED_APPLY_SQL = """(
@@ -290,6 +300,320 @@ def _run_phenom_search(name: str, url: str) -> dict:
     }
 
 
+_GOVERNMENTJOBS_HOSTS = {
+    "governmentjobs.com",
+    "www.governmentjobs.com",
+    "schooljobs.com",
+    "www.schooljobs.com",
+}
+
+
+def _validated_same_origin_url(base_url: str, value: object, *, field: str) -> str | None:
+    candidate = urljoin(base_url, str(value or "").strip())
+    if not candidate or not _same_https_origin(base_url, candidate):
+        return None
+    try:
+        return validate_external_url(candidate, field=field)
+    except UnsafeUrlError:
+        return None
+
+
+def _governmentjobs_adapter_for_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").casefold()
+    path = parsed.path.casefold()
+    if parsed.scheme.casefold() != "https":
+        return None
+    if host in _GOVERNMENTJOBS_HOSTS:
+        return "governmentjobs"
+    if host.endswith(".jobapscloud.com") and path.endswith("/jobboard.asp"):
+        return "jobaps"
+    return None
+
+
+def _run_governmentjobs_search(name: str, url: str) -> dict:
+    """Parse current NEOGOV search/agency results without cached selectors or an LLM."""
+    safe_url = validate_external_url(url, field=f"{name} GovernmentJobs URL")
+    if _governmentjobs_adapter_for_url(safe_url) != "governmentjobs":
+        return {
+            "name": name,
+            "status": "FAIL",
+            "total": 0,
+            "titles": 0,
+            "jobs": [],
+            "strategy": "governmentjobs_html",
+        }
+    try:
+        with httpx.Client(follow_redirects=False, timeout=20) as client:
+            response = _fetch_job_page(client, safe_url, headers={"User-Agent": UA})
+    except Exception as exc:
+        log.warning("GovernmentJobs fetch failed for %s: %s", name, exc)
+        return {
+            "name": name,
+            "status": "FAIL",
+            "total": 0,
+            "titles": 0,
+            "jobs": [],
+            "strategy": "governmentjobs_html",
+            "error": str(exc),
+        }
+    page = str(getattr(response, "text", "") or "")
+    soup = BeautifulSoup(page, "html.parser")
+    jobs: list[dict] = []
+    for card in soup.select("li.job-item[data-job-id]"):
+        link = card.select_one("a.job-details-link[href]")
+        if link is None:
+            continue
+        job_url = _validated_same_origin_url(safe_url, link.get("href"), field=f"{name} job URL")
+        if job_url is None:
+            continue
+        title = link.get_text(" ", strip=True)
+        if not title:
+            continue
+        company_node = card.select_one(".job-organization")
+        location_node = card.select_one(".job-location")
+        primary = [node.get_text(" ", strip=True) for node in card.select(".primaryInfo")]
+        work_text = primary[-1] if len(primary) >= 3 else ""
+        employment_type, separator, salary = work_text.partition("|")
+        jobs.append(
+            {
+                "url": job_url,
+                "application_url": job_url,
+                "title": title,
+                "company": company_node.get_text(" ", strip=True) if company_node else name,
+                "location": location_node.get_text(" ", strip=True) if location_node else "",
+                "salary": salary.strip() if separator else "",
+                "description": work_text,
+                "employment_type": employment_type.strip() if separator else work_text,
+                "availability_state": "open",
+            }
+        )
+    authoritative_zero = re.search(r"\b0\s+jobs?\s+found\b", soup.get_text(" ", strip=True), re.IGNORECASE)
+    status = "PASS" if jobs or authoritative_zero else "FAIL"
+    return {
+        "name": name,
+        "status": status,
+        "total": len(jobs),
+        "titles": sum(bool(job.get("title")) for job in jobs),
+        "jobs": jobs,
+        "strategy": "governmentjobs_html",
+    }
+
+
+def _run_jobaps_board(name: str, url: str) -> dict:
+    """Parse a current JobAps board and require same-origin apply metadata."""
+    safe_url = validate_external_url(url, field=f"{name} JobAps URL")
+    if _governmentjobs_adapter_for_url(safe_url) != "jobaps":
+        return {
+            "name": name,
+            "status": "FAIL",
+            "total": 0,
+            "titles": 0,
+            "jobs": [],
+            "strategy": "jobaps_html",
+        }
+    try:
+        with httpx.Client(follow_redirects=False, timeout=20) as client:
+            response = _fetch_job_page(client, safe_url, headers={"User-Agent": UA})
+    except Exception as exc:
+        log.warning("JobAps fetch failed for %s: %s", name, exc)
+        return {
+            "name": name,
+            "status": "FAIL",
+            "total": 0,
+            "titles": 0,
+            "jobs": [],
+            "strategy": "jobaps_html",
+            "error": str(exc),
+        }
+    page = str(getattr(response, "text", "") or "")
+    soup = BeautifulSoup(page, "html.parser")
+    jobs: list[dict] = []
+    for row in soup.select("tr"):
+        link = row.select_one("th.JobTitle a.JobTitle[href]")
+        props_node = row.select_one('input[id^="rowJobProps_"][value]')
+        if link is None or props_node is None:
+            continue
+        try:
+            props = json.loads(html.unescape(str(props_node.get("value") or "")))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            continue
+        if str(props.get("noapply") or "0").strip() not in {"", "0", "false", "False"}:
+            continue
+        job_url = _validated_same_origin_url(
+            safe_url,
+            props.get("url") or link.get("href"),
+            field=f"{name} job URL",
+        )
+        application_url = _validated_same_origin_url(
+            safe_url,
+            props.get("apply"),
+            field=f"{name} apply URL",
+        )
+        if job_url is None or application_url is None:
+            continue
+        title = link.get_text(" ", strip=True)
+        if not title:
+            continue
+        location_node = row.select_one("td.Locs")
+        salary_node = row.select_one("td.Salary")
+        department_node = row.select_one("td.Dept")
+        deadline_node = row.select_one("td.Deadline")
+        department = department_node.get_text(" ", strip=True) if department_node else ""
+        deadline = deadline_node.get_text(" ", strip=True) if deadline_node else ""
+        if _filing_deadline_is_past(deadline):
+            continue
+        description_parts = [
+            f"Department: {department}" if department else "",
+            f"Filing Deadline: {deadline}" if deadline else "",
+        ]
+        jobs.append(
+            {
+                "url": job_url,
+                "application_url": application_url,
+                "title": title,
+                "company": name,
+                "location": location_node.get_text(" ", strip=True) if location_node else "",
+                "salary": salary_node.get_text(" ", strip=True) if salary_node else "",
+                "description": "; ".join(part for part in description_parts if part),
+                "availability_state": "open",
+            }
+        )
+    authoritative_zero = re.search(
+        r"\b(?:0\s+jobs?|no\s+(?:current\s+)?job(?:s|\s+openings?))\b",
+        soup.get_text(" ", strip=True),
+        re.IGNORECASE,
+    )
+    status = "PASS" if jobs or authoritative_zero else "FAIL"
+    return {
+        "name": name,
+        "status": status,
+        "total": len(jobs),
+        "titles": sum(bool(job.get("title")) for job in jobs),
+        "jobs": jobs,
+        "strategy": "jobaps_html",
+    }
+
+
+def _calcareers_detail(card: Tag, selector: str) -> str:
+    node = card.select_one(f"{selector} .job-details")
+    return node.get_text(" ", strip=True) if node else ""
+
+
+def _filing_deadline_is_past(value: str, *, today: date | None = None) -> bool:
+    normalized = " ".join(str(value or "").split())
+    if not normalized or normalized.casefold() in {"continuous", "open until filled"}:
+        return False
+    for pattern in ("%m/%d/%Y", "%m/%d/%y", "%B %d, %Y", "%b %d, %Y"):
+        try:
+            deadline = datetime.strptime(normalized, pattern).date()
+        except ValueError:
+            continue
+        return deadline < (today or date.today())
+    return False
+
+
+def _parse_calcareers_results(page: str, name: str) -> list[dict]:
+    """Parse current CalCareers result cards after a deterministic search postback."""
+    soup = BeautifulSoup(page, "html.parser")
+    base_url = "https://www.calcareers.ca.gov/"
+    jobs: list[dict] = []
+    for card in soup.select("div.card-block"):
+        link = card.select_one('a.lead[href*="JobPosting.aspx?JobControlId="]')
+        if link is None:
+            continue
+        job_url = _validated_same_origin_url(base_url, link.get("href"), field=f"{name} job URL")
+        if job_url is None:
+            continue
+        classification = link.get_text(" ", strip=True)
+        working_title = _calcareers_detail(card, ".working-title")
+        title = classification
+        if working_title and working_title.casefold() != classification.casefold():
+            title = f"{classification} — {working_title}"
+        schedule = _calcareers_detail(card, ".schedule")
+        telework = _calcareers_detail(card, ".telework")
+        location = _calcareers_detail(card, ".location")
+        if location.casefold().endswith(" county"):
+            location = f"{location}, CA"
+        deadline = ""
+        for filing in card.select(".filing-date"):
+            if "filing deadline" in filing.get_text(" ", strip=True).casefold():
+                deadline_node = filing.select_one(".job-details")
+                deadline = deadline_node.get_text(" ", strip=True) if deadline_node else ""
+                break
+        if _filing_deadline_is_past(deadline):
+            continue
+        description_parts = [
+            schedule,
+            telework,
+            f"Filing Deadline: {deadline}" if deadline else "",
+        ]
+        jobs.append(
+            {
+                "url": job_url,
+                "application_url": job_url,
+                "title": title,
+                "company": _calcareers_detail(card, ".department") or name,
+                "location": location,
+                "salary": _calcareers_detail(card, ".salary-range"),
+                "description": "; ".join(part for part in description_parts if part),
+                "employment_type": schedule,
+                "availability_state": "open",
+            }
+        )
+    return jobs
+
+
+def _run_calcareers_search(name: str, url: str, query: str) -> dict:
+    """Submit one bounded CalCareers search without selector cache or LLM planning."""
+    safe_url = validate_external_url(url, field=f"{name} CalCareers URL")
+    parsed = urlparse(safe_url)
+    if (
+        parsed.scheme.casefold() != "https"
+        or (parsed.hostname or "").casefold() not in {"calcareers.ca.gov", "www.calcareers.ca.gov"}
+        or not query.strip()
+        or len(query) > 200
+    ):
+        return {
+            "name": name,
+            "status": "FAIL",
+            "total": 0,
+            "titles": 0,
+            "jobs": [],
+            "strategy": "calcareers_postback",
+        }
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(user_agent=UA)
+        try:
+            response = page.goto(safe_url, timeout=60000)
+            if response is not None:
+                validate_navigation_url(getattr(response, "url", None), field=f"{name} CalCareers URL")
+            page.locator("#cphMainContent_txtKeyword").fill(query)
+            exact = page.locator("#cphMainContent_chkExactWordMatch")
+            if exact.is_checked():
+                exact.uncheck()
+            page.locator("#cphMainContent_btnSearch").click()
+            page.wait_for_function(
+                "() => /(?:\\d+\\s+job\\(s\\) found\\.|no jobs found)/i.test(document.body.innerText)",
+                timeout=60000,
+            )
+            validate_navigation_url(getattr(page, "url", safe_url), field=f"{name} CalCareers URL")
+            rendered = page.content()
+        finally:
+            browser.close()
+    jobs = _parse_calcareers_results(rendered, name)
+    authoritative_zero = re.search(r"\b0\s+job\(s\)\s+found\b", rendered, re.IGNORECASE)
+    return {
+        "name": name,
+        "status": "PASS" if jobs or authoritative_zero else "FAIL",
+        "total": len(jobs),
+        "titles": sum(bool(job.get("title")) for job in jobs),
+        "jobs": jobs,
+        "strategy": "calcareers_postback",
+    }
+
+
 def _load_plan_cache() -> dict:
     """Load cached extraction plans from disk."""
     if _PLAN_CACHE_PATH.exists():
@@ -436,8 +760,13 @@ def _resolved_discovery_policy(
 ) -> tuple[str, str]:
     resolved_label = market_label
     resolved_mode = str(application_mode or "manual_review").strip().casefold()
-    if not resolved_label and search_config:
-        resolved_label, resolved_policy = market_policy_for_job(search_config, row)
+    if search_config:
+        actual_location = str(row.get("location") or "").strip()
+        candidate = {
+            **row,
+            "market_label": market_label if _is_broad_remote_or_unknown(actual_location) else "",
+        }
+        resolved_label, resolved_policy = market_policy_for_job(search_config, candidate)
         resolved_mode = str(resolved_policy.get("application_mode") or "manual_review").strip().casefold()
     if source_verification != "official" and resolved_mode == "active":
         resolved_mode = "manual_review"
@@ -504,13 +833,22 @@ def _store_jobs_filtered(
     normalized_verification = _normalized_source_verification(source_verification)
 
     for job in jobs:
+        row_filter_rules = filter_rules
+        if search_config:
+            from divapply.discovery.jobspy import _load_filter_rules
+
+            effective_config = effective_search_config(
+                search_config,
+                {**job, "market_label": ""},
+            )
+            row_filter_rules = _load_filter_rules(effective_config)
         url, row, rejection = _filtered_job_row(
             job,
             site=site,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
             title_excludes=title_excludes,
-            filter_rules=filter_rules,
+            filter_rules=row_filter_rules,
         )
         if row is None:
             filtered += int(rejection == "location")
@@ -526,6 +864,11 @@ def _store_jobs_filtered(
             search_config=search_config,
         )
         employment_type, hours = _infer_work_schedule(job)
+        availability_state = str(job.get("availability_state") or "unknown").strip().casefold()
+        if availability_state not in {"open", "closed", "unknown"}:
+            availability_state = "unknown"
+        availability_checked_at = now if availability_state in {"open", "closed"} else None
+        last_seen_at = now if normalized_verification == "official" else None
         was_existing = conn.execute("SELECT 1 FROM jobs WHERE url = ?", (url,)).fetchone() is not None
         full_description = job.get("full_description")
         application_url = job.get("application_url") or url
@@ -534,8 +877,8 @@ def _store_jobs_filtered(
             "INSERT INTO jobs (url, title, company, salary, description, location, site, strategy, "
             "discovered_at, market_label, search_query, application_mode, employment_type, "
             "hours_per_week, source_verification, official_url_verified_at, full_description, "
-            "application_url, detail_scraped_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+            "application_url, detail_scraped_at, availability_state, availability_checked_at, last_seen_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(url) DO UPDATE SET "
             "title=excluded.title, company=excluded.company, salary=excluded.salary, "
             "description=excluded.description, location=excluded.location, site=excluded.site, "
@@ -553,6 +896,21 @@ def _store_jobs_filtered(
             "detail_error=CASE "
             "WHEN jobs.source_verification='official' AND excluded.full_description IS NULL "
             "THEN jobs.detail_error ELSE NULL END, "
+            "availability_state=CASE "
+            "WHEN excluded.availability_state IN ('open', 'closed') THEN excluded.availability_state "
+            "ELSE jobs.availability_state END, "
+            "availability_checked_at=CASE "
+            "WHEN excluded.availability_state IN ('open', 'closed') THEN excluded.availability_checked_at "
+            "ELSE jobs.availability_checked_at END, "
+            "last_seen_at=excluded.last_seen_at, "
+            "archived_at=CASE "
+            "WHEN excluded.availability_state='open' "
+            "AND COALESCE(jobs.archive_reason, 'legacy') IN ('legacy', 'source_closed') "
+            "THEN NULL ELSE jobs.archived_at END, "
+            "archive_reason=CASE "
+            "WHEN excluded.availability_state='open' "
+            "AND COALESCE(jobs.archive_reason, 'legacy') IN ('legacy', 'source_closed') "
+            "THEN NULL ELSE jobs.archive_reason END, "
             f"fit_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.fit_score END, "
             f"llm_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.llm_score END, "
             f"keyword_score=CASE WHEN {_OFFICIAL_REFRESH_INVALIDATES_SQL} THEN NULL ELSE jobs.keyword_score END, "
@@ -599,6 +957,9 @@ def _store_jobs_filtered(
                 full_description,
                 application_url,
                 detail_scraped_at,
+                availability_state,
+                availability_checked_at,
+                last_seen_at,
             ),
         )
         if not was_existing:
@@ -1600,6 +1961,13 @@ def build_scrape_targets(
                 if site_location_labels and search["location_label"] not in site_location_labels:
                     continue
                 query = search["query"]
+                allowed_queries = {
+                    str(value).strip().casefold()
+                    for value in (site.get("queries") or [])
+                    if str(value).strip()
+                }
+                if allowed_queries and query.strip().casefold() not in allowed_queries:
+                    continue
                 expanded_url = site_url
                 expanded_url = expanded_url.replace("{query_encoded}", quote_plus(query))
                 expanded_url = expanded_url.replace("{query}", quote_plus(query))
@@ -1622,6 +1990,7 @@ def build_scrape_targets(
                     ),
                     "source_verification": verification,
                     "adapter": str(site.get("adapter") or "").strip().casefold()
+                    or _governmentjobs_adapter_for_url(safe_url)
                     or ("greenhouse" if _greenhouse_board_token(safe_url) else None),
                 })
         else:
@@ -1639,6 +2008,7 @@ def build_scrape_targets(
                 "application_mode": "manual_review",
                 "source_verification": verification,
                 "adapter": str(site.get("adapter") or "").strip().casefold()
+                or _governmentjobs_adapter_for_url(safe_url)
                 or ("greenhouse" if _greenhouse_board_token(safe_url) else None),
             })
 
@@ -1654,6 +2024,12 @@ def _run_target_with_cache(target: dict, cache: dict, cache_lock) -> dict:
         return _run_phenom_search(target["name"], target["url"])
     if target.get("adapter") == "greenhouse":
         return _run_greenhouse_board(target["name"], target["url"])
+    if target.get("adapter") == "governmentjobs":
+        return _run_governmentjobs_search(target["name"], target["url"])
+    if target.get("adapter") == "jobaps":
+        return _run_jobaps_board(target["name"], target["url"])
+    if target.get("adapter") == "calcareers":
+        return _run_calcareers_search(target["name"], target["url"], str(target.get("query") or ""))
     with cache_lock:
         cached = cache.get(target["name"])
     result = _run_one_site(target["name"], target["url"], cached_plan=cached)

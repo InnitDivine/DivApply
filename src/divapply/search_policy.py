@@ -238,6 +238,16 @@ def effective_search_config(search_config: dict[str, Any], job: dict[str, Any]) 
     for key in ("application_mode", "preferred_schedule", "require_benefits", "require_part_time"):
         if key in policy:
             effective[key] = policy[key]
+    for key in (
+        "include_titles",
+        "company_blacklist",
+        "required_keywords",
+        "excluded_keywords",
+        "customer_service_title_terms",
+        "trusted_local_sites",
+    ):
+        if key in policy:
+            effective[key] = copy.deepcopy(policy[key])
     if "max_hours_per_week" in policy:
         effective["max_hours_per_week"] = policy["max_hours_per_week"]
         effective["customer_service_max_hours_per_week"] = policy["max_hours_per_week"]

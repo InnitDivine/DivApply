@@ -2,6 +2,14 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.5
+
+- Added deterministic current-vacancy discovery for GovernmentJobs/SchoolJobs, JobAps, and bounded CalCareers searches, including official application links and filing-deadline checks.
+- Added typed availability and archive provenance so verified-open legacy/source-closed jobs can return while user- and policy-archived jobs remain hidden.
+- Made discovery policy resolve from each result's actual market, isolated Logan part-time fallbacks from California career searches, and changed title allowlists to whole-term matching.
+- Removed candidate-specific relevance scoring from enrichment and added deterministic GovernmentJobs and CalCareers detail extraction so current roles reach scoring without an LLM parser.
+- Made long exact cover-letter titles deterministic and disambiguated academic seasons such as `Spring 2026` from similarly named software frameworks.
+
 ## 0.5.4
 
 - Added deterministic Phenom employer-site discovery and current-state refresh so reused, open requisitions do not remain falsely expired.

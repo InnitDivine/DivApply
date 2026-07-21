@@ -15,6 +15,7 @@ from divapply.discovery.jobspy import (
     _load_title_excludes,
     _row_is_effectively_remote,
     _scrape_with_retry,
+    _title_include_ok,
     _title_ok,
 )
 
@@ -62,6 +63,13 @@ def test_search_config_derives_accept_terms_from_locations() -> None:
 def test_title_excludes_match_terms_not_substrings() -> None:
     assert not _title_ok("Office Manager", ["manager"])
     assert _title_ok("Management Assistant", ["manager"])
+
+
+def test_v107_title_includes_match_terms_not_substrings() -> None:
+    assert _title_include_ok("Office Technician", ["office"])
+    assert not _title_include_ok("Correctional Officer", ["office"])
+    assert _title_include_ok("IT Assistant", ["IT"])
+    assert not _title_include_ok("Benefits Assistant", ["IT"])
 
 
 def test_job_row_passes_filters_rejects_blacklist_and_missing_required_keyword() -> None:

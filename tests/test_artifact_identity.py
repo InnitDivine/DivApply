@@ -57,7 +57,9 @@ def _artifact_db(jobs: list[dict[str, object]]) -> sqlite3.Connection:
             apply_status TEXT,
             archived_at TEXT,
             application_mode TEXT,
-            source_verification TEXT
+            source_verification TEXT,
+            availability_state TEXT DEFAULT 'open',
+            archive_reason TEXT
         )
         """
     )
