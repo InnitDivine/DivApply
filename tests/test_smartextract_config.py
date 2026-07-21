@@ -476,6 +476,90 @@ def test_v102_v105_governmentjobs_adapter_parses_only_same_origin_open_rows(monk
     ]
 
 
+def test_v111_governmentjobs_agency_board_fetches_fragment(monkeypatch) -> None:
+    landing = """<html><body><div>0 jobs found</div></body></html>"""
+    fragment = """
+    <ul class="search-results-listing-container">
+      <li class="list-item" data-job-id="5386884">
+        <h3 class="job-item-link-container">
+          <a class="item-details-link" data-department-name="Information Technology"
+             href="/careers/examplecity/jobs/5386884/database-analyst-1500">Database Analyst 1500</a>
+        </h3>
+        <ul class="list-meta">
+          <li>Temporary 1500 HR <span>-</span> $37.45 - $57.96 Hourly</li>
+          <li class="categories-list">Category: IT and Computers</li>
+        </ul>
+        <div class="list-entry">Support and protect agency data systems.</div>
+      </li>
+      <li class="list-item" data-job-id="5386884">
+        <h3><a class="item-details-link"
+          href="/careers/examplecity/jobs/5386884/database-analyst-1500">Database Analyst 1500</a></h3>
+      </li>
+    </ul>
+    """
+    calls: list[tuple[str, dict[str, str]]] = []
+
+    class Response:
+        def __init__(self, text: str) -> None:
+            self.text = text
+
+    def fake_fetch(_client, url, *, headers):
+        calls.append((url, headers))
+        if url.endswith("/careers/home/index?agency=examplecity"):
+            return Response(fragment)
+        return Response(landing)
+
+    monkeypatch.setattr(smartextract, "_fetch_job_page", fake_fetch)
+
+    result = smartextract._run_governmentjobs_search(
+        "City of Example",
+        "https://www.governmentjobs.com/careers/examplecity",
+    )
+
+    assert [call[0] for call in calls] == [
+        "https://www.governmentjobs.com/careers/examplecity",
+        "https://www.governmentjobs.com/careers/home/index?agency=examplecity",
+    ]
+    assert calls[1][1]["X-Requested-With"] == "XMLHttpRequest"
+    assert calls[1][1]["Referer"] == "https://www.governmentjobs.com/careers/examplecity"
+    assert result["status"] == "PASS"
+    assert result["total"] == 1
+    assert result["jobs"] == [
+        {
+            "url": "https://www.governmentjobs.com/careers/examplecity/jobs/5386884/database-analyst-1500",
+            "application_url": "https://www.governmentjobs.com/careers/examplecity/jobs/5386884/database-analyst-1500",
+            "title": "Database Analyst 1500",
+            "company": "City of Example",
+            "location": "",
+            "salary": "$37.45 - $57.96 Hourly",
+            "description": "Support and protect agency data systems.",
+            "employment_type": "Temporary 1500 HR",
+            "availability_state": "open",
+        }
+    ]
+
+
+def test_v111_governmentjobs_global_search_zero_is_authoritative(monkeypatch) -> None:
+    calls: list[str] = []
+
+    class Response:
+        text = "<html><body><div>0 jobs found</div></body></html>"
+
+    def fake_fetch(_client, url, *, headers):
+        assert headers["User-Agent"]
+        calls.append(url)
+        return Response()
+
+    monkeypatch.setattr(smartextract, "_fetch_job_page", fake_fetch)
+    url = "https://www.governmentjobs.com/jobs?keyword=analyst&location=Exampletown%2C+YY"
+
+    result = smartextract._run_governmentjobs_search("GovernmentJobs.com", url)
+
+    assert calls == [url]
+    assert result["status"] == "PASS"
+    assert result["total"] == 0
+
+
 def test_v102_v105_jobaps_adapter_requires_applyable_same_origin_board_row(monkeypatch) -> None:
     page = """
     <html><body><table>

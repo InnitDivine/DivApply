@@ -214,6 +214,7 @@
 - V108: enrichment stage never assigns fit score/irrelevance or skips a discovered row by hard-coded candidate title; discovery policy + scoring own relevance.
 - V109: supported official-government detail URL → deterministic 200+ character job evidence + exact validated official listing/application entry; no LLM or arbitrary content-link promotion.
 - V110: ambiguous tool name triggers fabrication guard only with technical context; season/date phrase `Spring 2026` ≠ Spring framework claim.
+- V111: GovernmentJobs agency landing placeholder ≠ authoritative zero; validated same-origin agency fragment fetched + current cards deduped before availability decision.
 
 ## §T
 
@@ -277,6 +278,7 @@
 |T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|x|
 |T57|make Phenom discovery + generated PDFs deterministic/ATS-readable/truthful|Phenom current/reopen tests + schedule normalization + ATS extraction/order/render inspection + evidence-context/title/structure regressions + full gates; V73,V78,V86,V87,V97-V101,I36,I37|x|
 |T58|repair official-government availability + market-specific discovery|GovernmentJobs/JobAps/CalCareers fixture/live canaries + archive/market/title/detail/document regressions + local DB repair; V32,V38,V64,V73,V78,V86,V101-V110,I38,I39|x|
+|T59|repair async GovernmentJobs agency discovery|`test_v111_governmentjobs_agency_board_fetches_fragment` + false-zero/dedup regressions + Roseville live canary; V102,V105,V111,I39|x|
 
 ## §B
 
@@ -494,3 +496,5 @@
 |B210|valid score-5 government résumé has no cover after four drafts|model repeatedly shortens long parenthetical target title; exact-title gate has no deterministic repair|V101|T58|idempotent exact-title normalization + failed-stage rerun|
 |B211|title-repaired cover still exhausts on unsupported `spring`|fabrication watchlist treats academic season/date as Spring software framework|V38,V110|T58|technical-context matcher + season/framework regression + failed-stage rerun|
 |B212|full gate has 9 `no such column` fixture failures|hand-built unit schemas omit v6 availability/archive fields and bypass migrations|V51,V103|T58|advance minimal fixture schemas; keep production gates intact|
+|B213|Roseville board shows 10 live jobs after async load; DivApply returns 0|agency landing placeholder treated authoritative; official fragment never fetched|V111|T59|fragment fetch + card dedup regression + live rediscovery|
+|B214|version parity gate sees lock `0.5.5`|unqualified `uv` absent from PATH; lock update never ran|V14,V49|T59|invoke `.venv/Scripts/uv.exe`; rerun parity gate|

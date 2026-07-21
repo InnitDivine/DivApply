@@ -331,6 +331,73 @@ def _governmentjobs_adapter_for_url(url: str) -> str | None:
     return None
 
 
+def _governmentjobs_agency_fragment_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    segments = [segment for segment in parsed.path.split("/") if segment]
+    if len(segments) != 2 or segments[0].casefold() != "careers":
+        return None
+    agency = segments[1]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", agency):
+        return None
+    origin = f"{parsed.scheme}://{parsed.netloc}"
+    fragment_url = f"{origin}/careers/home/index?agency={quote(agency, safe='')}"
+    return _validated_same_origin_url(url, fragment_url, field="GovernmentJobs agency fragment URL")
+
+
+def _governmentjobs_work_fields(card: Tag) -> tuple[str, str, str]:
+    primary = [node.get_text(" ", strip=True) for node in card.select(".primaryInfo")]
+    work_text = primary[-1] if len(primary) >= 3 else ""
+    if not work_text:
+        meta_node = next(
+            (node for node in card.select("ul.list-meta > li") if "categories-list" not in (node.get("class") or [])),
+            None,
+        )
+        work_text = meta_node.get_text(" ", strip=True) if meta_node else ""
+    employment_type, separator, salary = work_text.partition("|")
+    if not separator:
+        match = re.match(r"^(.*?)\s+-\s+(\$.*)$", work_text)
+        if match:
+            employment_type, salary = match.groups()
+    return work_text, employment_type.strip(), salary.strip()
+
+
+def _parse_governmentjobs_jobs(page: str, *, name: str, base_url: str) -> list[dict]:
+    soup = BeautifulSoup(page, "html.parser")
+    jobs: list[dict] = []
+    seen_urls: set[str] = set()
+    for card in soup.select("li.job-item[data-job-id], li.list-item[data-job-id]"):
+        link = card.select_one("a.job-details-link[href], a.item-details-link[href]")
+        if link is None:
+            continue
+        job_url = _validated_same_origin_url(base_url, link.get("href"), field=f"{name} job URL")
+        if job_url is None or job_url in seen_urls:
+            continue
+        title = link.get_text(" ", strip=True)
+        if not title:
+            continue
+        company_node = card.select_one(".job-organization")
+        location_node = card.select_one(".job-location")
+        work_text, employment_type, salary = _governmentjobs_work_fields(card)
+        description_node = card.select_one(".list-entry")
+        jobs.append(
+            {
+                "url": job_url,
+                "application_url": job_url,
+                "title": title,
+                "company": company_node.get_text(" ", strip=True) if company_node else name,
+                "location": location_node.get_text(" ", strip=True) if location_node else "",
+                "salary": salary,
+                "description": (
+                    description_node.get_text(" ", strip=True) if description_node else work_text
+                ),
+                "employment_type": employment_type,
+                "availability_state": "open",
+            }
+        )
+        seen_urls.add(job_url)
+    return jobs
+
+
 def _run_governmentjobs_search(name: str, url: str) -> dict:
     """Parse current NEOGOV search/agency results without cached selectors or an LLM."""
     safe_url = validate_external_url(url, field=f"{name} GovernmentJobs URL")
@@ -346,6 +413,17 @@ def _run_governmentjobs_search(name: str, url: str) -> dict:
     try:
         with httpx.Client(follow_redirects=False, timeout=20) as client:
             response = _fetch_job_page(client, safe_url, headers={"User-Agent": UA})
+            agency_fragment_url = _governmentjobs_agency_fragment_url(safe_url)
+            if agency_fragment_url:
+                response = _fetch_job_page(
+                    client,
+                    agency_fragment_url,
+                    headers={
+                        "User-Agent": UA,
+                        "X-Requested-With": "XMLHttpRequest",
+                        "Referer": safe_url,
+                    },
+                )
     except Exception as exc:
         log.warning("GovernmentJobs fetch failed for %s: %s", name, exc)
         return {
@@ -359,35 +437,7 @@ def _run_governmentjobs_search(name: str, url: str) -> dict:
         }
     page = str(getattr(response, "text", "") or "")
     soup = BeautifulSoup(page, "html.parser")
-    jobs: list[dict] = []
-    for card in soup.select("li.job-item[data-job-id]"):
-        link = card.select_one("a.job-details-link[href]")
-        if link is None:
-            continue
-        job_url = _validated_same_origin_url(safe_url, link.get("href"), field=f"{name} job URL")
-        if job_url is None:
-            continue
-        title = link.get_text(" ", strip=True)
-        if not title:
-            continue
-        company_node = card.select_one(".job-organization")
-        location_node = card.select_one(".job-location")
-        primary = [node.get_text(" ", strip=True) for node in card.select(".primaryInfo")]
-        work_text = primary[-1] if len(primary) >= 3 else ""
-        employment_type, separator, salary = work_text.partition("|")
-        jobs.append(
-            {
-                "url": job_url,
-                "application_url": job_url,
-                "title": title,
-                "company": company_node.get_text(" ", strip=True) if company_node else name,
-                "location": location_node.get_text(" ", strip=True) if location_node else "",
-                "salary": salary.strip() if separator else "",
-                "description": work_text,
-                "employment_type": employment_type.strip() if separator else work_text,
-                "availability_state": "open",
-            }
-        )
+    jobs = _parse_governmentjobs_jobs(page, name=name, base_url=safe_url)
     authoritative_zero = re.search(r"\b0\s+jobs?\s+found\b", soup.get_text(" ", strip=True), re.IGNORECASE)
     status = "PASS" if jobs or authoritative_zero else "FAIL"
     return {
