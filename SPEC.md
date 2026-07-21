@@ -215,6 +215,7 @@
 - V109: supported official-government detail URL → deterministic 200+ character job evidence + exact validated official listing/application entry; no LLM or arbitrary content-link promotion.
 - V110: ambiguous tool name triggers fabrication guard only with technical context; season/date phrase `Spring 2026` ≠ Spring framework claim.
 - V111: GovernmentJobs agency landing placeholder ≠ authoritative zero; validated same-origin agency fragment fetched + current cards deduped before availability decision.
+- V112: structured job-description HTML/entities decoded to readable plain text before persistence/scoring; qualification wording retained, markup discarded.
 
 ## §T
 
@@ -279,6 +280,7 @@
 |T57|make Phenom discovery + generated PDFs deterministic/ATS-readable/truthful|Phenom current/reopen tests + schedule normalization + ATS extraction/order/render inspection + evidence-context/title/structure regressions + full gates; V73,V78,V86,V87,V97-V101,I36,I37|x|
 |T58|repair official-government availability + market-specific discovery|GovernmentJobs/JobAps/CalCareers fixture/live canaries + archive/market/title/detail/document regressions + local DB repair; V32,V38,V64,V73,V78,V86,V101-V110,I38,I39|x|
 |T59|repair async GovernmentJobs agency discovery|`test_v111_governmentjobs_agency_board_fetches_fragment` + false-zero/dedup regressions + Roseville live canary; V102,V105,V111,I39|x|
+|T60|decode structured job descriptions before scoring|encoded JSON-LD qualification regression + target rescore; V38,V73,V112|x|
 
 ## §B
 
@@ -498,3 +500,4 @@
 |B212|full gate has 9 `no such column` fixture failures|hand-built unit schemas omit v6 availability/archive fields and bypass migrations|V51,V103|T58|advance minimal fixture schemas; keep production gates intact|
 |B213|Roseville board shows 10 live jobs after async load; DivApply returns 0|agency landing placeholder treated authoritative; official fragment never fetched|V111|T59|fragment fetch + card dedup regression + live rediscovery|
 |B214|version parity gate sees lock `0.5.5`|unqualified `uv` absent from PATH; lock update never ran|V14,V49|T59|invoke `.venv/Scripts/uv.exe`; rerun parity gate|
+|B215|Database Analyst score says qualifications unavailable while stored text contains `&lt;...&gt;` degree rules|JSON-LD cleaner parses before decoding HTML entities|V112|T60|decode entities, strip markup, regression + rescore|

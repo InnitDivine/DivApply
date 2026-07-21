@@ -17,6 +17,7 @@ import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
+from html import unescape as html_unescape
 from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup
@@ -590,6 +591,15 @@ def clean_description(text: str) -> str:
     """Convert HTML description to clean readable text."""
     if not text:
         return ""
+
+    # Some ATS feeds put an HTML document inside a JSON-LD string and entity-
+    # encode the markup (occasionally more than once). Decode before parsing so
+    # qualification headings and credential requirements reach scoring as text.
+    for _ in range(3):
+        decoded = html_unescape(text)
+        if decoded == text:
+            break
+        text = decoded
 
     if "<" in text and ">" in text:
         soup = BeautifulSoup(text, "html.parser")
