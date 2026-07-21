@@ -2,6 +2,10 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.8
+
+- Preserved Experience, Training, Education, and License requirement bodies in bounded scoring context instead of retaining only linked qualification preambles.
+
 ## 0.5.7
 
 - Decoded entity-escaped HTML from structured job descriptions before persistence and scoring, preserving readable minimum qualifications while removing markup.

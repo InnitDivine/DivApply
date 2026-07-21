@@ -78,6 +78,10 @@ REQUIREMENT_CONTEXT_MARKERS = (
     "license required",
     "certification required",
     "equivalent experience",
+    "\nexperience:",
+    "\ntraining:",
+    "\neducation:",
+    "\nlicense or certificate",
 )
 
 
