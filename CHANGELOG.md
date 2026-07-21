@@ -2,6 +2,10 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.7
+
+- Decoded entity-escaped HTML from structured job descriptions before persistence and scoring, preserving readable minimum qualifications while removing markup.
+
 ## 0.5.6
 
 - Fixed GovernmentJobs agency boards that render a temporary zero before asynchronously loading current vacancies from the official agency endpoint.

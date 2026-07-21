@@ -53,6 +53,30 @@ def test_extract_from_json_ld_finds_nested_graph_jobposting() -> None:
     }
 
 
+def test_v112_extract_from_json_ld_decodes_encoded_qualification_markup() -> None:
+    description = (
+        "&lt;section&gt;&lt;h2&gt;Experience and Training&lt;/h2&gt;"
+        "&lt;p&gt;&lt;strong&gt;Experience:&lt;/strong&gt; No professional experience is required.&lt;/p&gt;"
+        "&lt;p&gt;AND&lt;/p&gt;"
+        "&lt;p&gt;&lt;strong&gt;Training:&lt;/strong&gt; A Bachelor’s degree from an accredited college or "
+        "university, preferably with major course work in computer science, information systems, "
+        "GIS or a related field.&lt;/p&gt;"
+        "&lt;p&gt;&lt;strong&gt;License:&lt;/strong&gt; Possession of a valid California driver’s license by "
+        "date of appointment.&lt;/p&gt;&lt;/section&gt;"
+    )
+    intel = {"json_ld": [{"@type": "JobPosting", "description": description}]}
+
+    result = detail.extract_from_json_ld(intel)
+
+    assert result is not None
+    cleaned = result["full_description"]
+    assert "No professional experience is required." in cleaned
+    assert "A Bachelor’s degree" in cleaned
+    assert "valid California driver’s license" in cleaned
+    assert "&lt;" not in cleaned
+    assert "<section>" not in cleaned
+
+
 def test_extract_from_json_ld_prefers_longest_jobposting_in_nested_graph() -> None:
     short_description = "This job is inactive."
     full_description = """
