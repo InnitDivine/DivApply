@@ -29,6 +29,8 @@ from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
     ALLOWED_SKILLS_SECTION_TITLES,
     BANNED_WORDS,
+    candidate_evidence_supports,
+    prune_unsupported_tailored_skills,
     sanitize_text,
     validate_json_fields,
     validate_tailored_resume,
@@ -685,6 +687,66 @@ def judge_tailored_resume(original_text: str, tailored_text: str, job_title: str
     }
 
 
+def _judge_rejection_contradicts_candidate_evidence(
+    judge: dict,
+    profile: dict,
+    original_text: str,
+) -> bool:
+    """Detect a narrow absence-only judge failure contradicted by exact evidence."""
+    if judge.get("passed"):
+        return False
+    issues = str(judge.get("issues") or "")
+    lowered = issues.casefold()
+    absence_markers = (
+        "not supported",
+        "unsupported",
+        "absent from",
+        "not present",
+        "only supports",
+        "does not list",
+        "neither is supported",
+    )
+    context_markers = (
+        "paid work",
+        "paid-work",
+        "professional experience",
+        "work history",
+        "job bullet",
+        "employer",
+        "company",
+        "moves ",
+        "moved ",
+        "attribut",
+    )
+    if not any(marker in lowered for marker in absence_markers):
+        return False
+    if any(marker in lowered for marker in context_markers):
+        return False
+    quoted = [
+        left or right
+        for left, right in re.findall(r'[“"]([^”"]+)[”"]|[‘]([^’]+)[’]', issues)
+        if left or right
+    ]
+    canonical_resume = assemble_resume_text(
+        {
+            "title": "",
+            "summary": "",
+            "skills_section_title": "TECHNICAL SKILLS",
+            "skills": {},
+            "experience": [],
+            "projects": [],
+        },
+        profile,
+    )
+    canonical_evidence = " ".join(canonical_resume.casefold().split())
+
+    def supported(phrase: str) -> bool:
+        normalized = " ".join(phrase.casefold().split()).strip(" .:-")
+        return candidate_evidence_supports(phrase, profile, original_text) or normalized in canonical_evidence
+
+    return bool(quoted) and all(supported(phrase) for phrase in quoted)
+
+
 # â”€â”€ Core Tailoring â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
@@ -777,6 +839,11 @@ def tailor_resume(
         # Normalize inconsistent LLM output types (lists/dicts for skills/education)
         data = _normalize_resume_json(data)
         data = _enforce_one_page_shape(data)
+        data["skills"] = prune_unsupported_tailored_skills(
+            data.get("skills"),
+            profile,
+            original_text=resume_text,
+        )
 
         # Layer 1: Validate JSON fields
         validation = validate_json_fields(
@@ -820,6 +887,16 @@ def tailor_resume(
             return tailored, report
 
         judge = judge_tailored_resume(resume_text, tailored, job.get("title", ""), profile)
+        if _judge_rejection_contradicts_candidate_evidence(judge, profile, resume_text):
+            original_issues = str(judge.get("issues") or "")
+            log.warning("Judge absence claim contradicted exact candidate evidence; applying deterministic pass")
+            judge = {
+                **judge,
+                "passed": True,
+                "verdict": "PASS",
+                "issues": "none",
+                "evidence_override": original_issues,
+            }
         report["judge"] = judge
 
         if not judge["passed"]:

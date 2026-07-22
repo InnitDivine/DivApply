@@ -460,6 +460,7 @@ def add_url(
                     "description": description_value,
                     "full_description": description_value,
                     "employment_type": str(metadata.get("employment_type") or ""),
+                    "availability_state": "open",
                 }
             ],
             site=official_source,

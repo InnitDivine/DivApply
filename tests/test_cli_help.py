@@ -532,6 +532,28 @@ def test_v97_add_url_accepts_configured_official_jobposting_evidence(tmp_path, m
         },
     )
 
+    seeded = runner.invoke(
+        app,
+        [
+            "add-url",
+            "https://careers.example.com/us/en/job/R-100/Device-Support-Technician-I",
+            "--no-fetch",
+            "--title",
+            "Device Support Technician I",
+            "--company",
+            "Example Health",
+            "--location",
+            "Example City, ZZ",
+        ],
+    )
+    assert seeded.exit_code == 0
+    conn.execute(
+        "UPDATE jobs SET availability_state='closed', archived_at=?, archive_reason='source_closed', "
+        "apply_status='failed', apply_error='expired: posting appears inactive', apply_attempts=99",
+        ("2026-07-01T00:00:00+00:00",),
+    )
+    conn.commit()
+
     result = runner.invoke(
         app,
         ["add-url", "https://careers.example.com/us/en/job/R-100/Device-Support-Technician-I"],
@@ -540,7 +562,8 @@ def test_v97_add_url_accepts_configured_official_jobposting_evidence(tmp_path, m
     assert result.exit_code == 0
     row = conn.execute(
         "SELECT site, strategy, market_label, search_query, application_mode, employment_type, "
-        "source_verification, official_url_verified_at FROM jobs"
+        "source_verification, official_url_verified_at, availability_state, availability_checked_at, "
+        "last_seen_at, archived_at, archive_reason, apply_status, apply_error, apply_attempts FROM jobs"
     ).fetchone()
     assert dict(row) == {
         "site": "Example Health",
@@ -551,8 +574,18 @@ def test_v97_add_url_accepts_configured_official_jobposting_evidence(tmp_path, m
         "employment_type": "full_time",
         "source_verification": "official",
         "official_url_verified_at": row["official_url_verified_at"],
+        "availability_state": "open",
+        "availability_checked_at": row["availability_checked_at"],
+        "last_seen_at": row["last_seen_at"],
+        "archived_at": None,
+        "archive_reason": None,
+        "apply_status": None,
+        "apply_error": None,
+        "apply_attempts": 0,
     }
     assert row["official_url_verified_at"]
+    assert row["availability_checked_at"]
+    assert row["last_seen_at"]
     assert "configured official source" in result.output
     database.close_connection(db_path)
 

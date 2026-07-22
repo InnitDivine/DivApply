@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from divapply.scoring.validator import sanitize_text, validate_json_fields, validate_tailored_resume
+from divapply.scoring.validator import (
+    prune_unsupported_tailored_skills,
+    sanitize_text,
+    validate_json_fields,
+    validate_tailored_resume,
+)
 
 
 def test_sanitize_text_repairs_known_compound_tense_fragment() -> None:
@@ -88,6 +93,21 @@ def test_validation_rejects_posting_only_skill_from_candidate_skills() -> None:
 
     assert not report["passed"]
     assert "Candidate-unsupported skill: 'asset tracking'" in report["errors"]
+
+
+def test_v115_prune_unsupported_tailored_skills_keeps_only_candidate_evidence() -> None:
+    skills = {
+        "Support": "Python, asset tracking",
+        "Posting Copy": "interpersonal and communication skills",
+    }
+
+    pruned = prune_unsupported_tailored_skills(
+        skills,
+        _profile(),
+        original_text="Built Python reports and documented customer requests.",
+    )
+
+    assert pruned == {"Support": "Python"}
 
 
 def test_validation_rejects_coursework_skill_rewritten_as_paid_work() -> None:
@@ -194,6 +214,58 @@ def test_validate_tailored_resume_allows_missing_projects_section() -> None:
     # No PROJECTS section is fine: the tailor prompt allows an empty
     # projects array, and assemble_resume_text drops the heading entirely.
     assert all("PROJECTS" not in err for err in report["errors"]), report["errors"]
+
+
+def test_v117_resume_confidentiality_claim_requires_candidate_evidence() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "Built confidential reports for Example Employer.",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Built reports for Example Employer.",
+        mode="strict",
+    )
+
+    assert any("confidentiality" in error.casefold() for error in report["errors"])
+
+
+def test_v117_resume_rejects_patient_facing_claim_when_healthcare_tenure_is_zero() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+        "experience": {"years_of_professional_healthcare_experience": "0"},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "Provided patient-facing support for Example Employer.",
+    )
+
+    report = validate_tailored_resume(tailored, profile, original_text=_RESUME_NO_PROJECTS, mode="strict")
+
+    assert any("healthcare experience boundary" in error.casefold() for error in report["errors"])
+
+
+def test_v118_resume_rejects_service_desk_phrase_added_to_paid_experience() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+        "experience": {"years_of_professional_it_experience": "0"},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "- Built reports",
+        "- Routed service desk-style escalations",
+    )
+
+    report = validate_tailored_resume(tailored, profile, original_text=_RESUME_NO_PROJECTS, mode="strict")
+
+    assert any("service-desk evidence boundary" in error.casefold() for error in report["errors"])
 
 
 def test_validate_tailored_resume_banned_words_warn_in_normal_mode() -> None:

@@ -318,6 +318,7 @@ def test_cover_validator_rejects_cross_context_it_and_healthcare_overclaims() ->
         "I support computers, networks, and users in real settings from municipal front desks.",
         "At the municipal counter I solved access and device-related issues for users.",
         "I bring a year of patient-facing service from a municipal public counter.",
+        "My background combines public-sector patient-facing support with scheduling and records work.",
         "This IT support role matches work I have already done in the field and in my home lab.",
         "This role matches my background in end-user support, Windows, and Linux troubleshooting.",
     )
@@ -331,6 +332,26 @@ def test_cover_validator_rejects_cross_context_it_and_healthcare_overclaims() ->
             job=_job(),
         )
         assert not report["passed"], body
+
+
+def test_v117_cover_confidentiality_claim_requires_candidate_evidence() -> None:
+    unsupported = validate_cover_letter(
+        _valid_letter("My municipal background includes confidential records handling."),
+        mode="strict",
+        profile=_profile(),
+        resume_text="Municipal records and scheduling support.",
+        job=_job(),
+    )
+    target_only = validate_cover_letter(
+        _valid_letter("Example Health requires confidential information handling for this role."),
+        mode="strict",
+        profile=_profile(),
+        resume_text="Municipal records and scheduling support.",
+        job=_job(),
+    )
+
+    assert any("confidentiality" in error.casefold() for error in unsupported["errors"])
+    assert all("confidentiality" not in error.casefold() for error in target_only["errors"])
 
 
 def test_cover_validator_rejects_candidate_name_repeated_after_salutation() -> None:
