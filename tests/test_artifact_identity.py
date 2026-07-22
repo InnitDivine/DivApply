@@ -74,6 +74,29 @@ def test_v126_resume_location_patterns_use_token_boundaries() -> None:
     )
 
 
+def test_v127_resume_location_overlays_exact_document_availability() -> None:
+    profile = {
+        "personal": {"city": "Exampletown", "province_state": "YY"},
+        "resume_locations": {
+            "destination": {
+                "use_for_resume_header": True,
+                "city": "Sample City",
+                "province_state": "ZZ",
+                "match_patterns": ["ZZ"],
+                "availability_statement": "Available for full-time work.",
+            }
+        },
+    }
+
+    adjusted = config.profile_for_job_resume_location(
+        profile,
+        {"location": "Nearby City, ZZ", "market_label": "Destination market"},
+    )
+
+    assert adjusted["resume_availability_statement"] == "Available for full-time work."
+    assert "resume_availability_statement" not in profile
+
+
 def _jobs() -> list[dict[str, object]]:
     common = {
         "title": "Support Analyst",

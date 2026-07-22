@@ -75,6 +75,7 @@
 - I39: official-government adapters → GovernmentJobs/SchoolJobs rendered listing parser; JobAps table parser; CalCareers bounded postback parser; no selector-cache/LLM trust decision.
 - I40: `education_schools[]` → optional `expected_graduation_year`, `completed_coursework[]`, `current_coursework[]`; code sanitizes + renders exact supplied items.
 - I41: verified work evidence → bounded `work_history[{title,company,dates,tasks}]`; scorer/tailor/judge/validator share same exact facts; unconfirmed prompts excluded.
+- I42: `resume_locations[].availability_statement` → exact document-only schedule sentence; ⊥ application address/search schedule mutation.
 
 ## §R
 
@@ -233,6 +234,7 @@
 - V124: persisted active apply/skip reason derives from bounded score/hits/gaps + policy mode; a specifically matched skill cannot remain missing; free-form LLM candidate-duty claims ⊥ persist.
 - V125: long verified résumé uses content-neutral dense one-column typography; no content deletion/synthesis; ATS order/coverage retained; rendered output has no orphan page.
 - V126: configured résumé-location match uses token/phrase boundaries; matching résumé/cover header = exact configured city-state; unmatched header stays verified current/legal city-state; application street/postal data unchanged.
+- V127: matching explicit résumé availability → tailored SUMMARY includes exact statement + ⊥ conflicting schedule; unmatched document gets no injected availability.
 
 ## §T
 
@@ -305,6 +307,8 @@
 |T65|prepare privacy-clean 0.5.10 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63|x|
 |T66|repair equivalency/keyword scoring + expose verified work evidence|V120-V126 regressions + targeted rescore/packet QA; V62,V68,V85,V89,V118,V120-V126,I41|x|
 |T67|prepare privacy-clean 0.5.11 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63|x|
+|T68|scope résumé availability by matched document market|`test_v127_*` + packet ATS/text QA; V38,V41,V64,V91,V98,V127,I42|x|
+|T69|publish privacy-clean 0.5.12 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V127|x|
 
 ## §B
 
@@ -556,3 +560,4 @@
 |B244|spec says current city only while explicit document override exists|I25/V91 predate V126 + share legal/document selector wording|I25,V91,V126|T66|separate legal vs display location contracts|check/review drift pass|
 |B245|private scanner ignores configured résumé destination city|collector covers personal/application locations only|V50|T67|collect bounded `resume_locations[].city` values|synthetic collector + live tree/dist scan|
 |B246|short location pattern can match inside unrelated place word|matcher uses raw substring containment|V126|T66|token/phrase-boundary pattern match|named location regression|
+|B247|destination résumé can expose current-market part-time goal|base summary combines market schedules; document resolver overlays location only|V127|T68|explicit document availability + neutral base summary|`test_v127_*` + packet ATS/text QA|

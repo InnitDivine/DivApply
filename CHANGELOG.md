@@ -2,6 +2,11 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.12
+
+- Added exact market-specific résumé availability statements without changing legal application addresses or search policy.
+- Removed conflicting schedule language from tailored summaries and kept unmatched documents free of injected availability claims.
+
 ## 0.5.11
 
 - Credited the highest completed degree and accepted experience substitutions without inventing mandatory paid IT tenure.
