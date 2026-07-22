@@ -441,7 +441,7 @@ wheels = [
 
 [[package]]
 name = "divapply"
-version = "0.5.8"
+version = "0.5.9"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

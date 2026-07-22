@@ -207,7 +207,7 @@ def test_v109_official_government_detail_parsers_keep_exact_application_entry() 
       maintains accurate unit status, operates dispatch systems, and communicates clearly.</p>
       <h2>Qualifications</h2>
       <p>Applicants need a high school diploma, accurate data entry, calm judgment, and
-      availability for assigned part-time shifts in Logan.</p>
+      availability for assigned part-time shifts in Sampleville.</p>
     </div>
     """
     government = detail.extract_official_government_detail(government_html, government_url)

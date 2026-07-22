@@ -2,6 +2,13 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.9
+
+- Reopened source-closed jobs when a configured official manual URL is verified live and open.
+- Improved sparse one-page résumé readability with content-neutral adaptive typography and spacing.
+- Hardened résumé and cover generation against unsupported posting-only skills, patient-facing, confidentiality, service-desk, help-desk, and ticket claims.
+- Added an auditable deterministic safeguard for narrow judge verdicts that contradict exact candidate or canonical education evidence.
+
 ## 0.5.8
 
 - Preserved Experience, Training, Education, and License requirement bodies in bounded scoring context instead of retaining only linked qualification preambles.
@@ -19,7 +26,7 @@ All notable changes to DivApply will be documented here.
 
 - Added deterministic current-vacancy discovery for GovernmentJobs/SchoolJobs, JobAps, and bounded CalCareers searches, including official application links and filing-deadline checks.
 - Added typed availability and archive provenance so verified-open legacy/source-closed jobs can return while user- and policy-archived jobs remain hidden.
-- Made discovery policy resolve from each result's actual market, isolated Logan part-time fallbacks from California career searches, and changed title allowlists to whole-term matching.
+- Made discovery policy resolve from each result's actual market, isolated current-market part-time fallbacks from destination-market career searches, and changed title allowlists to whole-term matching.
 - Removed candidate-specific relevance scoring from enrichment and added deterministic GovernmentJobs and CalCareers detail extraction so current roles reach scoring without an LLM parser.
 - Made long exact cover-letter titles deterministic and disambiguated academic seasons such as `Spring 2026` from similarly named software frameworks.
 
