@@ -257,6 +257,7 @@ Safety boundaries:
 - Real application runs require explicit confirmation.
 - Worker profiles are blank and dedicated; DivApply never clones your personal Chrome profile.
 - The apply agent receives an allowlisted browser surface, without host shell or arbitrary page-code execution. Codex approval-required browser actions use automatic review while the agent remains read-only.
+- Active browser requests stay on the job/application origin except for audited, source-scoped HTTPS ATS API hosts; cross-site document navigation remains blocked.
 - CAPTCHA, unsupported authentication, and email-only flows fail closed. Gmail automation is unavailable.
 - `RESULT:APPLIED` requires matching submission-origin and visible-confirmation evidence, but remains model-reported; verify important submissions yourself.
 - Do not automate SSNs, banking details, payments, ID uploads, or biometric verification.
