@@ -774,6 +774,7 @@ def _is_agent_infrastructure_failure(result: str) -> bool:
         "failed:agent_startup_error",
         "failed:agent_model_unsupported",
         "failed:agent_out_of_credits",
+        "failed:browser_navigation_blocked",
     }
 
 
@@ -1006,7 +1007,10 @@ def _build_agent_command(
     if backend != "codex":
         raise ValueError(f"Unsupported apply backend: {backend}")
 
-    # Codex receives MCP server settings through config overrides.
+    # Codex receives MCP server settings through config overrides. Playwright
+    # navigation and form actions advertise side effects, so a non-interactive
+    # `never` policy rejects them without a reviewer. Keep the agent read-only
+    # and route only approval-required calls through Codex auto-review.
     codex_executable = config.get_apply_backend_executable("codex") or "codex"
     codex_args = [
         codex_executable,
@@ -1016,7 +1020,9 @@ def _build_agent_command(
         "--sandbox",
         "read-only",
         "-c",
-        'approval_policy="never"',
+        'approval_policy="on-request"',
+        "-c",
+        'approvals_reviewer="auto_review"',
         "--disable",
         "shell_tool",
         "--disable",

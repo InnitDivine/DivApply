@@ -256,12 +256,14 @@ Safety boundaries:
 
 - Real application runs require explicit confirmation.
 - Worker profiles are blank and dedicated; DivApply never clones your personal Chrome profile.
-- The apply agent receives an allowlisted browser surface, without host shell or arbitrary page-code execution.
+- The apply agent receives an allowlisted browser surface, without host shell or arbitrary page-code execution. Codex approval-required browser actions use automatic review while the agent remains read-only.
 - CAPTCHA, unsupported authentication, and email-only flows fail closed. Gmail automation is unavailable.
 - `RESULT:APPLIED` requires matching submission-origin and visible-confirmation evidence, but remains model-reported; verify important submissions yourself.
 - Do not automate SSNs, banking details, payments, ID uploads, or biometric verification.
 
 If a site rejects Playwright's browser, set `DIVAPPLY_BROWSER=chrome` in `~/.divapply/.env`, then use the same browser for `browser-login` and `apply`.
+
+The ChatGPT desktop app's `@Browser` and `@Chrome` controls are not available to Codex CLI. They are a useful supervised alternative for applications that need your existing Chrome session; DivApply's unattended CLI path instead reuses its dedicated signed-in worker profile.
 
 ## Backups, Cleanup, and Privacy
 

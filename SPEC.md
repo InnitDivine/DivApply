@@ -37,7 +37,7 @@
 - I1: `gmail_mcp_enabled()` → `False`; truthy legacy `DIVAPPLY_ENABLE_GMAIL_MCP` rejected with audited-dependency diagnostic.
 - I2: `build_prompt(..., upload_dir: Path|None, gmail_enabled: bool=False)` accepts an owned work dir below `APPLY_WORKER_DIR`, or creates a unique one when omitted; stages upload PDFs only below it; CAPTCHA/email text follows authority.
 - I3: `_make_mcp_config(..., enable_gmail: bool=False)` always uses locked Playwright; `enable_gmail=True` rejected.
-- I4: `_build_agent_command(...)` + `get_manual_command(...)` lock Claude to `dontAsk` + explicit MCP tools; lock Codex to read-only/no approvals + shell/web disabled; unsafe Playwright runners denied.
+- I4: `_build_agent_command(...)` + `get_manual_command(...)` lock Claude to `dontAsk` + explicit MCP tools; lock Codex to read-only + auto-reviewed MCP approvals + shell/web disabled; unsafe Playwright runners denied.
 - I5: `_agent_environment(backend)` allowlists OS/runtime + selected backend-auth variables; drops application/third-party secrets.
 - I6: `run_job` resets worker dir before staging; process cwd/prompt/MCP/uploads share worker ownership; finally removes worker transient dir.
 - I7: `setup_worker_profile` creates dedicated blank profile + v2 ownership marker; refuses unmarked legacy profile; no host-profile discovery/copy.
@@ -80,7 +80,7 @@
 - I44: generated target-title boundary → ASCII-dash normalized title shared by deterministic insertion + validation.
 - I45: trusted static source `location_label` + `default_location` → blank-location fallback only; concrete scraped location wins.
 - I46: manual URL fetch → visible inactive marker or terminal HTTP 404/410 closes + source-archives row before prepare; hidden SPA branch ⊥ closure.
-- I47: Codex apply argv → supported `exec` config override `approval_policy="never"` + `--sandbox read-only`; removed CLI flags absent; shell/web/unsafe browser tools remain disabled; nonzero backend exit without explicit result is infrastructure.
+- I47: Codex apply argv → `approval_policy="on-request"` + `approvals_reviewer="auto_review"` + `--sandbox read-only`; removed CLI flags absent; shell/web/unsafe browser tools remain disabled; nonzero backend exit without explicit result is infrastructure.
 - I48: `worker_loop(..., continuous: bool=False)` separates polling mode from numeric quota; explicit continuous mode may start empty; bounded `main(limit=N)` distributes total quota N across workers; each acquired launch consumes one quota slot including skip/interrupt.
 - I49: apply CLI preflight → same score/status/attempt/actionability + blocked/manual/unsafe/artifact window as queue acquisition; empty window exits before confirmation/browser with actionable diagnostic.
 
@@ -112,6 +112,8 @@
 - R25: `setup-uv` adds uv—not a synced project venv—to PATH by default; project tools run via `uv run` or explicit environment activation/path. https://github.com/astral-sh/setup-uv https://github.com/astral-sh/uv/blob/main/docs/guides/integration/github.md
 - R26: Sutter Device Support Technician I accepts equivalent experience instead of IT/CS associate; listed knowledge includes Windows/Apple OS/iOS, AD/file systems, networks, endpoint install/maintenance, ITIL, KB updates, asset control + data security. https://jobs.sutterhealth.org/us/en/job/R-135897/Device-Support-Technician-I
 - R27: substitute-teacher norms include lesson-plan continuity, attendance, classroom safety/order, student assistance, materials/AV, staff handoff + incident reporting; norms = confirmation prompts, not applicant facts. https://www.washoeschools.net/fs/resource-manager/view/ddc85e39-9f41-4db5-9000-9006a43437bc https://www.onetonline.org/link/details/25-3031.00
+- R28: Codex side-effecting MCP calls may require approval; noninteractive auto-review needs interactive approval policy + `approvals_reviewer="auto_review"`; `approval_policy="never"` has no review path. https://learn.chatgpt.com/docs/agent-approvals-security.md https://learn.chatgpt.com/docs/sandboxing/auto-review.md
+- R29: first-party Browser/Chrome control exists in ChatGPT desktop app, not Codex CLI; built-in browser uses separate profile; Chrome extension uses existing signed-in Chrome. https://learn.chatgpt.com/docs/browser?surface=app https://learn.chatgpt.com/docs/chrome-extension.md
 
 ## §V
 
@@ -254,6 +256,8 @@
 - V137: finite worker quota counts every acquired agent launch, including process skip + first interrupt; one claimed job cannot be reacquired within the same exhausted quota.
 - V138: apply preflight eligible count + highest score exclude exhausted-attempt, blocked-site/pattern, manual-ATS, unsafe-URL, + shared-artifact rows read-only; values match the next queue-acquisition candidates.
 - V139: explicit `--continuous` may start with zero prepared/eligible jobs and enters bounded polling; empty-queue preflight exits remain mandatory for finite runs.
+- V140: Codex apply side-effecting Playwright calls → `approval_policy="on-request"` + `approvals_reviewer="auto_review"`; read-only sandbox + shell/web/unsafe-browser denial retained; ⊥ `approval_policy="never"`.
+- V141: MCP navigation/control cancellation before application interaction → infrastructure failure; release lock + stop queue; ⊥ job failure/attempt/event mutation.
 
 ## §T
 
@@ -331,6 +335,8 @@
 |T70|close fresh-rerun schedule/title/static-location gaps|`test_v128_*`, `test_v129_*`, `test_v130_*` + focused/full/release gates + live DB repair; V64,V74,V76,V78,V128-V130,I43-I45|x|
 |T71|close stale manual official URLs|`test_v131_*` + focused/full/release gates + live Sutter closure; V64,V78,V131,I46|x|
 |T72|repair apply startup compatibility, global quota, + queue diagnostics|`test_v132_*`-`test_v139_*` + focused/full/release gates + bounded DB repair; V1-V4,V23,V25,V32,V132-V139,I47-I49|x|
+|T73|repair Codex browser approval handoff + infra classification|`test_v140_*`, `test_v141_*` + safe installed-CLI navigation probe + full gates; V1,V3,V25,V132,V135,V136,V140,V141,I4,I47|x|
+|T74|publish privacy-clean 0.5.15 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V140,V141|~|
 
 ## §B
 
@@ -595,3 +601,5 @@
 |B257|bounded skip/interrupt can launch or reacquire unlimited jobs|quota increments only after paths that `continue`|V137|T72|consume finite quota immediately after acquisition|`test_v137_*`|
 |B258|preflight can confirm an empty blocked/manual queue + suggest exhausted score|diagnostic query omits acquisition exclusions and attempt cap from highest|V138|T72|read-only shared-equivalent queue inspection|`test_v138_*`|
 |B259|`--continuous` cannot start with an empty initial queue|finite-run preflight exits also gate explicit polling mode|V139|T72|bypass empty-initial-queue fatal checks only for continuous mode|`test_v139_*`|
+|B260|Codex snapshot works but navigation/tab/key calls cancel; job consumes failed attempt|`approval_policy="never"` leaves approval-required MCP actions no reviewer + browser cancellation classified candidate failure|V140,V141|T73|on-request auto-review + infrastructure mapping|named launcher regressions + safe installed-CLI probe|
+|B261|0.5.15 version test sees `uv.lock` 0.5.14|version sources bumped before lock refresh|V49|T74|`uv lock`|`test_v49_release_version_is_consistent_and_not_retired`|

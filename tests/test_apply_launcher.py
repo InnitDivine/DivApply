@@ -586,7 +586,7 @@ def test_apply_idle_timeout_env_override(monkeypatch) -> None:
     assert launcher._get_apply_idle_timeout(2700) is None
 
 
-def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
+def test_v140_build_codex_command_maps_mcp_config_with_auto_review(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("DIVAPPLY_CODEX_CMD", raising=False)
     monkeypatch.setattr(launcher.config, "get_apply_backend_executable", lambda backend: "C:/Codex/codex.exe")
     mcp_path = tmp_path / "mcp.json"
@@ -603,8 +603,11 @@ def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
     assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
     assert cmd[cmd.index("--sandbox") + 1] == "read-only"
     assert "--ask-for-approval" not in cmd
-    assert 'approval_policy="never"' in cmd
-    assert cmd[cmd.index('approval_policy="never"') - 1] == "-c"
+    assert 'approval_policy="on-request"' in cmd
+    assert cmd[cmd.index('approval_policy="on-request"') - 1] == "-c"
+    assert 'approvals_reviewer="auto_review"' in cmd
+    assert cmd[cmd.index('approvals_reviewer="auto_review"') - 1] == "-c"
+    assert 'approval_policy="never"' not in cmd
     assert cmd[cmd.index("--disable") + 1] == "shell_tool"
     assert "--ignore-user-config" in cmd
     assert "--ephemeral" in cmd
@@ -615,6 +618,33 @@ def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
         'mcp_servers.playwright.disabled_tools=["browser_run_code","browser_run_code_unsafe","browser_evaluate"]'
         in cmd
     )
+
+
+def test_v141_browser_navigation_block_releases_job_without_attempt(monkeypatch) -> None:
+    job = {"url": "https://jobs.example/1", "title": "Support Role"}
+    released: list[str] = []
+    marked: list[tuple] = []
+    acquired = iter([job])
+
+    monkeypatch.setattr(launcher, "acquire_job", lambda **_kwargs: next(acquired, None))
+    monkeypatch.setattr(
+        launcher,
+        "run_job",
+        lambda *_args, **_kwargs: ("failed:browser_navigation_blocked", 10),
+    )
+    monkeypatch.setattr(launcher, "release_lock", released.append)
+    monkeypatch.setattr(launcher, "mark_result", lambda *args, **kwargs: marked.append((args, kwargs)))
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    launcher._stop_event.clear()
+    try:
+        applied, failed = launcher.worker_loop(limit=1)
+    finally:
+        launcher._stop_event.clear()
+
+    assert (applied, failed) == (0, 0)
+    assert released == [job["url"]]
+    assert marked == []
 
 
 def test_build_claude_command_denies_builtins_and_unsafe_browser_code(tmp_path) -> None:

@@ -2,6 +2,12 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.15
+
+- Routed approval-required Codex Playwright actions through supported automatic review while retaining the read-only sandbox, disabled shell/web tools, locked browser allowlist, and per-job navigation guard.
+- Treated browser-navigation control cancellation as an infrastructure failure so it releases the job and stops the queue without consuming an application attempt.
+- Documented why Codex CLI uses a dedicated persistent browser profile and cannot invoke the ChatGPT desktop app's Browser or Chrome controls.
+
 ## 0.5.14
 
 - Updated Codex auto-apply startup to use the supported approval-policy configuration while retaining the read-only sandbox and disabled shell/web tools.
