@@ -135,6 +135,46 @@ def test_assemble_resume_labels_major_transfer_and_selective_verified_gpa() -> N
     assert text.count("Minor:") == 1
 
 
+def test_v119_education_renders_structured_coursework_and_expected_status() -> None:
+    data = {
+        "title": "Device Support Technician",
+        "summary": "Factual summary.",
+        "skills": {"Systems": "Windows, TCP/IP"},
+        "experience": [],
+        "projects": [],
+    }
+    profile = {
+        "personal": {"full_name": "Jane Doe"},
+        "education_schools": [
+            {
+                "degree": "Information Technology Certificate",
+                "major": "Information Technology",
+                "degree_received": False,
+                "status": "in progress",
+                "school": "Sample Technical College",
+                "city_state": "Sampleville, YY",
+                "start_year": "2026",
+                "end_year": "2027",
+                "expected_graduation_year": "2027",
+                "completed_coursework": [
+                    "NET 101 Networking Fundamentals",
+                    "HW 120 PC Hardware I",
+                ],
+                "current_coursework": ["CERT 110 Certification Preparation"],
+                "notes": "Do not infer Hidden Course or a completed certification.",
+            }
+        ],
+    }
+
+    text = assemble_resume_text(data, profile)
+
+    assert "Information Technology Certificate (in progress; expected 2027)" in text
+    assert "Relevant completed coursework: NET 101 Networking Fundamentals; HW 120 PC Hardware I" in text
+    assert "Current coursework: CERT 110 Certification Preparation" in text
+    assert "not completed" not in text
+    assert "Hidden Course" not in text
+
+
 def test_tailor_prompt_allows_coursework_skills_without_paid_work_claims() -> None:
     prompt = _build_tailor_prompt(
         {

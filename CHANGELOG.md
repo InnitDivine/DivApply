@@ -2,6 +2,11 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.10
+
+- Rendered explicitly structured completed and current coursework in tailored résumé education sections.
+- Kept active education programs labeled in progress when an expected graduation year is supplied.
+
 ## 0.5.9
 
 - Reopened source-closed jobs when a configured official manual URL is verified live and open.

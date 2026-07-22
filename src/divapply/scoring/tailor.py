@@ -46,6 +46,8 @@ PROJECT_BULLET_MAX_WORDS = 20
 SKILLS_MAX_ITEMS = 5
 EXPERIENCE_MAX_ENTRIES = 4
 PROJECTS_MAX_ENTRIES = 1
+COMPLETED_COURSEWORK_MAX_ITEMS = 6
+CURRENT_COURSEWORK_MAX_ITEMS = 3
 
 
 def _delete_temp_artifacts(*paths: Path) -> None:
@@ -502,6 +504,27 @@ def _format_job_trace(job: dict) -> str:
 # â”€â”€ Resume Assembly (profile-driven header) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 
+def _structured_coursework(value: object, *, limit: int) -> list[str]:
+    """Return bounded, deduplicated coursework explicitly supplied by the profile."""
+    if not isinstance(value, list):
+        return []
+
+    items: list[str] = []
+    seen: set[str] = set()
+    for raw in value:
+        if not isinstance(raw, str):
+            continue
+        item = sanitize_text(raw).strip()
+        key = item.casefold()
+        if not item or key in seen:
+            continue
+        seen.add(key)
+        items.append(item)
+        if len(items) >= limit:
+            break
+    return items
+
+
 def assemble_resume_text(data: dict, profile: dict) -> str:
     """Convert JSON resume data to formatted plain text.
 
@@ -592,11 +615,20 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
             received = sch.get("degree_received", False)
             end_year = sch.get("end_year", "")
             status = str(sch.get("status", "")).strip().lower()
+            expected_year = str(sch.get("expected_graduation_year", "")).strip()
+            active_program = bool(
+                not received
+                and status not in {"transferred", "transfer"}
+                and (
+                    status in {"in progress", "in-progress", "current", "enrolled"}
+                    or str(end_year).casefold() == "present"
+                    or expected_year
+                )
+            )
             if status in {"transferred", "transfer"}:
                 status_note = "transferred"
                 degree_status = f"{major or degree_status} coursework"
-            elif not received and end_year == "present":
-                expected_year = str(sch.get("expected_graduation_year", "")).strip()
+            elif active_program:
                 status_note = f"in progress; expected {expected_year}" if expected_year else "in progress"
             elif not received:
                 status_note = "not completed"
@@ -618,9 +650,6 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
                     pass
             gpa_note = f" (as of {gpa_as_of})" if gpa_as_of else ""
             gpa_str = f" | GPA: {sch['gpa']}{gpa_note}" if show_gpa and sch.get("gpa") else ""
-            active_program = (
-                not received and status not in {"transferred", "transfer"} and str(end_year).casefold() == "present"
-            )
             credits_str = (
                 f" | Earned credits: {sch['units']}"
                 if active_program and sch.get("units") and sch.get("units_scope") == "total"
@@ -633,6 +662,16 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
                 f"{sch['school']} | {sch['city_state']} | "
                 f"{sch['start_year']}-{end_year}{gpa_str}{credits_str}{minor_str}"
             )
+            completed_coursework = _structured_coursework(
+                sch.get("completed_coursework"), limit=COMPLETED_COURSEWORK_MAX_ITEMS
+            )
+            current_coursework = _structured_coursework(
+                sch.get("current_coursework"), limit=CURRENT_COURSEWORK_MAX_ITEMS
+            )
+            if completed_coursework:
+                lines.append(f"Relevant completed coursework: {'; '.join(completed_coursework)}")
+            if current_coursework:
+                lines.append(f"Current coursework: {'; '.join(current_coursework)}")
             lines.append("")
     else:
         lines.append("Not provided")
