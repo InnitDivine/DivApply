@@ -422,7 +422,6 @@ def add_url(
 
     title_value = title or str(metadata["title"])
     company_value = company or str(metadata["company"])
-    site_value = site or str(metadata["site"])
     location_value = location or str(metadata["location"])
     description_value = str(metadata["description"])
     inactive = bool(metadata["inactive"])
@@ -438,11 +437,14 @@ def add_url(
     )
     from divapply.config import configured_official_source_name
 
+    configured_source = configured_official_source_name(safe_url) if not no_fetch else None
     official_source = (
-        configured_official_source_name(safe_url)
+        configured_source
         if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch
         else None
     )
+    closed_official_source = configured_source if inactive and not no_fetch else None
+    site_value = site or closed_official_source or str(metadata["site"])
 
     conn = get_connection()
     if official_source:
@@ -484,8 +486,9 @@ def add_url(
             application_url, detail_scraped_at, detail_error,
             apply_status, apply_error, apply_attempts, verification_confidence,
             market_label, search_query, application_mode, employment_type,
-            hours_per_week, source_verification, official_url_verified_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            hours_per_week, source_verification, official_url_verified_at,
+            availability_state, availability_checked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(url) DO UPDATE SET
             title=excluded.title,
             company=excluded.company,
@@ -507,7 +510,8 @@ def add_url(
             hours_per_week=excluded.hours_per_week,
             source_verification=excluded.source_verification,
             official_url_verified_at=excluded.official_url_verified_at,
-            archived_at=NULL
+            availability_state=excluded.availability_state,
+            availability_checked_at=excluded.availability_checked_at
             """,
             (
                 safe_url,
@@ -531,19 +535,28 @@ def add_url(
                 market_label or None,
                 "manual_url",
                 "manual_review",
+                str(metadata.get("employment_type") or "") or None,
                 None,
-                None,
-                "unknown",
-                None,
+                "official" if closed_official_source else "unknown",
+                now if closed_official_source else None,
+                "closed" if inactive else "unknown",
+                now if inactive else None,
             ),
         )
         conn.commit()
+        if inactive:
+            from divapply.database import archive_job
+
+            archive_job(safe_url, conn=conn, reason="source_closed")
 
     console.print(f"[green]Added:[/green] {title_value} @ {company_value}")
     if official_source:
         console.print(f"[green]Verified from configured official source:[/green] {official_source}")
+    elif closed_official_source:
+        console.print(f"[yellow]Verified closed from configured official source:[/yellow] {closed_official_source}")
     if inactive:
         console.print("[yellow]Posting appears inactive/expired, so it will not be queued for auto-apply.[/yellow]")
+        return
 
     if not prepare:
         if official_source:

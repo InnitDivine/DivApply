@@ -185,6 +185,8 @@ Tier 1 is the strongest target, tier 2 is an adjacent path, and tier 3 is a broa
 
 Configured official GovernmentJobs/SchoolJobs, JobAps, and CalCareers sources use deterministic current-vacancy adapters. A row is marked open only when the current official board exposes an exact job/application entry; expired filing deadlines are excluded. Rediscovery may restore a legacy or source-closed row, but it never overrides a job you archived yourself or one excluded by search policy.
 
+For `divapply add-url`, a visible inactive/expired notice or terminal HTTP 404/410 response closes and source-archives the row even when the retired page still exposes stale job metadata. Hidden inactive branches used by live single-page applications are ignored.
+
 Trusted static sources in private `~/.divapply/config/sites.yaml` may also define `location_label` and `default_location`. The default fills only a blank scraped location so a source can resolve to the correct configured market without overwriting concrete posting data.
 
 Legacy aliases still load, but `divapply selfcheck` reports migration guidance.

@@ -79,6 +79,7 @@
 - I43: `resolved_application_mode(search_config,job)` → stored mode demoted to `manual_review` on explicit market-schedule conflict; exact V74 exception preserved.
 - I44: generated target-title boundary → ASCII-dash normalized title shared by deterministic insertion + validation.
 - I45: trusted static source `location_label` + `default_location` → blank-location fallback only; concrete scraped location wins.
+- I46: manual URL fetch → visible inactive marker or terminal HTTP 404/410 closes + source-archives row before prepare; hidden SPA branch ⊥ closure.
 
 ## §R
 
@@ -241,6 +242,7 @@
 - V128: ∀ scored official job: explicit `preferred_schedule=full_time` part-time/per-diem conflict or `require_part_time=true` non-part-time conflict → `application_mode=manual_review` before tailor/cover/apply; temporary alone allowed; V74 exact exception preserved.
 - V129: ∀ generated cover target title → U+2011/U+2013/U+2014 normalized to ASCII hyphen before prompt repair + exact-title validation; persisted output contains no Unicode dash.
 - V130: configured trusted static source may fill blank job location from exact `default_location` + `location_label`; nonblank result location ⊥ overwrite; market policy resolves from filled location.
+- V131: ∀ fetched manual URL: visible explicit inactive/expired evidence or HTTP 404/410 outranks stale JobPosting metadata → `closed` + `source_closed` + ⊥ prepare; hidden inactive SPA branch ignored.
 
 ## §T
 
@@ -316,6 +318,7 @@
 |T68|scope résumé availability by matched document market|`test_v127_*` + packet ATS/text QA; V38,V41,V64,V91,V98,V127,I42|x|
 |T69|publish privacy-clean 0.5.12 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V127|x|
 |T70|close fresh-rerun schedule/title/static-location gaps|`test_v128_*`, `test_v129_*`, `test_v130_*` + focused/full/release gates + live DB repair; V64,V74,V76,V78,V128-V130,I43-I45|x|
+|T71|close stale manual official URLs|`test_v131_*` + focused/full/release gates + live Sutter closure; V64,V78,V131,I46|x|
 
 ## §B
 
@@ -571,3 +574,4 @@
 |B248|explicit destination part-time + current-market full-time rows remain `active`|schedule affects score cap only; persisted action mode ignores structured schedule conflict|V128|T70|resolve + persist schedule-safe application mode before packet selection|`test_v128_*` + live rescore|
 |B249|official title with Unicode dash exhausts cover retries|sanitizer runs before exact-title repair reinserts raw title; validator expects raw title|V129|T70|shared ASCII title normalization for repair + validation|`test_v129_*`|
 |B250|official static-source blank location routes known destination job to manual review|static target drops trusted market/default-location metadata|V130|T70|propagate configured label/default; fill only blank result location|`test_v130_*` + live official add-url parity|
+|B251|inactive Sutter page reopens on manual add|visible inactive banner loses to stale JobPosting/live-text evidence; HTTP 410 falls back to active manual row|V131|T71|terminal closure evidence outranks metadata; archive before prepare|`test_v131_*` + live exact-URL refresh|
