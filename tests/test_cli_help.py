@@ -130,8 +130,7 @@ def test_readme_common_commands_match_registered_cli_commands() -> None:
         if line.startswith("divapply ") and len(line.split()) > 1
     }
     registered = {
-        command.name or command.callback.__name__.replace("_", "-")
-        for command in cli.app.registered_commands
+        command.name or command.callback.__name__.replace("_", "-") for command in cli.app.registered_commands
     }
     registered.update(group.name for group in cli.app.registered_groups)
 
@@ -181,8 +180,7 @@ def test_install_docs_use_full_editable_and_entrypoint_parity_checks() -> None:
 def test_import_coursework_preserves_json_status(tmp_path, monkeypatch) -> None:
     source = tmp_path / "coursework.json"
     source.write_text(
-        '[{"school":"Example University","course_title":"Networking",'
-        '"status":"Completed","credits":3}]',
+        '[{"school":"Example University","course_title":"Networking","status":"Completed","credits":3}]',
         encoding="utf-8",
     )
     captured: list[dict] = []
@@ -267,13 +265,16 @@ def test_prune_accepts_maxscore_alias_in_dry_run(tmp_path, monkeypatch) -> None:
 
 
 def test_apply_cost_guard_allows_default_real_single_job() -> None:
-    assert cli._apply_cost_guard_message(
-        dry_run=False,
-        allow_expensive=False,
-        continuous=False,
-        workers=1,
-        effective_limit=1,
-    ) is None
+    assert (
+        cli._apply_cost_guard_message(
+            dry_run=False,
+            allow_expensive=False,
+            continuous=False,
+            workers=1,
+            effective_limit=1,
+        )
+        is None
+    )
 
 
 def test_apply_cost_guard_blocks_accidental_expensive_real_runs() -> None:
@@ -290,20 +291,26 @@ def test_apply_cost_guard_blocks_accidental_expensive_real_runs() -> None:
 
 
 def test_apply_cost_guard_allows_dry_run_and_explicit_override() -> None:
-    assert cli._apply_cost_guard_message(
-        dry_run=True,
-        allow_expensive=False,
-        continuous=True,
-        workers=4,
-        effective_limit=0,
-    ) is None
-    assert cli._apply_cost_guard_message(
-        dry_run=False,
-        allow_expensive=True,
-        continuous=True,
-        workers=4,
-        effective_limit=0,
-    ) is None
+    assert (
+        cli._apply_cost_guard_message(
+            dry_run=True,
+            allow_expensive=False,
+            continuous=True,
+            workers=4,
+            effective_limit=0,
+        )
+        is None
+    )
+    assert (
+        cli._apply_cost_guard_message(
+            dry_run=False,
+            allow_expensive=True,
+            continuous=True,
+            workers=4,
+            effective_limit=0,
+        )
+        is None
+    )
 
 
 def test_apply_model_does_not_inherit_general_llm_model(monkeypatch) -> None:
@@ -519,6 +526,10 @@ def test_v134_apply_banner_shows_requested_score_window(tmp_path, monkeypatch) -
     assert "Score:    6 to 6" in result.output
     assert captured["min_score"] == 6
     assert captured["max_score"] == 6
+    authorization = captured["authorization"]
+    assert authorization.profile_fields is True
+    assert authorization.final_submit is True
+    assert authorization.source == "cli_yes"
 
 
 def test_v138_apply_preflight_matches_queue_exclusions(tmp_path, monkeypatch) -> None:
@@ -593,6 +604,10 @@ def test_v139_continuous_apply_can_start_with_empty_queue(tmp_path, monkeypatch)
     assert result.exit_code == 0
     assert captured["continuous"] is True
     assert captured["limit"] == 0
+    authorization = captured["authorization"]
+    assert authorization.profile_fields is True
+    assert authorization.final_submit is False
+    assert authorization.source == "dry_run_request"
 
 
 def test_add_url_is_manual_review_until_official_source_refresh(tmp_path, monkeypatch) -> None:
@@ -627,8 +642,7 @@ def test_add_url_is_manual_review_until_official_source_refresh(tmp_path, monkey
 
     assert result.exit_code == 0
     row = conn.execute(
-        "SELECT market_label, search_query, application_mode, source_verification, "
-        "official_url_verified_at FROM jobs"
+        "SELECT market_label, search_query, application_mode, source_verification, official_url_verified_at FROM jobs"
     ).fetchone()
     assert dict(row) == {
         "market_label": "Current market",

@@ -1,4 +1,4 @@
-﻿"""Apply orchestration: acquire jobs, run apply agents, track results.
+"""Apply orchestration: acquire jobs, run apply agents, track results.
 
 This is the main entry point for the apply pipeline. It claims jobs from
 SQLite, prepares isolated browser/MCP state, launches Codex or Claude,
@@ -24,7 +24,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from rich.console import Console
 from rich.live import Live
@@ -39,8 +39,12 @@ from divapply.database import (
 )
 from divapply.apply import prompt as prompt_mod
 from divapply.apply.chrome import (
-    launch_chrome, cleanup_worker, kill_all_chrome,
-    reset_worker_dir, cleanup_on_exit, _kill_process_tree,
+    launch_chrome,
+    cleanup_worker,
+    kill_all_chrome,
+    reset_worker_dir,
+    cleanup_on_exit,
+    _kill_process_tree,
     setup_worker_profile,
     BASE_CDP_PORT,
 )
@@ -50,8 +54,12 @@ from divapply.mcp_runtime import (
     expected_mcp_runtime,
 )
 from divapply.apply.dashboard import (
-    init_worker, update_state, add_event, get_state,
-    render_full, get_totals,
+    init_worker,
+    update_state,
+    add_event,
+    get_state,
+    render_full,
+    get_totals,
 )
 from divapply.security import (
     UnsafeUrlError,
@@ -70,7 +78,36 @@ logger = logging.getLogger(__name__)
 def _load_blocked():
     """Load skip rules lazily so config file reads stay outside DB locks."""
     from divapply.config import load_blocked_sites
+
     return load_blocked_sites()
+
+
+_TRACKING_QUERY_KEYS = {"fbclid", "gclid", "mc_cid", "mc_eid", "msclkid"}
+
+
+def _canonical_url_identity(value: object) -> tuple[str, str, int | None, str, str, str] | None:
+    """Return strict job identity while removing only explicit tracking parameters."""
+    try:
+        parsed = urlsplit(str(value or "").strip())
+        scheme = parsed.scheme.casefold()
+        if scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        if parsed.username is not None or parsed.password is not None:
+            return None
+        host = parsed.hostname.rstrip(".").casefold().encode("idna").decode("ascii")
+        port = parsed.port
+    except (UnicodeError, ValueError):
+        return None
+    if port == (443 if scheme == "https" else 80):
+        port = None
+    path = (parsed.path or "/").rstrip("/") or "/"
+    query_pairs = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if not key.casefold().startswith("utm_") and key.casefold() not in _TRACKING_QUERY_KEYS
+    ]
+    query = urlencode(sorted(query_pairs))
+    return scheme, host, port, path, query, parsed.fragment
 
 
 def inspect_apply_queue(
@@ -122,10 +159,7 @@ def inspect_apply_queue(
             continue
         scores.append(int(job["fit_score"]))
 
-    eligible = sum(
-        score >= min_score and (max_score is None or score <= max_score)
-        for score in scores
-    )
+    eligible = sum(score >= min_score and (max_score is None or score <= max_score) for score in scores)
     return eligible, max(scores) if scores else None
 
 
@@ -150,6 +184,7 @@ def _safe_agent_error(
     secrets = known_secrets if known_secrets is not None else collect_known_secret_values()
     redacted = redact_known_secrets(str(value), secrets)
     return redact_error_snippet(redacted, max_length=max_length)
+
 
 # Runtime coordination shared by worker threads and Ctrl+C handling.
 POLL_INTERVAL = int(config.DEFAULTS["poll_interval"])
@@ -191,6 +226,8 @@ PLAYWRIGHT_AGENT_TOOLS = (
     "browser_type",
     "browser_wait_for",
 )
+
+
 def _make_mcp_config(
     cdp_port: int,
     browser: str = "chromium",
@@ -212,15 +249,19 @@ def _make_mcp_config(
     if navigation_guard_path is not None:
         playwright_args.append(f"--init-page={navigation_guard_path}")
     if browser == "chrome":
-        playwright_args.extend([
-            f"--cdp-endpoint=http://localhost:{cdp_port}",
-            f"--viewport-size={config.DEFAULTS['viewport']}",
-        ])
+        playwright_args.extend(
+            [
+                f"--cdp-endpoint=http://localhost:{cdp_port}",
+                f"--viewport-size={config.DEFAULTS['viewport']}",
+            ]
+        )
     else:
-        playwright_args.extend([
-            f"--browser={browser}",
-            f"--viewport-size={config.DEFAULTS['viewport']}",
-        ])
+        playwright_args.extend(
+            [
+                f"--browser={browser}",
+                f"--viewport-size={config.DEFAULTS['viewport']}",
+            ]
+        )
         if worker_profile_dir is not None:
             playwright_args.append(f"--user-data-dir={worker_profile_dir}")
         if headless:
@@ -309,9 +350,10 @@ export default async ({{ page }}) => {{
 # Database operations
 # ---------------------------------------------------------------------------
 
-def acquire_job(target_url: str | None = None, min_score: int = 7,
-                max_score: int | None = None,
-                worker_id: int = 0) -> dict | None:
+
+def acquire_job(
+    target_url: str | None = None, min_score: int = 7, max_score: int | None = None, worker_id: int = 0
+) -> dict | None:
     """Atomically acquire the next job to apply to.
 
     Args:
@@ -323,6 +365,10 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
     Returns:
         Job dict or None if the queue is empty.
     """
+    target_identity = _canonical_url_identity(target_url) if target_url else None
+    if target_url and target_identity is None:
+        return None
+
     conn = get_connection()
     recover_stale_apply_locks(conn=conn)
     # Load blocked sites BEFORE acquiring the DB lock to avoid file I/O inside transaction
@@ -332,19 +378,33 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
             conn.execute("BEGIN IMMEDIATE")
 
             if target_url:
-                like = f"%{target_url.split('?')[0].rstrip('/')}%"
-                row = conn.execute(f"""
+                rows = conn.execute(
+                    f"""
                     SELECT url, title, company, site, application_url, tailored_resume_path,
                            fit_score, location, full_description, cover_letter_path,
                            application_mode, source_verification
                     FROM jobs
-                    WHERE (url = ? OR application_url = ? OR application_url LIKE ? OR url LIKE ?)
-                      AND {ACTIONABLE_JOB_SQL}
+                    WHERE {ACTIONABLE_JOB_SQL}
                       AND archived_at IS NULL
                       AND tailored_resume_path IS NOT NULL
                       AND (apply_status IS NULL OR apply_status IN ('failed', 'manual'))
-                    LIMIT 1
-                """, (target_url, target_url, like, like)).fetchone()
+                """
+                ).fetchall()
+                matches = [
+                    candidate
+                    for candidate in rows
+                    if target_identity
+                    in {
+                        _canonical_url_identity(candidate["url"]),
+                        _canonical_url_identity(candidate["application_url"]),
+                    }
+                ]
+                if len(matches) != 1:
+                    conn.rollback()
+                    if len(matches) > 1:
+                        logger.warning("Refusing ambiguous canonical target URL match")
+                    return None
+                row = matches[0]
             else:
                 # Build parameterized filters to avoid SQL injection
                 params: list = [min_score]
@@ -361,7 +421,8 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 if blocked_patterns:
                     url_clauses = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
                     params.extend(blocked_patterns)
-                row = conn.execute(f"""
+                row = conn.execute(
+                    f"""
                     SELECT url, title, company, site, application_url, tailored_resume_path,
                            fit_score, location, full_description, cover_letter_path,
                            application_mode, source_verification
@@ -377,13 +438,16 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                       {url_clauses}
                     ORDER BY fit_score DESC, url
                     LIMIT 1
-                """, [config.DEFAULTS["max_apply_attempts"]] + params).fetchone()
+                """,
+                    [config.DEFAULTS["max_apply_attempts"]] + params,
+                ).fetchone()
 
             if not row:
                 conn.rollback()
                 return None
 
             from divapply.config import is_manual_ats
+
             apply_url = row["application_url"] or row["url"]
             try:
                 validate_external_url(apply_url, field="apply url")
@@ -426,15 +490,20 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 continue
 
             now = datetime.now(timezone.utc).isoformat()
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE jobs SET apply_status = 'in_progress',
                                agent_id = ?,
                                last_attempted_at = ?
                 WHERE url = ?
-            """, (f"worker-{worker_id}", now, row["url"]))
+            """,
+                (f"worker-{worker_id}", now, row["url"]),
+            )
             conn.commit()
 
-            return dict(row)
+            job = dict(row)
+            job["_explicit_target"] = target_url is not None
+            return job
         except Exception:
             conn.rollback()
             raise
@@ -469,9 +538,14 @@ def recover_stale_apply_locks(
     return recovered
 
 
-def mark_result(url: str, status: str, error: str | None = None,
-                permanent: bool = False, duration_ms: int | None = None,
-                task_id: str | None = None) -> None:
+def mark_result(
+    url: str,
+    status: str,
+    error: str | None = None,
+    permanent: bool = False,
+    duration_ms: int | None = None,
+    task_id: str | None = None,
+) -> None:
     """Update a job's apply status in the database."""
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
@@ -479,30 +553,39 @@ def mark_result(url: str, status: str, error: str | None = None,
     try:
         conn.execute("BEGIN IMMEDIATE")
         if status == "applied":
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE jobs SET apply_status = 'applied', applied_at = ?,
                                apply_error = NULL, agent_id = NULL,
                                apply_duration_ms = ?, apply_task_id = ?
                 WHERE url = ?
-            """, (now, duration_ms, task_id, url))
+            """,
+                (now, duration_ms, task_id, url),
+            )
             add_application_event(url, "applied", notes="Auto-apply submitted", ts=now, conn=conn)
         else:
             if permanent:
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE jobs SET apply_status = ?, apply_error = ?,
                                    applied_at = NULL,
                                    apply_attempts = 99, agent_id = NULL,
                                    apply_duration_ms = ?, apply_task_id = ?
                     WHERE url = ?
-                """, (status, safe_error, duration_ms, task_id, url))
+                """,
+                    (status, safe_error, duration_ms, task_id, url),
+                )
             else:
-                conn.execute("""
+                conn.execute(
+                    """
                     UPDATE jobs SET apply_status = ?, apply_error = ?,
                                    apply_attempts = COALESCE(apply_attempts, 0) + 1,
                                    applied_at = NULL, agent_id = NULL,
                                    apply_duration_ms = ?, apply_task_id = ?
                     WHERE url = ?
-                """, (status, safe_error, duration_ms, task_id, url))
+                """,
+                    (status, safe_error, duration_ms, task_id, url),
+                )
             add_application_event(url, status, notes=safe_error, ts=now, conn=conn)
         conn.commit()
     except Exception:
@@ -521,9 +604,7 @@ def mark_dry_run(
     conn = get_connection()
     now = datetime.now(timezone.utc).isoformat()
     result_note = (
-        f"Dry run result: {_safe_agent_error(result)}"
-        if result
-        else "Dry run completed; no application submitted"
+        f"Dry run result: {_safe_agent_error(result)}" if result else "Dry run completed; no application submitted"
     )
     try:
         conn.execute("BEGIN IMMEDIATE")
@@ -545,6 +626,37 @@ def mark_dry_run(
         raise
 
 
+def mark_manual_review(
+    url: str,
+    reason: str,
+    duration_ms: int | None = None,
+    task_id: str | None = None,
+) -> None:
+    """Persist a job-specific human-review blocker without consuming an attempt."""
+    conn = get_connection()
+    now = datetime.now(timezone.utc).isoformat()
+    safe_reason = _safe_agent_error(reason)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            """
+            UPDATE jobs SET apply_status = 'manual',
+                           apply_error = ?,
+                           applied_at = NULL,
+                           agent_id = NULL,
+                           apply_duration_ms = ?,
+                           apply_task_id = ?
+            WHERE url = ?
+            """,
+            (safe_reason, duration_ms, task_id, url),
+        )
+        add_application_event(url, "manual_review_required", notes=safe_reason, ts=now, conn=conn)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+
+
 def release_lock(url: str) -> None:
     """Release the in_progress lock without changing status."""
     conn = get_connection()
@@ -558,6 +670,7 @@ def release_lock(url: str) -> None:
 # ---------------------------------------------------------------------------
 # Utility modes (--gen, --mark-applied, --mark-failed, --reset-failed)
 # ---------------------------------------------------------------------------
+
 
 def mark_job(url: str, status: str, reason: str | None = None) -> None:
     """Manually mark a job's apply status in the database.
@@ -573,18 +686,24 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
     try:
         conn.execute("BEGIN IMMEDIATE")
         if status == "applied":
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE jobs SET apply_status = 'applied', applied_at = ?,
                                apply_error = NULL, agent_id = NULL
                 WHERE url = ?
-            """, (now, url))
+            """,
+                (now, url),
+            )
             add_application_event(url, "applied", notes="Manually marked applied", ts=now, conn=conn)
         else:
-            conn.execute("""
+            conn.execute(
+                """
                 UPDATE jobs SET apply_status = 'failed', apply_error = ?,
                                apply_attempts = 99, agent_id = NULL
                 WHERE url = ?
-            """, (safe_reason, url))
+            """,
+                (safe_reason, url),
+            )
             add_application_event(url, "failed", notes=safe_reason, ts=now, conn=conn)
         conn.commit()
     except Exception:
@@ -614,19 +733,36 @@ def reset_failed() -> int:
 # ---------------------------------------------------------------------------
 
 PERMANENT_FAILURES: set[str] = {
-    "expired", "captcha", "login_issue",
-    "not_eligible_location", "not_eligible_salary",
+    "expired",
+    "captcha",
+    "login_issue",
+    "not_eligible_location",
+    "not_eligible_salary",
     "not_eligible_work_auth",
-    "already_applied", "account_required",
-    "not_a_job_application", "unsafe_permissions",
-    "unsafe_verification", "sso_required",
-    "site_blocked", "cloudflare_blocked", "blocked_by_cloudflare",
-    "scam", "bank_details", "payment_required", "biometric_verification",
+    "already_applied",
+    "account_required",
+    "not_a_job_application",
+    "wrong_job",
+    "unsafe_permissions",
+    "unsafe_verification",
+    "sso_required",
+    "site_blocked",
+    "cloudflare_blocked",
+    "blocked_by_cloudflare",
+    "scam",
+    "bank_details",
+    "payment_required",
+    "biometric_verification",
     "email_required",
 }
 
 PERMANENT_PREFIXES: tuple[str, ...] = (
-    "site_blocked", "cloudflare", "blocked_by", "captcha", "expired", "login_issue",
+    "site_blocked",
+    "cloudflare",
+    "blocked_by",
+    "captcha",
+    "expired",
+    "login_issue",
 )
 
 
@@ -743,9 +879,7 @@ def parse_submission_proof(output: str, job: dict) -> SubmissionProof:
         raise SubmissionProofError("submission_origin_mismatch")
     claimed_origin = _normalized_http_origin(origin_match.group(1))
     allowed_origins = {
-        origin
-        for key in ("url", "application_url")
-        if (origin := _normalized_http_origin(job.get(key))) is not None
+        origin for key in ("url", "application_url") if (origin := _normalized_http_origin(job.get(key))) is not None
     }
     if claimed_origin is None or claimed_origin not in allowed_origins:
         raise SubmissionProofError("submission_origin_mismatch")
@@ -766,7 +900,7 @@ def _agent_output_region(output: str) -> str:
         if line.strip().lower() in {"codex", "claude"}:
             marker_idx = idx
     if marker_idx >= 0:
-        return "\n".join(lines[marker_idx + 1:])
+        return "\n".join(lines[marker_idx + 1 :])
     return output
 
 
@@ -792,18 +926,37 @@ def _agent_setup_failure(output: str) -> str | None:
 
 
 def _is_agent_infrastructure_failure(result: str) -> bool:
-    return result in {
-        "failed:agent_exit_error",
-        "failed:agent_startup_error",
-        "failed:agent_model_unsupported",
-        "failed:agent_out_of_credits",
-        "failed:browser_navigation_blocked",
+    reason = result.split(":", 1)[-1] if ":" in result else result
+    return _normalize_result_reason(reason) in {
+        "agent_exit_error",
+        "agent_startup_error",
+        "agent_model_unsupported",
+        "agent_out_of_credits",
+        "browser_navigation_blocked",
+        "approval_required",
     }
+
+
+MANUAL_REVIEW_FAILURES = {
+    "job_identity_unverified",
+    "missing_required_answer",
+    "prefill_verification_required",
+}
+
+
+def _manual_review_reason(result: str) -> str | None:
+    """Return a durable job-specific review reason, distinct from infrastructure."""
+    reason = result.split(":", 1)[-1] if ":" in result else result
+    normalized = _normalize_result_reason(reason)
+    if normalized in MANUAL_REVIEW_FAILURES:
+        return normalized
+    return None
 
 
 # ---------------------------------------------------------------------------
 # Agent result parsing
 # ---------------------------------------------------------------------------
+
 
 def _extract_result(
     output: str,
@@ -848,8 +1001,7 @@ def _extract_result(
                 return f"failed:{reason}", duration_ms
         if result_status in {"APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"}:
             add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {job['title'][:30]}")
-            update_state(worker_id, status=result_status.lower(),
-                         last_action=f"{result_status} ({elapsed}s)")
+            update_state(worker_id, status=result_status.lower(), last_action=f"{result_status} ({elapsed}s)")
             return result_status.lower(), duration_ms
 
     agent_region = _agent_output_region(output)
@@ -996,6 +1148,7 @@ def _validated_mcp_servers(mcp_config_path: Path) -> dict[str, dict]:
 def _compact_json(value: object) -> str:
     return json.dumps(value, separators=(",", ":"))
 
+
 def _build_agent_command(
     backend: str,
     model: str,
@@ -1011,20 +1164,27 @@ def _build_agent_command(
         claude_executable = config.get_apply_backend_executable("claude") or "claude"
         return [
             claude_executable,
-            "--model", model,
+            "--model",
+            model,
             "-p",
-            "--max-turns", "150",
-            "--mcp-config", str(mcp_config_path),
+            "--max-turns",
+            "150",
+            "--mcp-config",
+            str(mcp_config_path),
             "--strict-mcp-config",
-            "--permission-mode", "dontAsk",
-            "--tools", "",
-            "--allowedTools", ",".join(allowed_tools),
+            "--permission-mode",
+            "dontAsk",
+            "--tools",
+            "",
+            "--allowedTools",
+            ",".join(allowed_tools),
             "--no-session-persistence",
-            "--disallowedTools", ",".join(
-                f"mcp__playwright__{tool}" for tool in UNSAFE_PLAYWRIGHT_TOOLS
-            ),
-            "--output-format", "stream-json",
-            "--verbose", "-",
+            "--disallowedTools",
+            ",".join(f"mcp__playwright__{tool}" for tool in UNSAFE_PLAYWRIGHT_TOOLS),
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "-",
         ]
 
     if backend != "codex":
@@ -1070,24 +1230,23 @@ def _build_agent_command(
         "tools.view_image=false",
     ]
 
-    if (
-        os.environ.get("DIVAPPLY_CODEX_OSS", "").strip().lower() in {"1", "true", "yes", "on"}
-        or ":" in model
-    ):
+    if os.environ.get("DIVAPPLY_CODEX_OSS", "").strip().lower() in {"1", "true", "yes", "on"} or ":" in model:
         codex_args.append("--oss")
 
     for server_name, server_cfg in servers.items():
         prefix = f"mcp_servers.{server_name}"
-        codex_args.extend(["-c", f'{prefix}.command={json.dumps(server_cfg["command"])}'])
+        codex_args.extend(["-c", f"{prefix}.command={json.dumps(server_cfg['command'])}"])
         codex_args.extend(["-c", f"{prefix}.args={_compact_json(server_cfg['args'])}"])
         codex_args.extend(["-c", f"{prefix}.enabled=true"])
         codex_args.extend(["-c", f"{prefix}.required=true"])
-        codex_args.extend([
-            "-c",
-            f"{prefix}.enabled_tools={_compact_json(list(PLAYWRIGHT_AGENT_TOOLS))}",
-            "-c",
-            f"{prefix}.disabled_tools={_compact_json(list(UNSAFE_PLAYWRIGHT_TOOLS))}",
-        ])
+        codex_args.extend(
+            [
+                "-c",
+                f"{prefix}.enabled_tools={_compact_json(list(PLAYWRIGHT_AGENT_TOOLS))}",
+                "-c",
+                f"{prefix}.disabled_tools={_compact_json(list(UNSAFE_PLAYWRIGHT_TOOLS))}",
+            ]
+        )
 
     return codex_args
 
@@ -1128,6 +1287,7 @@ def _write_agent_prompt(proc: subprocess.Popen[str], agent_prompt: str) -> str |
 # Manual prompt generation
 # ---------------------------------------------------------------------------
 
+
 def _read_tailored_resume_text(job: dict) -> str:
     """Read the tailored resume text for a claimed job, if present."""
     resume_path = job.get("tailored_resume_path")
@@ -1157,10 +1317,16 @@ def get_manual_command(backend: str, model: str, prompt_file: Path, mcp_path: Pa
     return " ".join(shlex.quote(part) for part in cmd) + f" < {shlex.quote(str(prompt_file))}"
 
 
-def gen_prompt(target_url: str, min_score: int = 7, max_score: int | None = None,
-               model: str = "gpt-5.4-mini", worker_id: int = 0,
-               backend: str | None = None, browser: str = "chromium",
-               headless: bool = False) -> Path | None:
+def gen_prompt(
+    target_url: str,
+    min_score: int = 7,
+    max_score: int | None = None,
+    model: str = "gpt-5.4-mini",
+    worker_id: int = 0,
+    backend: str | None = None,
+    browser: str = "chromium",
+    headless: bool = False,
+) -> Path | None:
     """Generate prompt and MCP files without running the apply agent."""
     job = acquire_job(
         target_url=target_url,
@@ -1177,7 +1343,13 @@ def gen_prompt(target_url: str, min_score: int = 7, max_score: int | None = None
     prompt = prompt_mod.build_prompt(
         job=job,
         tailored_resume=resume_text,
+        dry_run=True,
         gmail_enabled=gmail_enabled,
+        authorization=prompt_mod.ApplicationAuthorization(
+            profile_fields=True,
+            final_submit=False,
+            source="prompt_generation",
+        ),
     )
     # Prompt generation is read-only from the user's point of view; release the
     # DB claim so the same job can be applied later.
@@ -1191,9 +1363,7 @@ def gen_prompt(target_url: str, min_score: int = 7, max_score: int | None = None
     worker_profile_dir = setup_worker_profile(worker_id, browser)
     mcp_runtime = ensure_mcp_runtime()
     mcp_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
-    navigation_guard_path = _write_navigation_guard(
-        mcp_path.with_name("navigation_guard.ts"), job
-    )
+    navigation_guard_path = _write_navigation_guard(mcp_path.with_name("navigation_guard.ts"), job)
     write_private_text(
         mcp_path,
         json.dumps(
@@ -1215,6 +1385,7 @@ def gen_prompt(target_url: str, min_score: int = 7, max_score: int | None = None
 # ---------------------------------------------------------------------------
 # Per-job backend execution
 # ---------------------------------------------------------------------------
+
 
 def _remove_worker_run_dir(worker_dir: Path) -> None:
     """Remove one numeric worker directory without following it outside the root."""
@@ -1239,6 +1410,7 @@ def _prepare_worker_run(
     browser: str,
     dry_run: bool,
     headless: bool,
+    authorization: prompt_mod.ApplicationAuthorization | None = None,
 ) -> tuple[Path, str, Path, list[str], dict[str, str]]:
     """Stage one agent run entirely below its fresh worker directory."""
     worker_dir = reset_worker_dir(worker_id)
@@ -1252,14 +1424,13 @@ def _prepare_worker_run(
             dry_run=dry_run,
             gmail_enabled=gmail_enabled,
             upload_dir=worker_dir,
+            authorization=authorization,
         )
 
         worker_profile_dir = setup_worker_profile(worker_id, browser)
         mcp_runtime = ensure_mcp_runtime()
         mcp_config_path = worker_dir / "mcp.json"
-        navigation_guard_path = _write_navigation_guard(
-            worker_dir / "navigation_guard.ts", job
-        )
+        navigation_guard_path = _write_navigation_guard(worker_dir / "navigation_guard.ts", job)
         write_private_text(
             mcp_config_path,
             json.dumps(
@@ -1284,10 +1455,18 @@ def _prepare_worker_run(
         _remove_worker_run_dir(worker_dir)
         raise
 
-def run_job(job: dict, port: int, worker_id: int = 0,
-            model: str = "gpt-5.4-mini", backend: str = "codex",
-            browser: str = "chromium", dry_run: bool = False,
-            headless: bool = False) -> tuple[str, int]:
+
+def run_job(
+    job: dict,
+    port: int,
+    worker_id: int = 0,
+    model: str = "gpt-5.4-mini",
+    backend: str = "codex",
+    browser: str = "chromium",
+    dry_run: bool = False,
+    headless: bool = False,
+    authorization: prompt_mod.ApplicationAuthorization | None = None,
+) -> tuple[str, int]:
     """Run one auto-apply job through the selected backend."""
     start = time.time()
     company = _display_company(job)
@@ -1313,6 +1492,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             browser,
             dry_run,
             headless,
+            authorization,
         )
     except Exception as exc:
         duration_ms = int((time.time() - start) * 1000)
@@ -1322,12 +1502,17 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         update_state(worker_id, status="failed", last_action="agent preparation failed")
         return "failed:agent_startup_error", duration_ms
 
-    update_state(worker_id, status="applying", job_title=safe_title,
-                 company=safe_company, score=job.get("fit_score", 0),
-                 start_time=time.time(), actions=0, last_action=f"{backend} starting")
-    add_event(
-        f"[W{worker_id}] Starting via {backend}/{browser}: {safe_title[:40]} @ {safe_company}{source_suffix}"
+    update_state(
+        worker_id,
+        status="applying",
+        job_title=safe_title,
+        company=safe_company,
+        score=job.get("fit_score", 0),
+        start_time=time.time(),
+        actions=0,
+        last_action=f"{backend} starting",
     )
+    add_event(f"[W{worker_id}] Starting via {backend}/{browser}: {safe_title[:40]} @ {safe_company}{source_suffix}")
 
     worker_log = config.LOG_DIR / f"worker-{worker_id}.log"
     ts_header = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -1390,11 +1575,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         timeout_seconds = config.get_apply_timeout()
         deadline = start + timeout_seconds if timeout_seconds is not None else None
         idle_timeout_seconds = _get_apply_idle_timeout(timeout_seconds)
-        idle_deadline = (
-            time.time() + idle_timeout_seconds
-            if idle_timeout_seconds is not None
-            else None
-        )
+        idle_deadline = time.time() + idle_timeout_seconds if idle_timeout_seconds is not None else None
 
         with open_private_text(worker_log, mode="a", strict=True) as lf:
             lf.write(log_header)
@@ -1439,10 +1620,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
                                     text_parts.append(text)
                                     lf.write(redact_known_secrets(text, known_secrets) + "\n")
                                 elif block.get("type") == "tool_use":
-                                    name = (
-                                        block.get("name", "")
-                                        .replace("mcp__playwright__", "")
-                                    )
+                                    name = block.get("name", "").replace("mcp__playwright__", "")
                                     lf.write(f"  >> {name}\n")
                                     ws = get_state(worker_id)
                                     cur_actions = ws.actions if ws else 0
@@ -1523,14 +1701,21 @@ def run_job(job: dict, port: int, worker_id: int = 0,
 # Worker queue loop
 # ---------------------------------------------------------------------------
 
-def worker_loop(worker_id: int = 0, limit: int = 1,
-                target_url: str | None = None,
-                min_score: int = 7, max_score: int | None = None,
-                headless: bool = False,
-                model: str = "gpt-5.4-mini", backend: str = "codex",
-                browser: str = "chromium",
-                dry_run: bool = False,
-                continuous: bool = False) -> tuple[int, int]:
+
+def worker_loop(
+    worker_id: int = 0,
+    limit: int = 1,
+    target_url: str | None = None,
+    min_score: int = 7,
+    max_score: int | None = None,
+    headless: bool = False,
+    model: str = "gpt-5.4-mini",
+    backend: str = "codex",
+    browser: str = "chromium",
+    dry_run: bool = False,
+    continuous: bool = False,
+    authorization: prompt_mod.ApplicationAuthorization | None = None,
+) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty."""
     applied = 0
     failed = 0
@@ -1542,8 +1727,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
         if not continuous and jobs_done >= limit:
             break
 
-        update_state(worker_id, status="idle", job_title="", company="",
-                     last_action="waiting for job", actions=0)
+        update_state(worker_id, status="idle", job_title="", company="", last_action="waiting for job", actions=0)
 
         job = acquire_job(
             target_url=target_url,
@@ -1582,6 +1766,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 browser=browser,
                 dry_run=dry_run,
                 headless=headless,
+                authorization=authorization,
             )
 
             # Convert process output into normalized state and durable status.
@@ -1596,19 +1781,25 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 _stop_event.set()
                 add_event(f"[W{worker_id}] Stopping queue: {result.split(':', 1)[1]}")
                 break
-            if dry_run:
+            manual_review_reason = _manual_review_reason(result)
+            if manual_review_reason and not dry_run:
+                mark_manual_review(job["url"], manual_review_reason, duration_ms=duration_ms)
+                failed += 1
+                add_event(f"[W{worker_id}] Manual review required: {manual_review_reason}")
+                update_state(worker_id, jobs_failed=failed, jobs_done=applied + failed)
+            elif dry_run:
                 mark_dry_run(job["url"], duration_ms=duration_ms, result=result)
                 add_event(f"[W{worker_id}] Dry run result: {result} - {job['title'][:30]}")
-            if result == "applied":
+            elif result == "applied":
                 if not dry_run:
                     mark_result(job["url"], "applied", duration_ms=duration_ms)
                     applied += 1
                     update_state(worker_id, jobs_applied=applied, jobs_done=applied + failed)
             elif not dry_run:
                 reason = result.split(":", 1)[-1] if ":" in result else result
-                mark_result(job["url"], "failed", reason,
-                            permanent=_is_permanent_failure(result),
-                            duration_ms=duration_ms)
+                mark_result(
+                    job["url"], "failed", reason, permanent=_is_permanent_failure(result), duration_ms=duration_ms
+                )
                 failed += 1
                 update_state(worker_id, jobs_failed=failed, jobs_done=applied + failed)
         except KeyboardInterrupt:
@@ -1641,13 +1832,22 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
 # Apply command entry point
 # ---------------------------------------------------------------------------
 
-def main(limit: int = 1, target_url: str | None = None,
-         min_score: int = 7, max_score: int | None = None,
-         headless: bool = False,
-         model: str = "gpt-5.4-mini", backend: str = "codex",
-         browser: str = "chromium",
-         dry_run: bool = False, continuous: bool = False,
-         poll_interval: int = 60, workers: int = 1) -> None:
+
+def main(
+    limit: int = 1,
+    target_url: str | None = None,
+    min_score: int = 7,
+    max_score: int | None = None,
+    headless: bool = False,
+    model: str = "gpt-5.4-mini",
+    backend: str = "codex",
+    browser: str = "chromium",
+    dry_run: bool = False,
+    continuous: bool = False,
+    poll_interval: int = 60,
+    workers: int = 1,
+    authorization: prompt_mod.ApplicationAuthorization | None = None,
+) -> None:
     """Launch the apply pipeline."""
     global POLL_INTERVAL
     if workers < 1:
@@ -1660,6 +1860,7 @@ def main(limit: int = 1, target_url: str | None = None,
         raise ValueError("max_score cannot be less than min_score")
     if poll_interval < 1:
         raise ValueError("poll_interval must be at least 1")
+    prompt_mod.validate_application_authorization(authorization, dry_run=dry_run)
     POLL_INTERVAL = poll_interval
     _stop_event.clear()
 
@@ -1742,6 +1943,7 @@ def main(limit: int = 1, target_url: str | None = None,
                         browser=browser,
                         dry_run=dry_run,
                         continuous=continuous,
+                        authorization=authorization,
                     )
                 else:
                     if effective_limit:
@@ -1766,6 +1968,7 @@ def main(limit: int = 1, target_url: str | None = None,
                                 browser=browser,
                                 dry_run=dry_run,
                                 continuous=continuous,
+                                authorization=authorization,
                             ): i
                             for i in range(workers)
                         }
@@ -1794,10 +1997,7 @@ def main(limit: int = 1, target_url: str | None = None,
             live.update(render_full())
 
         totals = get_totals()
-        console.print(
-            f"\n[bold]Done: {total_applied} applied, {total_failed} failed "
-            f"(${totals['cost']:.3f})[/bold]"
-        )
+        console.print(f"\n[bold]Done: {total_applied} applied, {total_failed} failed (${totals['cost']:.3f})[/bold]")
         console.print(f"Logs: {config.LOG_DIR}")
 
     except KeyboardInterrupt:

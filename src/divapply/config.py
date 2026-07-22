@@ -280,7 +280,7 @@ def _overlay_transcript_education(profile: dict, records: list[dict]) -> dict:
         merged = dict(school)
         record = by_name.get(_school_match_key(school.get("school")))
         if record:
-            overlaid = False
+            record_fields: list[str] = []
             gpa = record.get("institutional_gpa")
             earned = record.get("total_earned")
             units_scope = "total"
@@ -289,21 +289,26 @@ def _overlay_transcript_education(profile: dict, records: list[dict]) -> dict:
                 units_scope = "institutional"
             if gpa is not None:
                 merged["gpa"] = _academic_number(gpa)
-                overlaid = True
+                record_fields.append("gpa")
             if earned is not None:
                 merged["units"] = _academic_number(earned)
                 merged["units_scope"] = units_scope
-                overlaid = True
+                record_fields.append("units")
             if record.get("gpa_as_of"):
                 merged["gpa_as_of"] = str(record["gpa_as_of"])
-                overlaid = True
-            if overlaid:
-                for key in ("degree", "major", "minor"):
-                    if record.get(key):
-                        merged[key] = str(record[key])
-                if record.get("expected_graduation_year"):
-                    merged["expected_graduation_year"] = str(record["expected_graduation_year"])
+            for key in ("degree", "major", "minor"):
+                if record.get(key):
+                    merged[key] = str(record[key])
+                    record_fields.append(key)
+            if record.get("expected_graduation_year"):
+                merged["expected_graduation_year"] = str(record["expected_graduation_year"])
+                record_fields.append("expected_graduation_year")
+            if record.get("degree_status"):
+                merged["education_record_degree_status"] = str(record["degree_status"])
+                record_fields.append("degree_status")
+            if record_fields:
                 merged["education_record_source"] = "structured transcript"
+                merged["education_record_fields"] = sorted(set(record_fields))
         merged_schools.append(merged)
 
     result = dict(profile)
@@ -483,8 +488,7 @@ def _coursework_row_is_eligible(row: dict, policy: dict[str, Any]) -> bool:
         return False
 
     haystack = " ".join(
-        str(row.get(key) or "")
-        for key in ("course_title", "course_code", "subject_area", "notes")
+        str(row.get(key) or "") for key in ("course_title", "course_code", "subject_area", "notes")
     ).casefold()
     excludes = policy["exclude_patterns"]
     if any(pattern in haystack for pattern in excludes):
@@ -766,8 +770,7 @@ def _validate_market_policy_entry(
         "trusted_local_sites",
     ):
         if key in policy and (
-            not isinstance(policy[key], list)
-            or any(not isinstance(item, str) for item in policy[key])
+            not isinstance(policy[key], list) or any(not isinstance(item, str) for item in policy[key])
         ):
             errors.append(f"{prefix}.{key} must be a list of strings")
     application_mode = str(policy.get("application_mode") or "manual_review").strip().casefold()
@@ -800,9 +803,7 @@ def _validate_coursework_context(raw_cfg: dict, errors: list[str]) -> None:
         return
     for key in ("include_patterns", "exclude_patterns", "skill_exclude_patterns"):
         value = coursework_context.get(key)
-        if value is not None and (
-            not isinstance(value, list) or any(not isinstance(item, str) for item in value)
-        ):
+        if value is not None and (not isinstance(value, list) or any(not isinstance(item, str) for item in value)):
             errors.append(f"coursework_context.{key} must be a list")
     if not _bounded_integer(coursework_context.get("max_per_school", 12), 1, 24):
         errors.append("coursework_context.max_per_school must be an integer from 1 to 24")

@@ -254,7 +254,9 @@ divapply apply --yes --limit 1 --workers 1 --min-score 7
 
 Safety boundaries:
 
-- Real application runs require explicit confirmation.
+- Real application runs require explicit confirmation. The resulting runtime authorization covers exact local profile fields and, only in real mode, the final submission action.
+- `apply --gen` and `apply --dry-run` are form-fill/review scopes only; their prompts cannot authorize a final Submit/Apply click.
+- An exact `apply --url ...` selection overrides discovery-city filtering for that job only. Work-authorization, scam, security, and wrong-job checks still apply.
 - Worker profiles are blank and dedicated; DivApply never clones your personal Chrome profile.
 - The apply agent receives an allowlisted browser surface, without host shell or arbitrary page-code execution. Codex approval-required browser actions use automatic review while the agent remains read-only.
 - Active browser requests stay on the job/application origin except for audited, source-scoped HTTPS ATS API hosts; cross-site document navigation remains blocked.

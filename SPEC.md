@@ -260,6 +260,13 @@
 - V141: MCP navigation/control cancellation before application interaction → infrastructure failure; release lock + stop queue; ⊥ job failure/attempt/event mutation.
 - V142: source-scoped ATS support host allowlist → HTTPS `xhr|fetch` only; document navigation + unrelated cross-origin active request remain blocked; Sutter form loads required Phenom APIs.
 - V143: dedicated Chrome launch ⊥ `--use-fake-device-for-media-stream`/`--use-fake-ui-for-media-stream`; permission + notification denial retained.
+- V144: confirmed apply run -> exact local profile values authorized for legitimate fields; education provenance/status rendered; ⊥ guessing, voluntary EEO without consent, forbidden disclosures.
+- V145: Codex auto-review rejection only -> `RESULT:FAILED:approval_required` launcher fail-stop; ⊥ alternate-tool/input workaround.
+- V146: exact `apply --url` acquisition -> explicit-target location override with stored location; ⊥ discovery-geography veto; work-auth/scam/security/wrong-job gates retained.
+- V147: CLI confirmation/request -> structured profile-field/final-submit authorization propagated to prompt; submission-capable prompt ⊥ missing final-submit authority; generated manual prompt is form-fill-only.
+- V148: before applicant-data entry + final submit, visible form identity -> stored title/employer or requisition; confirmed mismatch -> permanent `wrong_job`; unverifiable -> manual review.
+- V149: missing exact required answer | unverifiable identity | unverified material prefill -> durable job-specific `manual` state + reason; ⊥ queue-wide stop/attempt consumption.
+- V150: GovernmentJobs saved-account Work/Education prefill -> bounded material-fact comparison with local sources; mismatch -> exact correction or manual review; ⊥ blind trust.
 
 ## §T
 
@@ -341,6 +348,8 @@
 |T74|publish privacy-clean 0.5.15 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V140,V141|x|
 |T75|restore Sutter Phenom apply form in restricted browser|`test_v142_*`, `test_v143_*` + controlled live form probe + full/release gates; V1,V3,V7,V12,V142,V143,I26|x|
 |T76|publish privacy-clean 0.5.16 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V142,V143|x|
+|T77|repair apply provenance, approval fail-stop, + targeted authority|`test_v144_*`-`test_v150_*` + Sutter dry/live probe + full/release gates; V1,V3,V12,V144-V150,I4,I24,I40,I47|x|
+|T78|publish privacy-clean 0.5.17 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V144,V145|~|
 
 ## §B
 
@@ -608,3 +617,14 @@
 |B260|Codex snapshot works but navigation/tab/key calls cancel; job consumes failed attempt|`approval_policy="never"` leaves approval-required MCP actions no reviewer + browser cancellation classified candidate failure|V140,V141|T73|on-request auto-review + infrastructure mapping|named launcher regressions + safe installed-CLI probe|
 |B261|0.5.15 version test sees `uv.lock` 0.5.14|version sources bumped before lock refresh|V49|T74|`uv lock`|`test_v49_release_version_is_consistent_and_not_retired`|
 |B262|Sutter Apply click renders `Something went wrong`; normal Firefox renders live form|origin-only guard aborts required Phenom `xhr/fetch`; fake-media flags add misleading Chrome warning|V142,V143|T75|source-scoped Phenom API hosts + remove fake-media flags|named guard/Chrome regressions + controlled live form probe|
+|B263|Sutter education degree selection rejected; agent retries 4 equivalent inputs then fails `stuck`|prompt omits explicit user authority/transcript provenance; no reviewer-rejection fail-stop|V144,V145|T77|authorized fact block + education source labels + hard stop|named prompt regressions + Sutter dry/live probe|
+|B264|explicit Sutter dry-run rejects Davis despite configured Davis eligibility|agent re-derives location from collapsed page and ignores exact user-selected URL/stored location|V146|T77|target-acquisition marker + prompt override|named acquire/prompt regressions + Sutter dry/live probe|
+|B265|formatted `APPROVAL_REQUIRED` result can consume attempt|infrastructure classifier compares unnormalized result string|V145|T77|normalize reason before classifier|parameterized parser + worker fail-stop regression|
+|B266|partial target URL can acquire different job + gain geography override|targeted SQL uses substring `LIKE` then marks row exact|V146|T77|canonical URL equality + ambiguity fail-close|prefix/tracking-query/collision acquisition regressions|
+|B267|future caller can pair no-submit source with submit scope|authorization validates booleans but not source/scope mapping|V147|T77|enforce source-to-mode mapping|authorization combination matrix|
+|B268|Sutter form-fill batch rejected as unsupported answers|generic government screening rules default referral/agency answers across unrelated ATS sites|V144,V145|T77|answer-bank-only categorical rules + no cross-site defaults|screening regression + Sutter dry probe|
+|B269|single query/hash-routed job can gain explicit-target authority for different ID|canonical target identity drops all query + fragment data|V146|T77|strip tracking allowlist only; preserve semantic query/hash route|query-ID + fragment-ID mismatch regressions|
+|B270|same-origin redirect/recycled form can silently target different job|browser guard verifies origin but prompt lacks title/employer/requisition identity gate|V148|T77|pre-fill + pre-submit identity checks with `wrong_job` hard stop|prompt + permanent-failure regressions|
+|B271|missing categorical fact emits infra-only `approval_required` + wedges queue|one result overloaded auto-review + job-data blockers|V145,V149|T77|distinct manual-review reasons + durable manual state|prompt/worker regressions|
+|B272|GovernmentJobs fast track may submit stale remote work/education|prompt blindly skips saved-account sections|V150|T77|bounded material-fact verification + fail-close|prompt regression|
+|B273|temporary identity-free page becomes permanent wrong-job failure|identity mismatch + unverifiability share one result|V148,V149|T77|split permanent mismatch from manual identity review|prompt/launcher regressions|

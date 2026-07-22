@@ -2,6 +2,14 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.17
+
+- Bound application prompts to the current CLI authorization, exact target identity, and field-level academic-record provenance while keeping generated and dry-run prompts unable to submit.
+- Made exact `apply --url` targets bypass discovery geography only, without weakening work-authorization, scam, security, or wrong-job checks.
+- Separated auto-review infrastructure denials from missing-answer, unverifiable-identity, and stale-prefill review blockers so queues stop only for infrastructure and job-specific blockers remain auditable without consuming attempts.
+- Replaced blind GovernmentJobs saved-account trust and generic screening defaults with bounded work/education verification and exact profile or answer-bank evidence.
+- Preserved semantic job URL queries and fragments while removing only known tracking parameters, preventing partial or recycled URLs from selecting the wrong posting.
+
 ## 0.5.16
 
 - Restored Sutter Health application forms by allowing only source-scoped HTTPS Phenom API requests while continuing to block unrelated cross-origin requests and cross-site document navigation.

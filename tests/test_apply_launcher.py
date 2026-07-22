@@ -37,9 +37,7 @@ def test_extract_result_rejects_non_exact_applied_result_line(monkeypatch) -> No
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
 
     status, _ = launcher._extract_result(
-        "SUBMISSION_ORIGIN:https://jobs.example\n"
-        "CONFIRMATION: confirmation number ABC-123\n"
-        "RESULT: APPLIED\n",
+        "SUBMISSION_ORIGIN:https://jobs.example\nCONFIRMATION: confirmation number ABC-123\nRESULT: APPLIED\n",
         worker_id=0,
         job={"title": "Support Role", "url": "https://jobs.example/posting/1"},
         duration_ms=1000,
@@ -67,9 +65,7 @@ def test_extract_result_rejects_negated_confirmation(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
 
     status, _ = launcher._extract_result(
-        "SUBMISSION_ORIGIN:https://jobs.example\n"
-        "CONFIRMATION: I could not confirm submission\n"
-        "RESULT:APPLIED\n",
+        "SUBMISSION_ORIGIN:https://jobs.example\nCONFIRMATION: I could not confirm submission\nRESULT:APPLIED\n",
         worker_id=0,
         job={"title": "Support Role", "url": "https://jobs.example/posting/1"},
         duration_ms=1000,
@@ -102,9 +98,7 @@ def test_parse_submission_proof_rejects_wrong_or_credentialed_origin() -> None:
     for origin in ("https://evil.example", "https://user:password@apply.jobs.example"):
         with pytest.raises(launcher.SubmissionProofError, match="submission_origin_mismatch"):
             launcher.parse_submission_proof(
-                f"SUBMISSION_ORIGIN:{origin}\n"
-                "CONFIRMATION: application submitted successfully\n"
-                "RESULT:APPLIED\n",
+                f"SUBMISSION_ORIGIN:{origin}\nCONFIRMATION: application submitted successfully\nRESULT:APPLIED\n",
                 job,
             )
 
@@ -160,14 +154,16 @@ def test_extract_result_uses_final_agent_result_not_prompt_contract(monkeypatch)
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
 
     status, _ = launcher._extract_result(
-        "\n".join([
-            "user",
-            "RESULT:APPLIED -- prompt contract example",
-            "RESULT:LOGIN_ISSUE -- prompt contract example",
-            "codex",
-            "I could not continue because the form requires sensitive data.",
-            "RESULT:FAILED:reason requires SSN last 4 digits, which I cannot enter",
-        ]),
+        "\n".join(
+            [
+                "user",
+                "RESULT:APPLIED -- prompt contract example",
+                "RESULT:LOGIN_ISSUE -- prompt contract example",
+                "codex",
+                "I could not continue because the form requires sensitive data.",
+                "RESULT:FAILED:reason requires SSN last 4 digits, which I cannot enter",
+            ]
+        ),
         worker_id=0,
         job={"title": "Support Role"},
         duration_ms=1000,
@@ -181,13 +177,15 @@ def test_extract_result_ignores_prompt_result_codes_without_agent_result(monkeyp
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
 
     status, _ = launcher._extract_result(
-        "\n".join([
-            "user",
-            "RESULT:APPLIED -- prompt contract example",
-            "RESULT:LOGIN_ISSUE -- prompt contract example",
-            "codex",
-            "I am still working through the form.",
-        ]),
+        "\n".join(
+            [
+                "user",
+                "RESULT:APPLIED -- prompt contract example",
+                "RESULT:LOGIN_ISSUE -- prompt contract example",
+                "codex",
+                "I am still working through the form.",
+            ]
+        ),
         worker_id=0,
         job={"title": "Support Role"},
         duration_ms=1000,
@@ -201,12 +199,14 @@ def test_extract_result_reports_unsupported_agent_model_before_prompt_examples(m
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
 
     status, _ = launcher._extract_result(
-        "\n".join([
-            "user",
-            "RESULT:FAILED:reason -- any other failure (brief reason)",
-            'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error",'
-            '"message":"The model is not supported when using Codex with a ChatGPT account."}}',
-        ]),
+        "\n".join(
+            [
+                "user",
+                "RESULT:FAILED:reason -- any other failure (brief reason)",
+                'ERROR: {"type":"error","status":400,"error":{"type":"invalid_request_error",'
+                '"message":"The model is not supported when using Codex with a ChatGPT account."}}',
+            ]
+        ),
         worker_id=0,
         job={"title": "Support Role"},
         duration_ms=1000,
@@ -220,11 +220,13 @@ def test_extract_result_reports_out_of_credits_before_prompt_examples(monkeypatc
     monkeypatch.setattr(launcher, "update_state", lambda worker_id, **kwargs: None)
 
     status, _ = launcher._extract_result(
-        "\n".join([
-            "user",
-            "RESULT:FAILED:reason -- any other failure (brief reason)",
-            "ERROR: Your workspace is out of credits. Add credits to continue.",
-        ]),
+        "\n".join(
+            [
+                "user",
+                "RESULT:FAILED:reason -- any other failure (brief reason)",
+                "ERROR: Your workspace is out of credits. Add credits to continue.",
+            ]
+        ),
         worker_id=0,
         job={"title": "Support Role"},
         duration_ms=1000,
@@ -268,8 +270,7 @@ def test_extract_result_redacts_sensitive_failure_reason(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **kwargs: updates.append(kwargs))
 
     status, _ = launcher._extract_result(
-        "RESULT:FAILED:password=super-secret-value "
-        "https://user:password@jobs.example/apply?token=query-secret-value",
+        "RESULT:FAILED:password=super-secret-value https://user:password@jobs.example/apply?token=query-secret-value",
         worker_id=0,
         job={"title": "Support Role"},
         duration_ms=1000,
@@ -298,6 +299,7 @@ def test_prompt_permanent_failures_are_not_retried() -> None:
         "failed:unsafe_verification",
         "failed:sso_required",
         "failed:not_a_job_application",
+        "failed:wrong_job",
         "failed:scam",
         "failed:blocked_by_cloudflare",
         "failed:email_required",
@@ -615,8 +617,7 @@ def test_v140_build_codex_command_maps_mcp_config_with_auto_review(tmp_path, mon
     assert 'shell_environment_policy.inherit="none"' in cmd
     assert "mcp_servers.playwright.required=true" in cmd
     assert (
-        'mcp_servers.playwright.disabled_tools=["browser_run_code","browser_run_code_unsafe","browser_evaluate"]'
-        in cmd
+        'mcp_servers.playwright.disabled_tools=["browser_run_code","browser_run_code_unsafe","browser_evaluate"]' in cmd
     )
 
 
@@ -644,6 +645,86 @@ def test_v141_browser_navigation_block_releases_job_without_attempt(monkeypatch)
 
     assert (applied, failed) == (0, 0)
     assert released == [job["url"]]
+    assert marked == []
+
+
+@pytest.mark.parametrize(
+    "agent_output",
+    [
+        "RESULT:FAILED:approval_required",
+        "RESULT:FAILED:APPROVAL_REQUIRED",
+        "RESULT: FAILED : approval required",
+    ],
+)
+def test_v145_approval_rejection_releases_job_and_stops_queue(monkeypatch, agent_output) -> None:
+    job = {"url": "https://jobs.example/1", "title": "Support Role"}
+    released: list[str] = []
+    marked: list[tuple] = []
+    parsed: list[str] = []
+    acquired = iter([job])
+
+    monkeypatch.setattr(launcher, "acquire_job", lambda **_kwargs: next(acquired, None))
+
+    def fake_run_job(*_args, **_kwargs):
+        result = launcher._extract_result(agent_output, worker_id=0, job=job, duration_ms=10)
+        parsed.append(result[0])
+        return result
+
+    monkeypatch.setattr(launcher, "run_job", fake_run_job)
+    monkeypatch.setattr(launcher, "release_lock", released.append)
+    monkeypatch.setattr(launcher, "mark_result", lambda *args, **kwargs: marked.append((args, kwargs)))
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    launcher._stop_event.clear()
+    try:
+        applied, failed = launcher.worker_loop(limit=1)
+    finally:
+        stopped = launcher._stop_event.is_set()
+        launcher._stop_event.clear()
+
+    assert parsed and launcher._is_agent_infrastructure_failure(parsed[0])
+    assert (applied, failed) == (0, 0)
+    assert stopped is True
+    assert released == [job["url"]]
+    assert marked == []
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "missing_required_answer",
+        "prefill_verification_required",
+        "job_identity_unverified",
+    ],
+)
+def test_v149_manual_review_blocker_is_persisted_without_stopping_queue(monkeypatch, reason) -> None:
+    job = {"url": "https://jobs.example/1", "title": "Support Role"}
+    manual: list[tuple] = []
+    marked: list[tuple] = []
+    acquired = iter([job])
+
+    monkeypatch.setattr(launcher, "acquire_job", lambda **_kwargs: next(acquired, None))
+    monkeypatch.setattr(
+        launcher,
+        "run_job",
+        lambda *_args, **_kwargs: (f"failed:{reason}", 10),
+    )
+    monkeypatch.setattr(launcher, "mark_manual_review", lambda *args, **kwargs: manual.append((args, kwargs)))
+    monkeypatch.setattr(launcher, "mark_result", lambda *args, **kwargs: marked.append((args, kwargs)))
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    launcher._stop_event.clear()
+    try:
+        applied, failed = launcher.worker_loop(limit=1)
+        stopped = launcher._stop_event.is_set()
+    finally:
+        launcher._stop_event.clear()
+
+    assert launcher._manual_review_reason(f"failed:{reason}") == reason
+    assert not launcher._is_agent_infrastructure_failure(f"failed:{reason}")
+    assert (applied, failed) == (0, 1)
+    assert stopped is False
+    assert manual == [((job["url"], reason), {"duration_ms": 10})]
     assert marked == []
 
 
@@ -767,7 +848,7 @@ def test_v142_sutter_guard_allows_only_non_document_phenom_api_requests(tmp_path
     source = guard.read_text(encoding="utf-8")
 
     assert launcher._trusted_job_support_host_suffixes(job) == ["phenompeople.com"]
-    assert "const allowedSupportHostSuffixes = [\"phenompeople.com\"]" in source
+    assert 'const allowedSupportHostSuffixes = ["phenompeople.com"]' in source
     assert "const allowedSupportTypes = new Set(['xhr', 'fetch'])" in source
     assert "allowedSupportTypes.has(request.resourceType())" in source
     assert "parsed.protocol === 'https:'" in source
@@ -777,9 +858,7 @@ def test_v142_sutter_guard_allows_only_non_document_phenom_api_requests(tmp_path
         tmp_path / "unrelated_guard.ts",
         {"url": "https://jobs.example/posting/1"},
     ).read_text(encoding="utf-8")
-    assert launcher._trusted_job_support_host_suffixes(
-        {"url": "https://jobs.example/posting/1"}
-    ) == []
+    assert launcher._trusted_job_support_host_suffixes({"url": "https://jobs.example/posting/1"}) == []
     assert "phenompeople.com" not in unrelated
 
 
@@ -814,14 +893,16 @@ def test_agent_command_rejects_npx_runtime_config(tmp_path) -> None:
     mcp_path = tmp_path / "mcp.json"
     prompt_path = tmp_path / "prompt.txt"
     mcp_path.write_text(
-        json.dumps({
-            "mcpServers": {
-                "playwright": {
-                    "command": "npx",
-                    "args": ["-y", "@playwright/mcp@0.0.78", "--sandbox", "--block-service-workers"],
+        json.dumps(
+            {
+                "mcpServers": {
+                    "playwright": {
+                        "command": "npx",
+                        "args": ["-y", "@playwright/mcp@0.0.78", "--sandbox", "--block-service-workers"],
+                    }
                 }
             }
-        }),
+        ),
         encoding="utf-8",
     )
 
@@ -871,23 +952,26 @@ def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
             availability_state TEXT DEFAULT 'open'
         )
     """)
-    conn.execute("""
+    conn.execute(
+        """
         INSERT INTO jobs (
             url, title, company, site, application_url, tailored_resume_path,
             fit_score, location, full_description, apply_attempts
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
-        "https://jobs.example/1",
-        "Support Analyst",
-        "Real Employer",
-        "Indeed",
-        "https://apply.example/1",
-        "resume.txt",
-        9,
-        "Remote",
-        "Required: Python support.",
-        0,
-    ))
+    """,
+        (
+            "https://jobs.example/1",
+            "Support Analyst",
+            "Real Employer",
+            "Indeed",
+            "https://apply.example/1",
+            "resume.txt",
+            9,
+            "Remote",
+            "Required: Python support.",
+            0,
+        ),
+    )
     conn.commit()
 
     monkeypatch.setattr(launcher, "get_connection", lambda: conn)
@@ -899,6 +983,131 @@ def test_acquire_job_returns_company_separate_from_site(monkeypatch) -> None:
     assert job is not None
     assert job["company"] == "Real Employer"
     assert job["site"] == "Indeed"
+    assert job["_explicit_target"] is False
+
+
+def test_v146_targeted_acquisition_marks_user_selected_job(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY, title TEXT, company TEXT, site TEXT,
+            application_url TEXT, tailored_resume_path TEXT, fit_score INTEGER,
+            location TEXT, full_description TEXT, cover_letter_path TEXT,
+            apply_status TEXT, apply_error TEXT, apply_attempts INTEGER,
+            agent_id TEXT, last_attempted_at TEXT, archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
+        )
+    """)
+    url = "https://jobs.example/selected"
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, 'Selected Role', 'Example', 'Official', ?, 'resume.txt',
+                  6, 'Davis, CA', 'Selected by exact URL.', 3)
+        """,
+        (url, url),
+    )
+    conn.commit()
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda _url: False, raising=False)
+
+    job = launcher.acquire_job(target_url=f"{url}/?utm_source=manual", worker_id=7)
+
+    assert job is not None
+    assert job["_explicit_target"] is True
+    assert job["location"] == "Davis, CA"
+
+
+def test_v146_targeted_acquisition_rejects_prefix_and_canonical_collisions(monkeypatch) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY, title TEXT, company TEXT, site TEXT,
+            application_url TEXT, tailored_resume_path TEXT, fit_score INTEGER,
+            location TEXT, full_description TEXT, cover_letter_path TEXT,
+            apply_status TEXT, apply_error TEXT, apply_attempts INTEGER,
+            agent_id TEXT, last_attempted_at TEXT, archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
+        )
+    """)
+    base = "https://jobs.example/job/R-135593"
+    conn.executemany(
+        """
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, 'Selected Role', 'Example', 'Official', ?, 'resume.txt',
+                  6, 'Davis, CA', 'Selected by exact URL.', 0)
+        """,
+        [
+            (f"{base}?source=a", base),
+            (f"{base}?source=b", base),
+        ],
+    )
+    conn.commit()
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda _url: False, raising=False)
+
+    assert launcher.acquire_job(target_url="https://jobs.example/job/R-1355", worker_id=7) is None
+    assert launcher.acquire_job(target_url=base, worker_id=7) is None
+    states = conn.execute("SELECT apply_status, agent_id FROM jobs ORDER BY url").fetchall()
+    assert [tuple(row) for row in states] == [(None, None), (None, None)]
+
+
+@pytest.mark.parametrize(
+    ("stored_url", "requested_url"),
+    [
+        ("https://jobs.example/apply?job=111", "https://jobs.example/apply?job=222"),
+        ("https://jobs.example/#/job/111", "https://jobs.example/#/job/222"),
+    ],
+)
+def test_v146_targeted_acquisition_preserves_semantic_query_and_fragment_ids(
+    monkeypatch,
+    stored_url,
+    requested_url,
+) -> None:
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute("""
+        CREATE TABLE jobs (
+            url TEXT PRIMARY KEY, title TEXT, company TEXT, site TEXT,
+            application_url TEXT, tailored_resume_path TEXT, fit_score INTEGER,
+            location TEXT, full_description TEXT, cover_letter_path TEXT,
+            apply_status TEXT, apply_error TEXT, apply_attempts INTEGER,
+            agent_id TEXT, last_attempted_at TEXT, archived_at TEXT,
+            application_mode TEXT DEFAULT 'active',
+            source_verification TEXT DEFAULT 'official',
+            availability_state TEXT DEFAULT 'open'
+        )
+    """)
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, company, site, application_url, tailored_resume_path,
+            fit_score, location, full_description, apply_attempts
+        ) VALUES (?, 'Selected Role', 'Example', 'Official', ?, 'resume-111.txt',
+                  6, 'Davis, CA', 'Selected by exact URL.', 0)
+        """,
+        (stored_url, stored_url),
+    )
+    conn.commit()
+    monkeypatch.setattr(launcher, "get_connection", lambda: conn)
+    monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
+    monkeypatch.setattr(launcher.config, "is_manual_ats", lambda _url: False, raising=False)
+
+    assert launcher.acquire_job(target_url=requested_url, worker_id=7) is None
+    state = conn.execute("SELECT apply_status, apply_error, agent_id FROM jobs").fetchone()
+    assert tuple(state) == (None, None, None)
 
 
 def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
@@ -927,37 +1136,40 @@ def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
             availability_state TEXT DEFAULT 'open'
         )
     """)
-    conn.executemany("""
+    conn.executemany(
+        """
         INSERT INTO jobs (
             url, title, company, site, application_url, tailored_resume_path,
             fit_score, location, full_description, apply_attempts
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, [
-        (
-            "https://jobs.example/manual",
-            "Manual ATS",
-            "Manual Co",
-            "Indeed",
-            "https://manual.example/apply",
-            "manual-resume.txt",
-            10,
-            "Remote",
-            "Requires manual ATS.",
-            0,
-        ),
-        (
-            "https://jobs.example/ready",
-            "Ready Role",
-            "Ready Co",
-            "Indeed",
-            "https://apply.example/ready",
-            "ready-resume.txt",
-            9,
-            "Remote",
-            "Ready to apply.",
-            0,
-        ),
-    ])
+    """,
+        [
+            (
+                "https://jobs.example/manual",
+                "Manual ATS",
+                "Manual Co",
+                "Indeed",
+                "https://manual.example/apply",
+                "manual-resume.txt",
+                10,
+                "Remote",
+                "Requires manual ATS.",
+                0,
+            ),
+            (
+                "https://jobs.example/ready",
+                "Ready Role",
+                "Ready Co",
+                "Indeed",
+                "https://apply.example/ready",
+                "ready-resume.txt",
+                9,
+                "Remote",
+                "Ready to apply.",
+                0,
+            ),
+        ],
+    )
     conn.commit()
 
     monkeypatch.setattr(launcher, "get_connection", lambda: conn)
@@ -969,7 +1181,9 @@ def test_acquire_job_skips_manual_ats_and_claims_next_job(monkeypatch) -> None:
     assert job is not None
     assert job["url"] == "https://jobs.example/ready"
     manual = conn.execute("SELECT apply_status FROM jobs WHERE url = ?", ("https://jobs.example/manual",)).fetchone()
-    ready = conn.execute("SELECT apply_status, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/ready",)).fetchone()
+    ready = conn.execute(
+        "SELECT apply_status, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/ready",)
+    ).fetchone()
     assert manual["apply_status"] == "manual"
     assert ready["apply_status"] == "in_progress"
     assert ready["agent_id"] == "worker-4"
@@ -1022,37 +1236,40 @@ def test_acquire_job_honors_max_score(monkeypatch) -> None:
             availability_state TEXT DEFAULT 'open'
         )
     """)
-    conn.executemany("""
+    conn.executemany(
+        """
         INSERT INTO jobs (
             url, title, company, site, application_url, tailored_resume_path,
             fit_score, location, full_description, apply_attempts
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, [
-        (
-            "https://jobs.example/score-8",
-            "Higher Score",
-            "Higher Co",
-            "Indeed",
-            "https://apply.example/score-8",
-            "score-8-resume.txt",
-            8,
-            "Remote",
-            "Higher scoring role.",
-            0,
-        ),
-        (
-            "https://jobs.example/score-7",
-            "Tier Seven",
-            "Seven Co",
-            "Indeed",
-            "https://apply.example/score-7",
-            "score-7-resume.txt",
-            7,
-            "Remote",
-            "Tier seven role.",
-            0,
-        ),
-    ])
+    """,
+        [
+            (
+                "https://jobs.example/score-8",
+                "Higher Score",
+                "Higher Co",
+                "Indeed",
+                "https://apply.example/score-8",
+                "score-8-resume.txt",
+                8,
+                "Remote",
+                "Higher scoring role.",
+                0,
+            ),
+            (
+                "https://jobs.example/score-7",
+                "Tier Seven",
+                "Seven Co",
+                "Indeed",
+                "https://apply.example/score-7",
+                "score-7-resume.txt",
+                7,
+                "Remote",
+                "Tier seven role.",
+                0,
+            ),
+        ],
+    )
     conn.commit()
 
     monkeypatch.setattr(launcher, "get_connection", lambda: conn)
@@ -1133,37 +1350,40 @@ def test_acquire_job_skips_unsafe_apply_url_and_claims_next_job(monkeypatch) -> 
             availability_state TEXT DEFAULT 'open'
         )
     """)
-    conn.executemany("""
+    conn.executemany(
+        """
         INSERT INTO jobs (
             url, title, company, site, application_url, tailored_resume_path,
             fit_score, location, full_description, apply_attempts
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, [
-        (
-            "https://jobs.example/unsafe",
-            "Unsafe URL",
-            "Unsafe Co",
-            "Indeed",
-            "http://localhost:8080/apply",
-            "unsafe-resume.txt",
-            10,
-            "Remote",
-            "Unsafe local URL.",
-            0,
-        ),
-        (
-            "https://jobs.example/ready-after-unsafe",
-            "Ready Role",
-            "Ready Co",
-            "Indeed",
-            "https://apply.example/ready",
-            "ready-after-unsafe-resume.txt",
-            9,
-            "Remote",
-            "Ready to apply.",
-            0,
-        ),
-    ])
+    """,
+        [
+            (
+                "https://jobs.example/unsafe",
+                "Unsafe URL",
+                "Unsafe Co",
+                "Indeed",
+                "http://localhost:8080/apply",
+                "unsafe-resume.txt",
+                10,
+                "Remote",
+                "Unsafe local URL.",
+                0,
+            ),
+            (
+                "https://jobs.example/ready-after-unsafe",
+                "Ready Role",
+                "Ready Co",
+                "Indeed",
+                "https://apply.example/ready",
+                "ready-after-unsafe-resume.txt",
+                9,
+                "Remote",
+                "Ready to apply.",
+                0,
+            ),
+        ],
+    )
     conn.commit()
 
     monkeypatch.setattr(launcher, "get_connection", lambda: conn)
@@ -1215,8 +1435,13 @@ def test_recover_stale_apply_locks_marks_abandoned_jobs_failed() -> None:
 
     recovered = launcher.recover_stale_apply_locks(conn=conn, timeout_seconds=3600)
 
-    stale_row = conn.execute("SELECT apply_status, apply_error, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/stale",)).fetchone()
-    fresh_row = conn.execute("SELECT apply_status, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/fresh",)).fetchone()
+    stale_row = conn.execute(
+        "SELECT apply_status, apply_error, apply_attempts, agent_id FROM jobs WHERE url = ?",
+        ("https://jobs.example/stale",),
+    ).fetchone()
+    fresh_row = conn.execute(
+        "SELECT apply_status, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/fresh",)
+    ).fetchone()
     assert recovered == 1
     assert stale_row["apply_status"] == "failed"
     assert stale_row["apply_error"] == "stale in_progress lock recovered"
@@ -1294,7 +1519,10 @@ def test_mark_result_rolls_back_when_event_insert_fails(monkeypatch) -> None:
     else:
         raise AssertionError("mark_result should raise when lifecycle event insert fails")
 
-    row = conn.execute("SELECT apply_status, applied_at, apply_attempts, agent_id FROM jobs WHERE url = ?", ("https://jobs.example/rollback",)).fetchone()
+    row = conn.execute(
+        "SELECT apply_status, applied_at, apply_attempts, agent_id FROM jobs WHERE url = ?",
+        ("https://jobs.example/rollback",),
+    ).fetchone()
     assert row["apply_status"] == "in_progress"
     assert row["applied_at"] is None
     assert row["apply_attempts"] == 0
@@ -1452,14 +1680,16 @@ def test_mark_dry_run_does_not_mark_job_applied(monkeypatch) -> None:
 
 def test_worker_loop_dry_run_failure_does_not_mark_failed(monkeypatch) -> None:
     calls: list[tuple] = []
-    jobs = [{
-        "url": "https://jobs.example/dry-run-failure",
-        "title": "Support Analyst",
-        "company": "Example",
-        "site": "Example ATS",
-        "application_url": "https://jobs.example/dry-run-failure/apply",
-        "fit_score": 9,
-    }]
+    jobs = [
+        {
+            "url": "https://jobs.example/dry-run-failure",
+            "title": "Support Analyst",
+            "company": "Example",
+            "site": "Example ATS",
+            "application_url": "https://jobs.example/dry-run-failure/apply",
+            "fit_score": 9,
+        }
+    ]
 
     def fake_acquire_job(*args, **kwargs):
         return jobs.pop(0) if jobs else None
@@ -1480,14 +1710,16 @@ def test_worker_loop_dry_run_failure_does_not_mark_failed(monkeypatch) -> None:
 
 def test_worker_loop_marks_blockers_permanent(monkeypatch) -> None:
     calls: list[dict] = []
-    jobs = [{
-        "url": "https://jobs.example/blocker",
-        "title": "Support Analyst",
-        "company": "Example",
-        "site": "Example ATS",
-        "application_url": "https://jobs.example/blocker/apply",
-        "fit_score": 9,
-    }]
+    jobs = [
+        {
+            "url": "https://jobs.example/blocker",
+            "title": "Support Analyst",
+            "company": "Example",
+            "site": "Example ATS",
+            "application_url": "https://jobs.example/blocker/apply",
+            "fit_score": 9,
+        }
+    ]
 
     def fake_acquire_job(*args, **kwargs):
         return jobs.pop(0) if jobs else None
@@ -1504,10 +1736,12 @@ def test_worker_loop_marks_blockers_permanent(monkeypatch) -> None:
     applied, failed = launcher.worker_loop(limit=1)
 
     assert (applied, failed) == (0, 1)
-    assert calls == [{
-        "args": ("https://jobs.example/blocker", "failed", "captcha"),
-        "kwargs": {"permanent": True, "duration_ms": 1200},
-    }]
+    assert calls == [
+        {
+            "args": ("https://jobs.example/blocker", "failed", "captcha"),
+            "kwargs": {"permanent": True, "duration_ms": 1200},
+        }
+    ]
 
 
 def test_reset_failed_only_resets_failed_jobs(monkeypatch) -> None:
@@ -1594,11 +1828,13 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
         def __init__(self, *args, **kwargs) -> None:
             captured["agent_env"] = kwargs["env"]
             self.stdin = FakeStdIn()
-            self.stdout = iter([
-                "SUBMISSION_ORIGIN:https://jobs.example\n",
-                "CONFIRMATION: page says application submitted successfully\n",
-                "RESULT:APPLIED\n",
-            ])
+            self.stdout = iter(
+                [
+                    "SUBMISSION_ORIGIN:https://jobs.example\n",
+                    "CONFIRMATION: page says application submitted successfully\n",
+                    "RESULT:APPLIED\n",
+                ]
+            )
             self.returncode = 0
             self.pid = 12345
 
@@ -1620,6 +1856,7 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
     monkeypatch.setattr(launcher, "_make_mcp_config", fake_make_mcp_config)
     monkeypatch.setattr(launcher, "setup_worker_profile", lambda worker_id, browser: profile_dir)
     monkeypatch.setattr(launcher, "reset_worker_dir", lambda worker_id: worker_dir)
+
     def fake_build_agent_command(backend, model, mcp_path, prompt_path):
         captured["mcp_path"] = mcp_path
         captured["prompt_path"] = prompt_path
@@ -1655,9 +1892,7 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
     assert captured["prompt_path"] == worker_dir / "apply_prompt.txt"
     assert "CAPSOLVER_API_KEY" not in captured["agent_env"]
     assert all(path.parent == log_dir for path in log_dir.iterdir())
-    assert "site-secret-value" not in "\n".join(
-        path.read_text(encoding="utf-8") for path in log_dir.iterdir()
-    )
+    assert "site-secret-value" not in "\n".join(path.read_text(encoding="utf-8") for path in log_dir.iterdir())
     assert not worker_dir.exists()
     assert not (app_dir / ".mcp-apply-0.json").exists()
 
@@ -1761,9 +1996,7 @@ def test_run_job_redacts_agent_launch_errors_from_result_events_and_state(tmp_pa
         launcher.subprocess,
         "Popen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError(
-                f"password={secret} https://jobs.example/apply?token={query_secret}"
-            )
+            RuntimeError(f"password={secret} https://jobs.example/apply?token={query_secret}")
         ),
     )
     monkeypatch.setattr(launcher, "add_event", events.append)
@@ -1826,7 +2059,15 @@ def test_main_records_parallel_worker_crashes(monkeypatch) -> None:
 
     monkeypatch.setattr(launcher, "worker_loop", fake_worker_loop)
 
-    launcher.main(limit=2, workers=2)
+    launcher.main(
+        limit=2,
+        workers=2,
+        authorization=launcher.prompt_mod.ApplicationAuthorization(
+            profile_fields=True,
+            final_submit=True,
+            source="cli_yes",
+        ),
+    )
 
     assert events == [("apply_worker_crashed", {"worker_id": 0, "error": "worker exploded"})]
 
@@ -1863,7 +2104,16 @@ def test_v133_parallel_finite_limit_never_enables_continuous_worker(monkeypatch)
 
     monkeypatch.setattr(launcher, "worker_loop", fake_worker_loop)
 
-    launcher.main(limit=1, workers=2, continuous=False)
+    launcher.main(
+        limit=1,
+        workers=2,
+        continuous=False,
+        authorization=launcher.prompt_mod.ApplicationAuthorization(
+            profile_fields=True,
+            final_submit=True,
+            source="cli_yes",
+        ),
+    )
 
     assert sorted(calls) == [(0, 1, False), (1, 0, False)]
     assert sum(limit for _worker, limit, _continuous in calls) == 1

@@ -64,6 +64,7 @@ def test_load_profile_overlays_canonical_transcript_school_facts(tmp_path, monke
                 "major": "Public Health",
                 "minor": "General Business",
                 "expected_graduation_year": 2027,
+                "degree_status": "in progress",
             }
         ],
     )
@@ -78,6 +79,16 @@ def test_load_profile_overlays_canonical_transcript_school_facts(tmp_path, monke
     assert school["expected_graduation_year"] == "2027"
     assert school["minor"] == "General Business"
     assert school["education_record_source"] == "structured transcript"
+    assert school["education_record_degree_status"] == "in progress"
+    assert school["education_record_fields"] == [
+        "degree",
+        "degree_status",
+        "expected_graduation_year",
+        "gpa",
+        "major",
+        "minor",
+        "units",
+    ]
     assert school["notes"] == "Editable narrative remains."
 
 
@@ -460,12 +471,9 @@ def test_coursework_context_policy_filters_low_value_rows_and_skill_tags() -> No
     skills = config._summarize_coursework_skills(coursework, search_config=search_config)
 
     assert summary == [
-        "Example University: Epidemiology [Public Health], "
-        "Introduction to Information Systems [Information Systems]"
+        "Example University: Epidemiology [Public Health], Introduction to Information Systems [Information Systems]"
     ]
-    assert skills == [
-        "Example University: digital workflows, information systems, public health, statistics"
-    ]
+    assert skills == ["Example University: digital workflows, information systems, public health, statistics"]
 
 
 def test_get_apply_timeout_defaults_to_bounded_timeout(monkeypatch) -> None:
