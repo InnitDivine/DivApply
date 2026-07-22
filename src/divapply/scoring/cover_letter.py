@@ -30,6 +30,7 @@ from divapply.scoring.context import format_job_context
 from divapply.scoring.validator import (
     BANNED_WORDS,
     LLM_LEAK_PHRASES,
+    normalize_target_title,
     sanitize_text,
     validate_cover_letter,
 )
@@ -306,7 +307,8 @@ def _strip_preamble(text: str) -> str:
 
 def _ensure_exact_target_title_once(text: str, job: dict) -> str:
     """Insert or deduplicate the exact title without changing candidate claims."""
-    title = " ".join(str(job.get("title") or "").split())
+    text = text.replace("\u2011", "-").replace("\u2013", "-").replace("\u2014", "-")
+    title = normalize_target_title(job.get("title"))
     if not title:
         return text
     pattern = re.compile(
@@ -389,7 +391,8 @@ def generate_cover_letter(
     Raises:
         CoverLetterValidationError: Every generated draft failed validation.
     """
-    job_text = format_job_context(job, description_limit=3000)
+    document_job = {**job, "title": normalize_target_title(job.get("title"))}
+    job_text = format_job_context(document_job, description_limit=3000)
     missing_skills = _recorded_missing_skills(job)
     gap_block = ", ".join(missing_skills) if missing_skills else "none recorded"
 
@@ -406,8 +409,8 @@ def generate_cover_letter(
         if avoid_notes:
             prompt += "\n\n## AVOID THESE ISSUES:\n" + "\n".join(f"- {n}" for n in avoid_notes[-5:])
         if any("hands-on it claim" in note.casefold() for note in avoid_notes):
-            title = str(job.get("title") or "the target")
-            company = str(job.get("company") or job.get("site") or "The employer")
+            title = str(document_job.get("title") or "the target")
+            company = str(document_job.get("company") or document_job.get("site") or "The employer")
             prompt += (
                 "\n- Use this safe opening pattern exactly, filling only verified skills: "
                 f'"For the {title} role, my home-lab work provides hands-on practice with [verified skills]." '
@@ -444,16 +447,16 @@ def generate_cover_letter(
         letter = sanitize_text(letter)  # auto-fix em dashes, smart quotes
         letter = _strip_preamble(letter)  # remove any "Here is the letter:" prefix
         letter = _drop_mixed_paid_setting_sentences(letter)
-        letter = _repair_unanchored_zero_it_closing(letter, job, profile)
+        letter = _repair_unanchored_zero_it_closing(letter, document_job, profile)
         letter = _drop_ambiguous_zero_it_bridge_sentences(letter, profile)
-        letter = _ensure_exact_target_title_once(letter, job)
+        letter = _ensure_exact_target_title_once(letter, document_job)
 
         validation = validate_cover_letter(
             letter,
             mode=validation_mode,
             profile=profile,
             resume_text=resume_text,
-            job=job,
+            job=document_job,
         )
         if validation["passed"]:
             return letter

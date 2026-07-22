@@ -2,6 +2,13 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.13
+
+- Demoted explicit market schedule conflicts to manual review before document generation or application, while preserving exact configured exceptions and temporary full-time opportunities.
+- Normalized Unicode dashes in exact target titles at the cover-letter generation boundary so valid official titles pass the ASCII document gate.
+- Added trusted static-source location defaults that fill blank scraped locations without overwriting concrete posting data.
+- Made visible inactive notices and terminal HTTP 404/410 responses outrank stale job metadata when refreshing a pasted URL, closing and archiving the row before document preparation.
+
 ## 0.5.12
 
 - Added exact market-specific résumé availability statements without changing legal application addresses or search policy.

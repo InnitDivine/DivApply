@@ -189,6 +189,24 @@ def test_v101_cover_title_repair_is_exact_once_and_idempotent() -> None:
     )["errors"] == []
 
 
+def test_v129_cover_title_repair_normalizes_unicode_dashes() -> None:
+    job = _job() | {"title": "INFORMATION TECHNOLOGY ASSOCIATE — Media Specialist"}
+    missing = _valid_letter().replace("Reporting Analyst", "open role")
+
+    repaired = _ensure_exact_target_title_once(missing, job)
+
+    normalized_title = "INFORMATION TECHNOLOGY ASSOCIATE - Media Specialist"
+    assert repaired.casefold().count(normalized_title.casefold()) == 1
+    assert "—" not in repaired
+    assert "–" not in repaired
+    assert validate_cover_letter(
+        repaired,
+        mode="strict",
+        profile=_profile(),
+        job=job,
+    )["errors"] == []
+
+
 def test_cover_validator_requires_three_body_paragraphs() -> None:
     collapsed = _valid_letter().replace(
         "\n\nExample Health needs",

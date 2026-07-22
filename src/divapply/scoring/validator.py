@@ -421,6 +421,17 @@ def sanitize_text(text: str) -> str:
     return text.strip()
 
 
+def normalize_target_title(value: object) -> str:
+    """Normalize exact generated-document titles to portable ASCII punctuation."""
+    return " ".join(
+        str(value or "")
+        .replace("\u2011", "-")
+        .replace("\u2013", "-")
+        .replace("\u2014", "-")
+        .split()
+    )
+
+
 def _add_banned_word_findings(text: str, mode: str, errors: list[str], warnings: list[str]) -> None:
     """Append banned-word findings using the configured validation mode."""
     if mode == "lenient":
@@ -910,7 +921,7 @@ def validate_cover_letter(
 
     text_lower = text.lower()
 
-    target_title = " ".join(str((job or {}).get("title") or "").casefold().split())
+    target_title = normalize_target_title((job or {}).get("title")).casefold()
     normalized_cover_text = " ".join(text.casefold().split())
     if target_title and normalized_cover_text.count(target_title) != 1:
         errors.append("Cover letter must name the exact target job title once.")

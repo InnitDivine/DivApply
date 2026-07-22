@@ -2051,11 +2051,19 @@ def build_scrape_targets(
             except UnsafeUrlError as exc:
                 log.warning("Skipping unsafe site target %s: %s", site_name, exc)
                 continue
+            location_label = str(site.get("location_label") or "").strip()
+            market_policy = (search_cfg.get("market_policies") or {}).get(location_label, {})
             targets.append({
                 "name": site_name,
                 "url": safe_url,
                 "query": None,
-                "application_mode": "manual_review",
+                "location_label": location_label,
+                "default_location": str(site.get("default_location") or "").strip(),
+                "application_mode": str(
+                    market_policy.get("application_mode", "manual_review")
+                    if isinstance(market_policy, dict)
+                    else "manual_review"
+                ),
                 "source_verification": verification,
                 "adapter": str(site.get("adapter") or "").strip().casefold()
                 or _governmentjobs_adapter_for_url(safe_url)
@@ -2063,6 +2071,17 @@ def build_scrape_targets(
             })
 
     return targets
+
+
+def _apply_target_location_default(jobs: list[dict], target: dict) -> list[dict]:
+    """Fill only missing result locations from trusted static-source metadata."""
+    default_location = str(target.get("default_location") or "").strip()
+    if not default_location:
+        return jobs
+    return [
+        {**job, "location": str(job.get("location") or "").strip() or default_location}
+        for job in jobs
+    ]
 
 
 # -- Run all sites -----------------------------------------------------------
@@ -2121,7 +2140,7 @@ def _run_all(
 
     def _process_result(r: dict, target: dict) -> None:
         nonlocal total_new, total_existing
-        jobs = r.get("jobs", [])
+        jobs = _apply_target_location_default(r.get("jobs", []), target)
         if jobs:
             new, existing = _store_jobs_filtered(
                 conn,

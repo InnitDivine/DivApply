@@ -15,7 +15,11 @@ from divapply.scoring.keywords import (
 )
 from divapply.scoring import scorer
 from divapply.scoring.scorer import _build_profile_evidence_context, _build_search_evidence_context
-from divapply.search_policy import job_has_schedule_exception, market_policy_for_job
+from divapply.search_policy import (
+    job_has_schedule_exception,
+    market_policy_for_job,
+    resolved_application_mode,
+)
 
 
 def test_keyword_score_reports_hits_and_misses() -> None:
@@ -1390,6 +1394,63 @@ def test_market_policy_resolves_state_qualified_nearby_match_patterns() -> None:
     }
 
     assert market_policy_for_job(config, {"location": "Neighbor City, ZZ, US"})[0] == "Future market"
+
+
+def test_v128_explicit_destination_part_time_demotes_actionability() -> None:
+    config = {
+        "locations": [{"label": "Future market", "location": "Sample City, ZZ"}],
+        "market_policies": {
+            "Future market": {
+                "application_mode": "active",
+                "preferred_schedule": "full_time",
+            }
+        },
+    }
+
+    assert resolved_application_mode(
+        config,
+        {
+            "company": "Example Agency",
+            "location": "Sample City, ZZ",
+            "application_mode": "active",
+            "employment_type": "temporary part-time",
+        },
+    ) == "manual_review"
+    assert resolved_application_mode(
+        config,
+        {
+            "company": "Example Agency",
+            "location": "Sample City, ZZ",
+            "application_mode": "active",
+            "employment_type": "temporary 1500 hr",
+        },
+    ) == "active"
+
+
+def test_v128_required_part_time_conflict_and_exact_exception() -> None:
+    config = {
+        "locations": [{"label": "Current market", "location": "Exampletown, YY"}],
+        "market_policies": {
+            "Current market": {
+                "application_mode": "active",
+                "preferred_schedule": "part_time",
+                "require_part_time": True,
+            }
+        },
+        "schedule_exception_employers": ["Exact Employer"],
+    }
+    full_time_job = {
+        "company": "Other Employer",
+        "location": "Exampletown, YY",
+        "application_mode": "active",
+        "employment_type": "full-time",
+    }
+
+    assert resolved_application_mode(config, full_time_job) == "manual_review"
+    assert resolved_application_mode(
+        config,
+        full_time_job | {"company": "Exact Employer"},
+    ) == "active"
 
 
 def test_score_prompt_keeps_fallback_and_low_hour_roles_out_of_primary_queue() -> None:

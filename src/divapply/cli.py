@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import os
+import sqlite3
 from typing import Optional
 from pathlib import Path
 
@@ -372,6 +373,182 @@ def _extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
     return extract_manual_job_metadata(url)
 
 
+def _persist_manual_url(
+    conn: sqlite3.Connection,
+    *,
+    safe_url: str,
+    metadata: dict[str, str | bool],
+    title_value: str,
+    company_value: str,
+    site_value: str,
+    location_value: str,
+    description_value: str,
+    inactive: bool,
+    now: str,
+    market_label: str,
+    market_policy: dict,
+    search_config: dict,
+    official_source: str | None,
+    closed_official_source: str | None,
+) -> None:
+    """Persist one fetched manual URL without mixing storage into the CLI flow."""
+    if official_source:
+        from divapply.discovery.smartextract import _store_jobs_filtered
+
+        _store_jobs_filtered(
+            conn,
+            [
+                {
+                    "url": safe_url,
+                    "application_url": safe_url,
+                    "title": title_value,
+                    "company": company_value,
+                    "location": location_value,
+                    "description": description_value,
+                    "full_description": description_value,
+                    "employment_type": str(metadata.get("employment_type") or ""),
+                    "availability_state": "open",
+                }
+            ],
+            site=official_source,
+            strategy="manual_url_official",
+            accept_locs=[location_value] if location_value else [],
+            reject_locs=[],
+            title_excludes=[],
+            filter_rules={"allow_unknown_location": True},
+            market_label=market_label,
+            search_query="manual_url",
+            application_mode=str(market_policy.get("application_mode") or "manual_review"),
+            source_verification="official",
+            search_config=search_config,
+        )
+        return
+
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, canonical_key, title, company, salary, description,
+            location, site, strategy, discovered_at, full_description,
+            application_url, detail_scraped_at, detail_error,
+            apply_status, apply_error, apply_attempts, verification_confidence,
+            market_label, search_query, application_mode, employment_type,
+            hours_per_week, source_verification, official_url_verified_at,
+            availability_state, availability_checked_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            title=excluded.title,
+            company=excluded.company,
+            description=excluded.description,
+            location=excluded.location,
+            site=excluded.site,
+            full_description=excluded.full_description,
+            application_url=excluded.application_url,
+            detail_scraped_at=excluded.detail_scraped_at,
+            detail_error=excluded.detail_error,
+            apply_status=excluded.apply_status,
+            apply_error=excluded.apply_error,
+            apply_attempts=excluded.apply_attempts,
+            verification_confidence=excluded.verification_confidence,
+            market_label=excluded.market_label,
+            search_query=excluded.search_query,
+            application_mode=excluded.application_mode,
+            employment_type=excluded.employment_type,
+            hours_per_week=excluded.hours_per_week,
+            source_verification=excluded.source_verification,
+            official_url_verified_at=excluded.official_url_verified_at,
+            availability_state=excluded.availability_state,
+            availability_checked_at=excluded.availability_checked_at
+        """,
+        (
+            safe_url,
+            f"{title_value}|{company_value}|{location_value}".casefold(),
+            title_value,
+            company_value,
+            "",
+            description_value,
+            location_value,
+            site_value,
+            "manual_url",
+            now,
+            description_value,
+            safe_url,
+            now,
+            "Posting appears inactive." if inactive else None,
+            "failed" if inactive else None,
+            "expired: posting appears inactive" if inactive else None,
+            99 if inactive else 0,
+            "manual_url_inactive" if inactive else "manual_url",
+            market_label or None,
+            "manual_url",
+            "manual_review",
+            str(metadata.get("employment_type") or "") or None,
+            None,
+            "official" if closed_official_source else "unknown",
+            now if closed_official_source else None,
+            "closed" if inactive else "unknown",
+            now if inactive else None,
+        ),
+    )
+    conn.commit()
+    if inactive:
+        from divapply.database import archive_job
+
+        archive_job(safe_url, conn=conn, reason="source_closed")
+
+
+def _prepare_manual_url(
+    conn: sqlite3.Connection,
+    *,
+    safe_url: str,
+    min_score: int,
+    validation: str,
+) -> None:
+    """Score and prepare one verified manual URL after provenance gates pass."""
+    from divapply.config import check_tier
+    from divapply.scoring.cover_letter import run_cover_letters
+    from divapply.scoring.scorer import run_scoring
+    from divapply.scoring.tailor import run_tailoring
+
+    check_tier(2, "AI scoring/tailoring")
+    score_result = run_scoring(target_url=safe_url)
+    if not score_result.get("scored"):
+        console.print("[red]Could not score this URL. Check that the page has a readable job description.[/red]")
+        raise typer.Exit(code=1)
+
+    row = conn.execute(
+        "SELECT fit_score, tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
+        (safe_url,),
+    ).fetchone()
+    score = int(row["fit_score"] or 0)
+    console.print(f"[green]Score:[/green] {score}")
+    if score < min_score:
+        console.print(f"[yellow]Score is below --min-score {min_score}; not generating documents.[/yellow]")
+        return
+
+    provenance = conn.execute(
+        "SELECT application_mode, source_verification FROM jobs WHERE url = ?",
+        (safe_url,),
+    ).fetchone()
+    if provenance["application_mode"] != "active" or provenance["source_verification"] != "official":
+        console.print(
+            "[yellow]Score saved, but documents were withheld.[/yellow] "
+            "Refresh this posting from a configured official employer source before tailoring or applying."
+        )
+        return
+
+    tailor_result = run_tailoring(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
+    cover_result = run_cover_letters(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
+    row = conn.execute(
+        "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
+        (safe_url,),
+    ).fetchone()
+    console.print(
+        f"[green]Prepared:[/green] resume={row['tailored_resume_path'] or 'not generated'}; "
+        f"cover={row['cover_letter_path'] or 'not generated'}"
+    )
+    console.print(f"[dim]Tailor result: {tailor_result}; cover result: {cover_result}[/dim]")
+
+
 @app.command("add-url")
 def add_url(
     job_url: str = typer.Argument(..., help="Job posting URL to add or update."),
@@ -422,15 +599,11 @@ def add_url(
 
     title_value = title or str(metadata["title"])
     company_value = company or str(metadata["company"])
-    site_value = site or str(metadata["site"])
     location_value = location or str(metadata["location"])
     description_value = str(metadata["description"])
     inactive = bool(metadata["inactive"])
     now = datetime.now(timezone.utc).isoformat()
 
-    apply_status = "failed" if inactive else None
-    apply_error = "expired: posting appears inactive" if inactive else None
-    apply_attempts = 99 if inactive else 0
     search_config = load_search_config()
     market_label, market_policy = market_policy_for_job(
         search_config,
@@ -438,112 +611,44 @@ def add_url(
     )
     from divapply.config import configured_official_source_name
 
+    configured_source = configured_official_source_name(safe_url) if not no_fetch else None
     official_source = (
-        configured_official_source_name(safe_url)
+        configured_source
         if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch
         else None
     )
+    closed_official_source = configured_source if inactive and not no_fetch else None
+    if closed_official_source and company is None:
+        company_value = closed_official_source
+    site_value = site or closed_official_source or str(metadata["site"])
 
     conn = get_connection()
-    if official_source:
-        from divapply.discovery.smartextract import _store_jobs_filtered
-
-        _store_jobs_filtered(
-            conn,
-            [
-                {
-                    "url": safe_url,
-                    "application_url": safe_url,
-                    "title": title_value,
-                    "company": company_value,
-                    "location": location_value,
-                    "description": description_value,
-                    "full_description": description_value,
-                    "employment_type": str(metadata.get("employment_type") or ""),
-                    "availability_state": "open",
-                }
-            ],
-            site=official_source,
-            strategy="manual_url_official",
-            accept_locs=[location_value] if location_value else [],
-            reject_locs=[],
-            title_excludes=[],
-            filter_rules={"allow_unknown_location": True},
-            market_label=market_label,
-            search_query="manual_url",
-            application_mode=str(market_policy.get("application_mode") or "manual_review"),
-            source_verification="official",
-            search_config=search_config,
-        )
-    else:
-        conn.execute(
-            """
-        INSERT INTO jobs (
-            url, canonical_key, title, company, salary, description,
-            location, site, strategy, discovered_at, full_description,
-            application_url, detail_scraped_at, detail_error,
-            apply_status, apply_error, apply_attempts, verification_confidence,
-            market_label, search_query, application_mode, employment_type,
-            hours_per_week, source_verification, official_url_verified_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(url) DO UPDATE SET
-            title=excluded.title,
-            company=excluded.company,
-            description=excluded.description,
-            location=excluded.location,
-            site=excluded.site,
-            full_description=excluded.full_description,
-            application_url=excluded.application_url,
-            detail_scraped_at=excluded.detail_scraped_at,
-            detail_error=excluded.detail_error,
-            apply_status=excluded.apply_status,
-            apply_error=excluded.apply_error,
-            apply_attempts=excluded.apply_attempts,
-            verification_confidence=excluded.verification_confidence,
-            market_label=excluded.market_label,
-            search_query=excluded.search_query,
-            application_mode=excluded.application_mode,
-            employment_type=excluded.employment_type,
-            hours_per_week=excluded.hours_per_week,
-            source_verification=excluded.source_verification,
-            official_url_verified_at=excluded.official_url_verified_at,
-            archived_at=NULL
-            """,
-            (
-                safe_url,
-                f"{title_value}|{company_value}|{location_value}".casefold(),
-                title_value,
-                company_value,
-                "",
-                description_value,
-                location_value,
-                site_value,
-                "manual_url",
-                now,
-                description_value,
-                safe_url,
-                now,
-                "Posting appears inactive." if inactive else None,
-                apply_status,
-                apply_error,
-                apply_attempts,
-                "manual_url_inactive" if inactive else "manual_url",
-                market_label or None,
-                "manual_url",
-                "manual_review",
-                None,
-                None,
-                "unknown",
-                None,
-            ),
-        )
-        conn.commit()
+    _persist_manual_url(
+        conn,
+        safe_url=safe_url,
+        metadata=metadata,
+        title_value=title_value,
+        company_value=company_value,
+        site_value=site_value,
+        location_value=location_value,
+        description_value=description_value,
+        inactive=inactive,
+        now=now,
+        market_label=market_label,
+        market_policy=market_policy,
+        search_config=search_config,
+        official_source=official_source,
+        closed_official_source=closed_official_source,
+    )
 
     console.print(f"[green]Added:[/green] {title_value} @ {company_value}")
     if official_source:
         console.print(f"[green]Verified from configured official source:[/green] {official_source}")
+    elif closed_official_source:
+        console.print(f"[yellow]Verified closed from configured official source:[/yellow] {closed_official_source}")
     if inactive:
         console.print("[yellow]Posting appears inactive/expired, so it will not be queued for auto-apply.[/yellow]")
+        return
 
     if not prepare:
         if official_source:
@@ -555,50 +660,7 @@ def add_url(
             )
         return
 
-    from divapply.config import check_tier
-    from divapply.scoring.cover_letter import run_cover_letters
-    from divapply.scoring.scorer import run_scoring
-    from divapply.scoring.tailor import run_tailoring
-
-    check_tier(2, "AI scoring/tailoring")
-
-    score_result = run_scoring(target_url=safe_url)
-    if not score_result.get("scored"):
-        console.print("[red]Could not score this URL. Check that the page has a readable job description.[/red]")
-        raise typer.Exit(code=1)
-
-    row = conn.execute(
-        "SELECT fit_score, tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
-        (safe_url,),
-    ).fetchone()
-    score = int(row["fit_score"] or 0)
-    console.print(f"[green]Score:[/green] {score}")
-    if score < min_score:
-        console.print(f"[yellow]Score is below --min-score {min_score}; not generating documents.[/yellow]")
-        return
-
-    provenance = conn.execute(
-        "SELECT application_mode, source_verification FROM jobs WHERE url = ?",
-        (safe_url,),
-    ).fetchone()
-    if provenance["application_mode"] != "active" or provenance["source_verification"] != "official":
-        console.print(
-            "[yellow]Score saved, but documents were withheld.[/yellow] "
-            "Refresh this posting from a configured official employer source before tailoring or applying."
-        )
-        return
-
-    tailor_result = run_tailoring(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
-    cover_result = run_cover_letters(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
-    row = conn.execute(
-        "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
-        (safe_url,),
-    ).fetchone()
-    console.print(
-        f"[green]Prepared:[/green] resume={row['tailored_resume_path'] or 'not generated'}; "
-        f"cover={row['cover_letter_path'] or 'not generated'}"
-    )
-    console.print(f"[dim]Tailor result: {tailor_result}; cover result: {cover_result}[/dim]")
+    _prepare_manual_url(conn, safe_url=safe_url, min_score=min_score, validation=validation)
 
 
 @app.command()

@@ -59,6 +59,47 @@ def job_has_schedule_exception(search_config: dict[str, Any], job: dict[str, Any
     return False
 
 
+_PART_TIME_SCHEDULE_RE = re.compile(
+    r"(?<!\w)(?:part[\s_-]*time|per[\s_-]*diem)(?!\w)",
+    re.IGNORECASE,
+)
+
+
+def _classified_schedule(job: dict[str, Any]) -> str:
+    """Return employer-classified schedule evidence without guessing from prose."""
+    employment_type = " ".join(str(job.get("employment_type") or "").split())
+    if _PART_TIME_SCHEDULE_RE.search(employment_type):
+        return "part_time"
+    if re.search(r"(?<!\w)full[\s_-]*time(?!\w)", employment_type, re.IGNORECASE):
+        return "full_time"
+    return "unknown"
+
+
+def resolved_application_mode(search_config: dict[str, Any], job: dict[str, Any]) -> str:
+    """Resolve stored mode and fail explicit market-schedule conflicts to review."""
+    effective = effective_search_config(search_config, job)
+    policy_mode = str(effective.get("application_mode") or "manual_review").strip().casefold()
+    stored_mode = str(job.get("application_mode") or "").strip().casefold()
+    if "discovery_only" in {policy_mode, stored_mode}:
+        return "discovery_only"
+    if "manual_review" in {policy_mode, stored_mode}:
+        return "manual_review"
+    if job_has_schedule_exception(effective, job):
+        return "active"
+
+    classified = _classified_schedule(job)
+    require_part_time = bool(
+        effective.get("require_part_time")
+        or effective.get("customer_service_require_part_time")
+    )
+    preferred_schedule = str(effective.get("preferred_schedule") or "any").strip().casefold()
+    if require_part_time and classified != "part_time":
+        return "manual_review"
+    if preferred_schedule == "full_time" and classified == "part_time":
+        return "manual_review"
+    return "active"
+
+
 def scoped_query_locations(
     search_config: dict[str, Any],
     *,

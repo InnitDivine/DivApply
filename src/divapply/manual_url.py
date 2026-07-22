@@ -39,7 +39,8 @@ def _fetch_job_page(client: httpx.Client, url: str, *, headers: dict[str, str]) 
         if not bool(getattr(response, "is_redirect", False)):
             final_url = str(getattr(response, "url", current_url) or current_url)
             validate_navigation_url(final_url, field="job URL")
-            response.raise_for_status()
+            if getattr(response, "status_code", None) not in {404, 410}:
+                response.raise_for_status()
             return response
 
         if redirect_count >= MAX_MANUAL_REDIRECTS:
@@ -225,7 +226,7 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
 
     soup = BeautifulSoup(response.text, "html.parser")
     schema_job = extract_job_posting_schema(soup)
-    live_job_evidence = bool(schema_job)
+    terminal_inactive_status = getattr(response, "status_code", None) in {404, 410}
     for hidden in soup.select(
         "[class*='d-none'], [class*='hidden'], [class*='sr-only'], "
         "[hidden], [aria-hidden='true'], [style*='display:none'], [style*='display: none'], "
@@ -251,6 +252,8 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
         or (page_title.get_text(" ", strip=True) if page_title else "")
         or title_fallback
     )
+    if terminal_inactive_status and str(title).strip().casefold() in {"job", "job details", "careers"}:
+        title = title_fallback
     meta_description = meta_value("description", "og:description", "twitter:description")
     text = soup.get_text("\n", strip=True)
     visible_description = visible_body_description(soup)
@@ -267,16 +270,7 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
             "position has been filled",
         )
     )
-    live_job_evidence = live_job_evidence or any(
-        phrase in lower_text
-        for phrase in (
-            "pay range is",
-            "job description:",
-            "position overview:",
-            "schedule:",
-        )
-    )
-    inactive = inactive_text_present and not live_job_evidence
+    inactive = terminal_inactive_status or inactive_text_present
 
     return {
         "title": title[:180],

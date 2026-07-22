@@ -163,6 +163,91 @@ def test_extract_manual_metadata_ignores_hidden_inactive_banner_without_schema(m
     assert "posting has expired" not in str(metadata["description"]).lower()
 
 
+def test_v131_visible_inactive_notice_overrides_stale_jobposting_schema(monkeypatch) -> None:
+    html = """
+    <html>
+      <head>
+        <script type="application/ld+json">
+        {
+          "@type": "JobPosting",
+          "title": "Device Support Technician I",
+          "description": "Stale endpoint support description.",
+          "hiringOrganization": {"name": "Example Health"}
+        }
+        </script>
+      </head>
+      <body>
+        <main>
+          <h2>We're Sorry, This Job Is Inactive</h2>
+          <p>This opportunity has passed.</p>
+        </main>
+      </body>
+    </html>
+    """
+
+    class Response:
+        text = html
+        status_code = 200
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("httpx.Client", Client)
+
+    metadata = extract_manual_job_metadata(
+        "https://jobs.example-health.test/us/en/job/R-100/Device-Support-Technician-I"
+    )
+
+    assert metadata["job_posting_schema"] is True
+    assert metadata["inactive"] is True
+
+
+def test_v131_terminal_gone_response_is_inactive_metadata(monkeypatch) -> None:
+    class Response:
+        text = "<html><head><title>Job</title></head><body></body></html>"
+        status_code = 410
+        is_redirect = False
+        headers: dict[str, str] = {}
+        url = "https://jobs.example.com/job/R-100/"
+
+        def raise_for_status(self) -> None:
+            raise AssertionError("terminal inactive responses must be returned as metadata")
+
+    class Client:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args) -> None:
+            return None
+
+        def get(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr("httpx.Client", Client)
+
+    metadata = extract_manual_job_metadata("https://jobs.example.com/job/R-100/")
+
+    assert metadata["inactive"] is True
+    assert metadata["job_posting_schema"] is False
+    assert metadata["title"] == "R 100"
+
+
 def test_extract_manual_metadata_rejects_redirect_to_private_address(monkeypatch) -> None:
     requested: list[str] = []
 
