@@ -147,6 +147,9 @@ def profile_for_job_resume_location(profile: dict, job: dict) -> dict:
         for key in ("city", "province_state"):
             if location.get(key):
                 personal[key] = location[key]
+        availability_statement = str(location.get("availability_statement") or "").strip()
+        if availability_statement:
+            adjusted["resume_availability_statement"] = availability_statement
         return adjusted
     return adjusted_profile
 

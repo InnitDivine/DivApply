@@ -135,6 +135,8 @@ def _build_tailor_prompt(profile: dict) -> str:
         elif isinstance(value, str) and value.strip():
             truth_items.append(value.strip())
     truth_block = "\n".join(f"- {item}" for item in truth_items) if truth_items else "N/A"
+    availability_statement = str(profile.get("resume_availability_statement") or "").strip()
+    availability_block = availability_statement or "N/A"
 
     return f"""You are a neutral resume editor rewriting a resume using only verified facts.
 
@@ -166,6 +168,8 @@ Do not add new tools unless they are directly supported by the profile, resume, 
 TITLE: Match the target role. Keep seniority (Senior/Lead/Staff). Drop company suffixes and team names.
 
 SUMMARY: Rewrite from scratch. Position the candidate for the target role using verified evidence. Do not imply they previously held the target role unless the source facts say so. Exactly 2 sentences, max 42 words total.
+DOCUMENT AVAILABILITY: {availability_block}
+When DOCUMENT AVAILABILITY is not N/A, use it verbatim as the final summary sentence. Ignore every conflicting schedule statement in the base resume.
 
 SKILLS: Reorder each category so the job's most relevant verified skills appear first. Max 5 items per category. Return skills_section_title as TECHNICAL SKILLS for IT/engineering roles or CORE QUALIFICATIONS for customer service, government, administrative, and health-operations roles. Use role-relevant category names; do not force operating-system/network/cloud categories into non-IT résumés.
 Copy every skill item exactly from SKILLS BOUNDARY or ACADEMIC SKILL MAP. Never derive, paraphrase, broaden, or import a skill phrase from the job posting.
@@ -429,6 +433,48 @@ def _truncate_words(text: str, max_words: int) -> str:
     if trimmed and trimmed[-1] not in ".!?":
         trimmed += "."
     return trimmed
+
+
+_SCHEDULE_AVAILABILITY_RE = re.compile(
+    r"\b(?:part[- ]time|full[- ]time|schedule availability|available\s+(?:for|to)|"
+    r"open\s+to\s+(?:part|full)|seeking\s+(?:part|full))\b",
+    flags=re.IGNORECASE,
+)
+_AVAILABILITY_CLAUSE_RE = re.compile(r"\b(?:seeking|available|open\s+to)\b", flags=re.IGNORECASE)
+
+
+def _apply_resume_availability(data: dict, profile: dict) -> dict:
+    """Apply an exact document-only availability sentence to the summary."""
+    statement = sanitize_text(str(profile.get("resume_availability_statement") or "")).strip()
+    if not statement:
+        return data
+    statement = re.sub(r"\s+", " ", statement)
+    if statement[-1] not in ".!?":
+        statement += "."
+    statement_words = statement.split()
+    if len(statement_words) > SUMMARY_MAX_WORDS:
+        raise ValueError("Resume availability statement exceeds summary word limit.")
+
+    summary = sanitize_text(str(data.get("summary") or "")).strip()
+    evidence = ""
+    for sentence in re.split(r"(?<=[.!?])\s+", summary):
+        candidate = sentence.strip()
+        if not candidate:
+            continue
+        if _SCHEDULE_AVAILABILITY_RE.search(candidate):
+            candidate = _AVAILABILITY_CLAUSE_RE.split(candidate, maxsplit=1)[0].rstrip(" ,;:-")
+        if candidate and not _SCHEDULE_AVAILABILITY_RE.search(candidate):
+            evidence = candidate
+            break
+
+    if evidence:
+        evidence = _truncate_words(evidence, SUMMARY_MAX_WORDS - len(statement_words))
+        if evidence and evidence[-1] not in ".!?":
+            evidence += "."
+        data["summary"] = f"{evidence} {statement}".strip()
+    else:
+        data["summary"] = statement
+    return data
 
 
 def _trim_list_items(raw: str, max_items: int) -> str:
@@ -893,6 +939,7 @@ def tailor_resume(
 
         # Normalize inconsistent LLM output types (lists/dicts for skills/education)
         data = _normalize_resume_json(data)
+        data = _apply_resume_availability(data, profile)
         data = _enforce_one_page_shape(data)
         data["skills"] = prune_unsupported_tailored_skills(
             data.get("skills"),

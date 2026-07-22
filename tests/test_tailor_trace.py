@@ -190,6 +190,30 @@ def test_tailor_prompt_allows_coursework_skills_without_paid_work_claims() -> No
     assert "Active Directory" in prompt
 
 
+def test_v127_destination_summary_replaces_conflicting_part_time_availability() -> None:
+    data = {
+        "summary": (
+            "IT support candidate with verified hardware and networking lab experience. "
+            "Seeking part-time IT work while in school."
+        )
+    }
+    profile = {"resume_availability_statement": "Available for full-time work."}
+
+    adjusted = tailor._apply_resume_availability(data, profile)
+
+    assert adjusted["summary"].endswith("Available for full-time work.")
+    assert "part-time" not in adjusted["summary"].casefold()
+    assert len(adjusted["summary"].split()) <= tailor.SUMMARY_MAX_WORDS
+
+
+def test_v127_base_summary_stays_unchanged_without_document_availability() -> None:
+    data = {"summary": "Verified role-relevant evidence."}
+
+    adjusted = tailor._apply_resume_availability(data, {})
+
+    assert adjusted["summary"] == "Verified role-relevant evidence."
+
+
 def test_v122_tailor_judge_and_validator_share_only_explicit_work_history_evidence() -> None:
     profile = {
         "work_history": [
