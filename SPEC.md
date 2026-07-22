@@ -80,6 +80,9 @@
 - I44: generated target-title boundary → ASCII-dash normalized title shared by deterministic insertion + validation.
 - I45: trusted static source `location_label` + `default_location` → blank-location fallback only; concrete scraped location wins.
 - I46: manual URL fetch → visible inactive marker or terminal HTTP 404/410 closes + source-archives row before prepare; hidden SPA branch ⊥ closure.
+- I47: Codex apply argv → supported `exec` config override `approval_policy="never"` + `--sandbox read-only`; removed CLI flags absent; shell/web/unsafe browser tools remain disabled; nonzero backend exit without explicit result is infrastructure.
+- I48: `worker_loop(..., continuous: bool=False)` separates polling mode from numeric quota; explicit continuous mode may start empty; bounded `main(limit=N)` distributes total quota N across workers; each acquired launch consumes one quota slot including skip/interrupt.
+- I49: apply CLI preflight → same score/status/attempt/actionability + blocked/manual/unsafe/artifact window as queue acquisition; empty window exits before confirmation/browser with actionable diagnostic.
 
 ## §R
 
@@ -243,6 +246,14 @@
 - V129: ∀ generated cover target title → U+2011/U+2013/U+2014 normalized to ASCII hyphen before prompt repair + exact-title validation; persisted output contains no Unicode dash.
 - V130: configured trusted static source may fill blank job location from exact `default_location` + `location_label`; nonblank result location ⊥ overwrite; market policy resolves from filled location.
 - V131: ∀ fetched manual URL: visible explicit inactive/expired evidence or HTTP 404/410 outranks stale JobPosting metadata → `closed` + `source_closed` + ⊥ prepare; hidden inactive SPA branch ignored.
+- V132: Codex pre-prompt exit/write failure → infrastructure failure; capture backend diagnostic, release lock, stop queue, ⊥ job failure/attempt/event mutation.
+- V133: ∀ bounded apply `limit=N>0`: total processed jobs ≤N across workers; worker quota `0` exits; only explicit `continuous=True` polls.
+- V134: apply preflight + banner honor requested `min_score|max_score`; zero eligible rows → exit before confirmation/browser + report threshold/highest prepared score.
+- V135: backend positive exit + no standalone `RESULT` → infrastructure failure; capture output, release lock, stop queue, ⊥ job failure/attempt/event mutation.
+- V136: artifact/runtime/MCP/prompt preparation exception before browser agent execution → infrastructure failure; release lock, stop queue, ⊥ job failure/attempt/event mutation.
+- V137: finite worker quota counts every acquired agent launch, including process skip + first interrupt; one claimed job cannot be reacquired within the same exhausted quota.
+- V138: apply preflight eligible count + highest score exclude exhausted-attempt, blocked-site/pattern, manual-ATS, unsafe-URL, + shared-artifact rows read-only; values match the next queue-acquisition candidates.
+- V139: explicit `--continuous` may start with zero prepared/eligible jobs and enters bounded polling; empty-queue preflight exits remain mandatory for finite runs.
 
 ## §T
 
@@ -319,6 +330,7 @@
 |T69|publish privacy-clean 0.5.12 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V127|x|
 |T70|close fresh-rerun schedule/title/static-location gaps|`test_v128_*`, `test_v129_*`, `test_v130_*` + focused/full/release gates + live DB repair; V64,V74,V76,V78,V128-V130,I43-I45|x|
 |T71|close stale manual official URLs|`test_v131_*` + focused/full/release gates + live Sutter closure; V64,V78,V131,I46|x|
+|T72|repair apply startup compatibility, global quota, + queue diagnostics|`test_v132_*`-`test_v139_*` + focused/full/release gates + bounded DB repair; V1-V4,V23,V25,V32,V132-V139,I47-I49|x|
 
 ## §B
 
@@ -575,3 +587,11 @@
 |B249|official title with Unicode dash exhausts cover retries|sanitizer runs before exact-title repair reinserts raw title; validator expects raw title|V129|T70|shared ASCII title normalization for repair + validation|`test_v129_*`|
 |B250|official static-source blank location routes known destination job to manual review|static target drops trusted market/default-location metadata|V130|T70|propagate configured label/default; fill only blank result location|`test_v130_*` + live official add-url parity|
 |B251|inactive Sutter page reopens on manual add|visible inactive banner loses to stale JobPosting/live-text evidence; HTTP 410 falls back to active manual row|V131|T71|terminal closure evidence outranks metadata; archive before prepare|`test_v131_*` + live exact-URL refresh|
+|B252|Codex apply marks 4 jobs failed 3x with `[Errno 32] Broken pipe`|current `codex exec` rejects removed `--ask-for-approval` before prompt write|V132|T72|use `approval_policy="never"` config override + classify pre-prompt exit as infrastructure|`test_v132_*` + installed-CLI probe|
+|B253|`limit=1 workers=2` processes 4 jobs/12 failures|finite quota split assigns `0`; worker interprets `0` as continuous polling|V133|T72|explicit continuous mode + zero-quota exit|`test_v133_*`|
+|B254|prepared packets exist but default apply launches empty queue|CLI preflight omits requested score/status/attempt window|V134|T72|shared-equivalent preflight + threshold diagnostic/banner|`test_v134_*`|
+|B255|positive Codex exit after writable stdin becomes retryable `no_result_line`|launcher checks only negative return code after prompt write|V135|T72|classify positive exit without explicit result as infrastructure|`test_v135_*`|
+|B256|artifact/runtime/MCP/prompt setup exception consumes retry + queue continues|prelaunch preparation occurs outside infrastructure boundary|V136|T72|normalize preparation failure before agent launch|`test_v136_*`|
+|B257|bounded skip/interrupt can launch or reacquire unlimited jobs|quota increments only after paths that `continue`|V137|T72|consume finite quota immediately after acquisition|`test_v137_*`|
+|B258|preflight can confirm an empty blocked/manual queue + suggest exhausted score|diagnostic query omits acquisition exclusions and attempt cap from highest|V138|T72|read-only shared-equivalent queue inspection|`test_v138_*`|
+|B259|`--continuous` cannot start with an empty initial queue|finite-run preflight exits also gate explicit polling mode|V139|T72|bypass empty-initial-queue fatal checks only for continuous mode|`test_v139_*`|

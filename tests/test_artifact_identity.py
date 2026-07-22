@@ -478,7 +478,7 @@ def test_tailor_does_not_persist_or_leave_artifact_after_concurrent_archive(
     assert list(tailored_dir.glob("*")) == []
 
 
-def test_shared_legacy_artifact_is_rejected_before_run_staging(tmp_path, monkeypatch) -> None:
+def test_shared_legacy_artifact_is_infrastructure_before_run_staging(tmp_path, monkeypatch) -> None:
     from divapply.artifacts import ArtifactCollisionError, ensure_job_artifacts_unshared
 
     conn = _artifact_db(_jobs())
@@ -496,8 +496,13 @@ def test_shared_legacy_artifact_is_rejected_before_run_staging(tmp_path, monkeyp
         "_prepare_worker_run",
         lambda *_args, **_kwargs: pytest.fail("staging ran before artifact collision check"),
     )
-    with pytest.raises(ArtifactCollisionError, match="shared by another active job"):
-        launcher.run_job(job, port=9222)
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+
+    status, _duration = launcher.run_job(job, port=9222)
+
+    assert status == "failed:agent_startup_error"
+    assert launcher._is_agent_infrastructure_failure(status)
 
 
 def test_archive_keeps_shared_artifact_until_last_active_reference(tmp_path, monkeypatch) -> None:
