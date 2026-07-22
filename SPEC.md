@@ -336,7 +336,7 @@
 |T71|close stale manual official URLs|`test_v131_*` + focused/full/release gates + live Sutter closure; V64,V78,V131,I46|x|
 |T72|repair apply startup compatibility, global quota, + queue diagnostics|`test_v132_*`-`test_v139_*` + focused/full/release gates + bounded DB repair; V1-V4,V23,V25,V32,V132-V139,I47-I49|x|
 |T73|repair Codex browser approval handoff + infra classification|`test_v140_*`, `test_v141_*` + safe installed-CLI navigation probe + full gates; V1,V3,V25,V132,V135,V136,V140,V141,I4,I47|x|
-|T74|publish privacy-clean 0.5.15 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V140,V141|~|
+|T74|publish privacy-clean 0.5.15 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V140,V141|x|
 
 ## §B
 
