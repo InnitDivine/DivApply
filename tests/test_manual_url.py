@@ -217,7 +217,7 @@ def test_v131_visible_inactive_notice_overrides_stale_jobposting_schema(monkeypa
 
 def test_v131_terminal_gone_response_is_inactive_metadata(monkeypatch) -> None:
     class Response:
-        text = ""
+        text = "<html><head><title>Job</title></head><body></body></html>"
         status_code = 410
         is_redirect = False
         headers: dict[str, str] = {}
@@ -245,6 +245,7 @@ def test_v131_terminal_gone_response_is_inactive_metadata(monkeypatch) -> None:
 
     assert metadata["inactive"] is True
     assert metadata["job_posting_schema"] is False
+    assert metadata["title"] == "R 100"
 
 
 def test_extract_manual_metadata_rejects_redirect_to_private_address(monkeypatch) -> None:

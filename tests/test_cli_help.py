@@ -622,7 +622,7 @@ def test_v131_add_url_archives_visible_inactive_official_before_prepare(tmp_path
         "_extract_manual_job_metadata",
         lambda _url: {
             "title": "Device Support Technician I",
-            "company": "Example Health",
+            "company": "careers.example.com",
             "site": "careers.example.com",
             "location": "Example City, ZZ",
             "description": "Retired official job description.",
@@ -643,11 +643,12 @@ def test_v131_add_url_archives_visible_inactive_official_before_prepare(tmp_path
 
     assert result.exit_code == 0
     row = conn.execute(
-        "SELECT site, application_mode, employment_type, source_verification, "
+        "SELECT company, site, application_mode, employment_type, source_verification, "
         "official_url_verified_at, availability_state, availability_checked_at, "
         "archived_at, archive_reason, apply_status, apply_error, apply_attempts FROM jobs"
     ).fetchone()
     assert dict(row) == {
+        "company": "Example Health",
         "site": "Example Health",
         "application_mode": "manual_review",
         "employment_type": "full_time",

@@ -444,6 +444,8 @@ def add_url(
         else None
     )
     closed_official_source = configured_source if inactive and not no_fetch else None
+    if closed_official_source and company is None:
+        company_value = closed_official_source
     site_value = site or closed_official_source or str(metadata["site"])
 
     conn = get_connection()

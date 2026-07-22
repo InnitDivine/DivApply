@@ -252,6 +252,8 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
         or (page_title.get_text(" ", strip=True) if page_title else "")
         or title_fallback
     )
+    if terminal_inactive_status and str(title).strip().casefold() in {"job", "job details", "careers"}:
+        title = title_fallback
     meta_description = meta_value("description", "og:description", "twitter:description")
     text = soup.get_text("\n", strip=True)
     visible_description = visible_body_description(soup)
