@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import io
 import sqlite3
 import json
 
@@ -312,6 +313,262 @@ def test_transient_failures_remain_retryable() -> None:
         assert not launcher._is_permanent_failure(result), result
 
 
+def test_v132_broken_pipe_captures_backend_startup_diagnostic() -> None:
+    class BrokenInput:
+        def write(self, _text: str) -> None:
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def close(self) -> None:
+            return None
+
+    class EarlyExitProcess:
+        stdin = BrokenInput()
+        stdout = io.StringIO("error: unexpected argument '--removed-flag' found\n")
+        returncode = 2
+
+        def wait(self, timeout: int | None = None) -> int:
+            return self.returncode
+
+    output = launcher._write_agent_prompt(EarlyExitProcess(), "prompt")
+
+    assert output is not None
+    assert "unexpected argument" in output
+
+
+def test_v132_run_job_maps_broken_pipe_to_infrastructure_failure(tmp_path, monkeypatch) -> None:
+    worker_dir = tmp_path / "worker"
+    log_dir = tmp_path / "logs"
+    worker_dir.mkdir()
+    log_dir.mkdir()
+    prompt_file = worker_dir / "apply_prompt.txt"
+
+    class BrokenInput:
+        def write(self, _text: str) -> None:
+            raise BrokenPipeError(32, "Broken pipe")
+
+        def close(self) -> None:
+            return None
+
+    class EarlyExitProcess:
+        stdin = BrokenInput()
+        stdout = io.StringIO("error: unexpected argument '--removed-flag' found\n")
+        returncode = 2
+        pid = 12345
+
+        def wait(self, timeout: int | None = None) -> int:
+            return self.returncode
+
+        def poll(self) -> int:
+            return self.returncode
+
+    monkeypatch.setattr(launcher, "ensure_job_artifacts_unshared", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher, "get_connection", lambda: object())
+    monkeypatch.setattr(
+        launcher,
+        "_prepare_worker_run",
+        lambda *_args, **_kwargs: (worker_dir, "prompt", prompt_file, ["fake-agent"], {}),
+    )
+    monkeypatch.setattr(launcher.config, "LOG_DIR", log_dir)
+    monkeypatch.setattr(launcher.config, "load_credentials", lambda: {})
+    monkeypatch.setattr(
+        launcher,
+        "open_private_text",
+        lambda path, mode, strict: path.open(mode, encoding="utf-8"),
+    )
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *_args, **_kwargs: EarlyExitProcess())
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    monkeypatch.setattr(launcher, "_remove_worker_run_dir", lambda _path: None)
+
+    status, _duration = launcher.run_job(
+        {
+            "url": "https://jobs.example/1",
+            "title": "Support Role",
+            "company": "Example",
+            "site": "Example ATS",
+            "fit_score": 6,
+        },
+        port=9222,
+    )
+
+    assert status == "failed:agent_startup_error"
+    assert "unexpected argument" in (log_dir / "worker-0.log").read_text(encoding="utf-8")
+
+
+def test_v135_positive_agent_exit_without_result_is_infrastructure(tmp_path, monkeypatch) -> None:
+    worker_dir = tmp_path / "worker"
+    log_dir = tmp_path / "logs"
+    worker_dir.mkdir()
+    log_dir.mkdir()
+    prompt_file = worker_dir / "apply_prompt.txt"
+
+    class EarlyExitProcess:
+        stdin = io.StringIO()
+        stdout = io.StringIO("error: unexpected argument '--removed-flag' found\n")
+        returncode = 2
+        pid = 12345
+
+        def wait(self, timeout: int | None = None) -> int:
+            return self.returncode
+
+        def poll(self) -> int:
+            return self.returncode
+
+    monkeypatch.setattr(launcher, "ensure_job_artifacts_unshared", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher, "get_connection", lambda: object())
+    monkeypatch.setattr(
+        launcher,
+        "_prepare_worker_run",
+        lambda *_args, **_kwargs: (worker_dir, "prompt", prompt_file, ["fake-agent"], {}),
+    )
+    monkeypatch.setattr(launcher.config, "LOG_DIR", log_dir)
+    monkeypatch.setattr(launcher.config, "load_credentials", lambda: {})
+    monkeypatch.setattr(
+        launcher,
+        "open_private_text",
+        lambda path, mode, strict: path.open(mode, encoding="utf-8"),
+    )
+    monkeypatch.setattr(
+        launcher,
+        "write_private_text",
+        lambda path, text, strict: path.write_text(text, encoding="utf-8"),
+    )
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *_args, **_kwargs: EarlyExitProcess())
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    monkeypatch.setattr(launcher, "_remove_worker_run_dir", lambda _path: None)
+
+    status, _duration = launcher.run_job(
+        {
+            "url": "https://jobs.example/1",
+            "title": "Support Role",
+            "company": "Example",
+            "site": "Example ATS",
+            "fit_score": 6,
+        },
+        port=9222,
+    )
+
+    assert status == "failed:agent_exit_error"
+    assert launcher._is_agent_infrastructure_failure(status)
+
+
+def test_v136_preparation_failure_is_infrastructure(tmp_path, monkeypatch) -> None:
+    popen_called = False
+    monkeypatch.setattr(launcher, "ensure_job_artifacts_unshared", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher, "get_connection", lambda: object())
+    monkeypatch.setattr(
+        launcher,
+        "_prepare_worker_run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("MCP runtime unavailable")),
+    )
+    monkeypatch.setattr(launcher.config, "load_credentials", lambda: {})
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+
+    def fake_popen(*_args, **_kwargs):
+        nonlocal popen_called
+        popen_called = True
+        raise AssertionError("agent process must not start after preparation failure")
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+
+    status, _duration = launcher.run_job(
+        {
+            "url": "https://jobs.example/1",
+            "title": "Support Role",
+            "company": "Example",
+            "fit_score": 6,
+        },
+        port=9222,
+    )
+
+    assert status == "failed:agent_startup_error"
+    assert launcher._is_agent_infrastructure_failure(status)
+    assert popen_called is False
+
+
+def test_v132_agent_startup_failure_releases_job_without_attempt(monkeypatch) -> None:
+    job = {"url": "https://jobs.example/1", "title": "Support Role"}
+    released: list[str] = []
+    marked: list[tuple] = []
+    acquired = iter([job])
+
+    monkeypatch.setattr(launcher, "acquire_job", lambda **_kwargs: next(acquired, None))
+    monkeypatch.setattr(
+        launcher,
+        "run_job",
+        lambda *_args, **_kwargs: ("failed:agent_startup_error", 10),
+    )
+    monkeypatch.setattr(launcher, "release_lock", released.append)
+    monkeypatch.setattr(launcher, "mark_result", lambda *args, **kwargs: marked.append((args, kwargs)))
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    launcher._stop_event.clear()
+    try:
+        applied, failed = launcher.worker_loop(limit=1)
+    finally:
+        launcher._stop_event.clear()
+
+    assert (applied, failed) == (0, 0)
+    assert released == [job["url"]]
+    assert marked == []
+
+
+def test_v133_zero_finite_worker_quota_never_polls(monkeypatch) -> None:
+    acquired = False
+
+    def fail_if_acquired(**_kwargs):
+        nonlocal acquired
+        acquired = True
+        raise AssertionError("zero finite quota must not acquire a job")
+
+    monkeypatch.setattr(launcher, "acquire_job", fail_if_acquired)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    launcher._stop_event.clear()
+
+    assert launcher.worker_loop(limit=0, continuous=False) == (0, 0)
+    assert acquired is False
+
+
+@pytest.mark.parametrize("outcome", ["skipped", "interrupt"])
+def test_v137_skip_or_interrupt_consumes_finite_quota(monkeypatch, outcome) -> None:
+    jobs = iter(
+        [
+            {"url": "https://jobs.example/1", "title": "First"},
+            {"url": "https://jobs.example/2", "title": "Second"},
+        ]
+    )
+    acquired: list[str] = []
+    released: list[str] = []
+
+    def fake_acquire(**_kwargs):
+        job = next(jobs, None)
+        if job:
+            acquired.append(job["url"])
+        return job
+
+    def fake_run(*_args, **_kwargs):
+        if outcome == "interrupt":
+            raise KeyboardInterrupt
+        return "skipped", 10
+
+    monkeypatch.setattr(launcher, "acquire_job", fake_acquire)
+    monkeypatch.setattr(launcher, "run_job", fake_run)
+    monkeypatch.setattr(launcher, "release_lock", released.append)
+    monkeypatch.setattr(launcher, "add_event", lambda _message: None)
+    monkeypatch.setattr(launcher, "update_state", lambda _worker_id, **_kwargs: None)
+    launcher._stop_event.clear()
+    try:
+        result = launcher.worker_loop(limit=1, continuous=False)
+    finally:
+        launcher._stop_event.clear()
+
+    assert result == (0, 0)
+    assert acquired == ["https://jobs.example/1"]
+    assert released == ["https://jobs.example/1"]
+
+
 def test_apply_idle_timeout_defaults_are_bounded(monkeypatch) -> None:
     monkeypatch.delenv("DIVAPPLY_APPLY_IDLE_TIMEOUT", raising=False)
     monkeypatch.delenv("APPLYPILOT_APPLY_IDLE_TIMEOUT", raising=False)
@@ -345,7 +602,9 @@ def test_build_codex_command_maps_mcp_config(tmp_path, monkeypatch) -> None:
     assert cmd[:4] == ["C:/Codex/codex.exe", "exec", "--model", "gpt-5.4-mini"]
     assert "--dangerously-bypass-approvals-and-sandbox" not in cmd
     assert cmd[cmd.index("--sandbox") + 1] == "read-only"
-    assert cmd[cmd.index("--ask-for-approval") + 1] == "never"
+    assert "--ask-for-approval" not in cmd
+    assert 'approval_policy="never"' in cmd
+    assert cmd[cmd.index('approval_policy="never"') - 1] == "-c"
     assert cmd[cmd.index("--disable") + 1] == "shell_tool"
     assert "--ignore-user-config" in cmd
     assert "--ephemeral" in cmd
@@ -1515,6 +1774,44 @@ def test_main_records_parallel_worker_crashes(monkeypatch) -> None:
     launcher.main(limit=2, workers=2)
 
     assert events == [("apply_worker_crashed", {"worker_id": 0, "error": "worker exploded"})]
+
+
+def test_v133_parallel_finite_limit_never_enables_continuous_worker(monkeypatch) -> None:
+    calls: list[tuple[int, int, bool]] = []
+
+    class FakeLive:
+        def __init__(self, *_args, **_kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc) -> bool:
+            return False
+
+        def update(self, *_args, **_kwargs) -> None:
+            return None
+
+    monkeypatch.setattr(launcher.config, "ensure_dirs", lambda: None)
+    monkeypatch.setattr(launcher, "recover_stale_apply_locks", lambda: 0)
+    monkeypatch.setattr(launcher, "init_worker", lambda _worker_id: None)
+    monkeypatch.setattr(launcher, "render_full", lambda: "")
+    monkeypatch.setattr(launcher, "Live", FakeLive)
+    monkeypatch.setattr(launcher, "kill_all_chrome", lambda: None)
+    monkeypatch.setattr(launcher, "get_totals", lambda: {"cost": 0})
+    monkeypatch.setattr(launcher.signal, "signal", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(launcher, "record_reliability_event", lambda *_args, **_kwargs: None)
+
+    def fake_worker_loop(*, worker_id, limit, continuous, **_kwargs):
+        calls.append((worker_id, limit, continuous))
+        return (0, 0)
+
+    monkeypatch.setattr(launcher, "worker_loop", fake_worker_loop)
+
+    launcher.main(limit=1, workers=2, continuous=False)
+
+    assert sorted(calls) == [(0, 1, False), (1, 0, False)]
+    assert sum(limit for _worker, limit, _continuous in calls) == 1
 
 
 def test_main_rejects_unsafe_worker_and_limit_values() -> None:

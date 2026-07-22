@@ -2,6 +2,13 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.14
+
+- Updated Codex auto-apply startup to use the supported approval-policy configuration while retaining the read-only sandbox and disabled shell/web tools.
+- Made backend exits and pre-agent preparation failures stop the queue as infrastructure failures without consuming job attempts or application events, with private diagnostics retained.
+- Made finite application limits global across workers, counted skips and interrupts against the limit, and prevented a zero worker quota from becoming continuous polling.
+- Added score-window preflight diagnostics and launch-banner visibility, with blocked/manual/unsafe/exhausted/shared-artifact parity; finite empty queues exit before browser startup while explicit continuous mode can wait for future work.
+
 ## 0.5.13
 
 - Demoted explicit market schedule conflicts to manual review before document generation or application, while preserving exact configured exceptions and temporary full-time opportunities.

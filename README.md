@@ -229,7 +229,7 @@ Supported formats are JSON, CSV, text, and PDF when the coursework extra is inst
 Start with one dry-run job:
 
 ```powershell
-divapply apply --dry-run --limit 1
+divapply apply --dry-run --limit 1 --min-score 7
 ```
 
 Optional usernames and passwords can be stored in the permission-protected local `credentials.yaml` file. This file is not an encrypted credential vault:
@@ -247,8 +247,10 @@ divapply browser-login --url https://www.myworkday.com/
 Then run the smallest real batch:
 
 ```powershell
-divapply apply --yes --limit 1 --workers 1
+divapply apply --yes --limit 1 --workers 1 --min-score 7
 ```
+
+`apply` defaults to score 7 independently of the threshold previously used to generate documents. If you reviewed and prepared lower-scoring jobs, pass that same threshold explicitly, such as `--min-score 5`. DivApply reports the selected score window before launch and exits before opening a browser when no queued job matches it. A finite `--limit` is global across all workers.
 
 Safety boundaries:
 

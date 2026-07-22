@@ -80,6 +80,22 @@ def _apply_cost_guard_message(
     return None
 
 
+def _apply_queue_window(
+    conn: sqlite3.Connection,
+    *,
+    min_score: int,
+    max_score: int | None,
+) -> tuple[int, int | None]:
+    """Return eligible count and highest prepared score for a bounded apply run."""
+    from divapply.apply.launcher import inspect_apply_queue
+
+    return inspect_apply_queue(
+        conn,
+        min_score=min_score,
+        max_score=max_score,
+    )
+
+
 def _resolve_apply_model(backend: str | None, model: str | None = None) -> str:
     """Resolve the browser-agent model without inheriting scorer/tailor LLM settings."""
     default_model = "sonnet" if backend == "claude" else "gpt-5.4-mini"
@@ -979,16 +995,37 @@ def apply(
     # Check 3: Tailored resumes exist (skip for --gen with --url)
     if not (gen and url):
         conn = get_connection()
-        ready = conn.execute(
-            "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
-            f"AND applied_at IS NULL AND archived_at IS NULL AND {ACTIONABLE_JOB_SQL}"
-        ).fetchone()[0]
-        if ready == 0:
+        ready = int(
+            conn.execute(
+                "SELECT COUNT(*) FROM jobs WHERE tailored_resume_path IS NOT NULL "
+                f"AND applied_at IS NULL AND archived_at IS NULL AND {ACTIONABLE_JOB_SQL}"
+            ).fetchone()[0]
+            or 0
+        )
+        if ready == 0 and not continuous:
             console.print(
                 "[red]No tailored resumes ready.[/red]\n"
                 "Run [bold]divapply run score tailor[/bold] first to prepare applications."
             )
             raise typer.Exit(code=1)
+        if not url and not continuous:
+            eligible, highest = _apply_queue_window(
+                conn,
+                min_score=min_score,
+                max_score=max_score,
+            )
+            if eligible == 0:
+                window = f"--min-score {min_score}"
+                if max_score is not None:
+                    window += f" --max-score {max_score}"
+                console.print(f"[red]No queued jobs match {window}.[/red]")
+                if highest is not None:
+                    console.print(f"Highest prepared score: {highest}.")
+                    console.print(
+                        "Choose a reviewed threshold explicitly, for example: "
+                        f"[bold]divapply apply --min-score {highest}[/bold]"
+                    )
+                raise typer.Exit(code=1)
 
     if gen:
         from divapply.apply.launcher import gen_prompt, get_manual_command
@@ -1033,6 +1070,8 @@ def apply(
     console.print(f"  Backend:  {get_apply_backend_label(resolved_backend)}")
     console.print(f"  Browser:  {get_apply_browser_label(resolved_browser)}")
     console.print(f"  Model:    {resolved_model}")
+    score_window = f">= {min_score}" if max_score is None else f"{min_score} to {max_score}"
+    console.print(f"  Score:    {score_window}")
     console.print(f"  Headless: {headless}")
     console.print(f"  Dry run:  {dry_run}")
     console.print(

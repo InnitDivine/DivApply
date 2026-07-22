@@ -15,6 +15,7 @@ import re
 import shlex
 import shutil
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -70,6 +71,62 @@ def _load_blocked():
     """Load skip rules lazily so config file reads stay outside DB locks."""
     from divapply.config import load_blocked_sites
     return load_blocked_sites()
+
+
+def inspect_apply_queue(
+    conn: sqlite3.Connection,
+    *,
+    min_score: int,
+    max_score: int | None,
+) -> tuple[int, int | None]:
+    """Read the queue through the same non-mutating gates used by acquisition."""
+    blocked_sites, blocked_patterns = _load_blocked()
+    params: list[object] = [config.DEFAULTS["max_apply_attempts"]]
+    site_clause = ""
+    if blocked_sites:
+        placeholders = ",".join("?" for _ in blocked_sites)
+        site_clause = f"AND (site IS NULL OR site NOT IN ({placeholders}))"
+        params.extend(sorted(blocked_sites))
+    url_clause = ""
+    if blocked_patterns:
+        url_clause = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
+        params.extend(blocked_patterns)
+
+    rows = conn.execute(
+        f"""
+        SELECT url, title, company, site, application_url,
+               tailored_resume_path, cover_letter_path, fit_score
+        FROM jobs
+        WHERE tailored_resume_path IS NOT NULL
+          AND {ACTIONABLE_JOB_SQL}
+          AND archived_at IS NULL
+          AND (apply_status IS NULL OR apply_status = 'failed')
+          AND (apply_attempts IS NULL OR apply_attempts < ?)
+          AND fit_score IS NOT NULL
+          {site_clause}
+          {url_clause}
+        """,
+        params,
+    ).fetchall()
+
+    scores: list[int] = []
+    for raw_row in rows:
+        job = dict(raw_row)
+        apply_url = job.get("application_url") or job["url"]
+        try:
+            validate_external_url(apply_url, field="apply url")
+            ensure_job_artifacts_unshared(job, conn=conn)
+        except (UnsafeUrlError, ArtifactCollisionError):
+            continue
+        if config.is_manual_ats(apply_url):
+            continue
+        scores.append(int(job["fit_score"]))
+
+    eligible = sum(
+        score >= min_score and (max_score is None or score <= max_score)
+        for score in scores
+    )
+    return eligible, max(scores) if scores else None
 
 
 def _display_company(job: dict) -> str:
@@ -275,8 +332,8 @@ def acquire_job(target_url: str | None = None, min_score: int = 7,
                 site_clause = ""
                 if blocked_sites:
                     placeholders = ",".join("?" * len(blocked_sites))
-                    site_clause = f"AND site NOT IN ({placeholders})"
-                    params.extend(blocked_sites)
+                    site_clause = f"AND (site IS NULL OR site NOT IN ({placeholders}))"
+                    params.extend(sorted(blocked_sites))
                 url_clauses = ""
                 if blocked_patterns:
                     url_clauses = " ".join("AND url NOT LIKE ?" for _ in blocked_patterns)
@@ -713,6 +770,8 @@ def _agent_setup_failure(output: str) -> str | None:
 
 def _is_agent_infrastructure_failure(result: str) -> bool:
     return result in {
+        "failed:agent_exit_error",
+        "failed:agent_startup_error",
         "failed:agent_model_unsupported",
         "failed:agent_out_of_credits",
     }
@@ -956,8 +1015,8 @@ def _build_agent_command(
         model,
         "--sandbox",
         "read-only",
-        "--ask-for-approval",
-        "never",
+        "-c",
+        'approval_policy="never"',
         "--disable",
         "shell_tool",
         "--disable",
@@ -1017,6 +1076,23 @@ def _get_apply_idle_timeout(total_timeout: int | None) -> int | None:
     if total_timeout is None:
         return DEFAULT_APPLY_IDLE_TIMEOUT
     return min(DEFAULT_APPLY_IDLE_TIMEOUT, max(30, total_timeout // 3))
+
+
+def _write_agent_prompt(proc: subprocess.Popen[str], agent_prompt: str) -> str | None:
+    """Write prompt; return startup output when child closes stdin early."""
+    if proc.stdin is None:
+        return "agent stdin unavailable"
+    try:
+        proc.stdin.write(agent_prompt)
+        proc.stdin.close()
+        return None
+    except (BrokenPipeError, OSError) as exc:
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            return f"agent closed stdin before prompt: {type(exc).__name__}"
+        output = proc.stdout.read() if proc.stdout is not None else ""
+        return output.strip() or f"agent closed stdin before prompt: {type(exc).__name__}"
 
 
 # ---------------------------------------------------------------------------
@@ -1184,17 +1260,7 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             browser: str = "chromium", dry_run: bool = False,
             headless: bool = False) -> tuple[str, int]:
     """Run one auto-apply job through the selected backend."""
-    ensure_job_artifacts_unshared(job, conn=get_connection())
-    worker_dir, agent_prompt, prompt_file, cmd, env = _prepare_worker_run(
-        job,
-        port,
-        worker_id,
-        model,
-        backend,
-        browser,
-        dry_run,
-        headless,
-    )
+    start = time.time()
     company = _display_company(job)
     source = job.get("site") or ""
     try:
@@ -1205,6 +1271,27 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     safe_company = redact_known_secrets(str(company), known_secrets)
     safe_source = redact_known_secrets(str(source), known_secrets)
     source_suffix = f" (source: {safe_source})" if safe_source and safe_source != safe_company else ""
+
+    worker_dir: Path | None = None
+    try:
+        ensure_job_artifacts_unshared(job, conn=get_connection())
+        worker_dir, agent_prompt, prompt_file, cmd, env = _prepare_worker_run(
+            job,
+            port,
+            worker_id,
+            model,
+            backend,
+            browser,
+            dry_run,
+            headless,
+        )
+    except Exception as exc:
+        duration_ms = int((time.time() - start) * 1000)
+        safe_error = _safe_agent_error(exc, known_secrets=known_secrets, max_length=100)
+        logger.error("Worker %d agent preparation failed: %s", worker_id, safe_error)
+        add_event(f"[W{worker_id}] Agent preparation failed; queue stopped")
+        update_state(worker_id, status="failed", last_action="agent preparation failed")
+        return "failed:agent_startup_error", duration_ms
 
     update_state(worker_id, status="applying", job_title=safe_title,
                  company=safe_company, score=job.get("fit_score", 0),
@@ -1227,7 +1314,6 @@ def run_job(job: dict, port: int, worker_id: int = 0,
     )
     log_header = redact_known_secrets(log_header, known_secrets)
 
-    start = time.time()
     proc = None
     text_parts: list[str] = []
     stats: dict = {}
@@ -1248,9 +1334,17 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         with _claude_lock:
             _claude_procs[worker_id] = proc
 
-        if proc.stdin:
-            proc.stdin.write(agent_prompt)
-            proc.stdin.close()
+        startup_output = _write_agent_prompt(proc, agent_prompt)
+        if startup_output is not None:
+            duration_ms = int((time.time() - start) * 1000)
+            safe_output = redact_known_secrets(startup_output, known_secrets)
+            with open_private_text(worker_log, mode="a", strict=True) as lf:
+                lf.write(log_header)
+                lf.write(safe_output + "\n")
+            reason = _agent_setup_failure(startup_output) or "agent_startup_error"
+            add_event(f"[W{worker_id}] Agent startup failed; queue stopped")
+            update_state(worker_id, status="failed", last_action="agent startup failed")
+            return f"failed:{reason}", duration_ms
 
         output_queue: queue.Queue[str | None] = queue.Queue()
         process_stdout = proc.stdout
@@ -1343,9 +1437,6 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         proc = None
 
         duration_ms = int((time.time() - start) * 1000)
-        if returncode and returncode < 0:
-            return "skipped", duration_ms
-
         output = "\n".join(text_parts)
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         safe_backend = re.sub(r"[^A-Za-z0-9_-]", "_", backend)[:20] or "agent"
@@ -1355,6 +1446,14 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             redact_known_secrets(output, known_secrets),
             strict=True,
         )
+
+        if returncode and returncode < 0:
+            return "skipped", duration_ms
+        if returncode and _last_explicit_result(output) is None:
+            reason = _agent_setup_failure(output) or "agent_exit_error"
+            add_event(f"[W{worker_id}] Agent exited {returncode}; queue stopped")
+            update_state(worker_id, status="failed", last_action="agent process failed")
+            return f"failed:{reason}", duration_ms
 
         if stats:
             cost = stats.get("cost_usd", 0)
@@ -1370,6 +1469,12 @@ def run_job(job: dict, port: int, worker_id: int = 0,
         add_event(f"[W{worker_id}] TIMEOUT ({elapsed}s)")
         update_state(worker_id, status="failed", last_action=f"TIMEOUT ({elapsed}s)")
         return "failed:timeout", duration_ms
+    except OSError as e:
+        duration_ms = int((time.time() - start) * 1000)
+        safe_error = _safe_agent_error(e, known_secrets=known_secrets, max_length=100)
+        add_event(f"[W{worker_id}] Agent startup error: {safe_error[:30]}")
+        update_state(worker_id, status="failed", last_action="agent startup failed")
+        return "failed:agent_startup_error", duration_ms
     except Exception as e:
         duration_ms = int((time.time() - start) * 1000)
         safe_error = _safe_agent_error(e, known_secrets=known_secrets, max_length=100)
@@ -1381,7 +1486,8 @@ def run_job(job: dict, port: int, worker_id: int = 0,
             _claude_procs.pop(worker_id, None)
         if proc is not None and proc.poll() is None:
             _kill_process_tree(proc.pid)
-        _remove_worker_run_dir(worker_dir)
+        if worker_dir is not None:
+            _remove_worker_run_dir(worker_dir)
 
 
 # ---------------------------------------------------------------------------
@@ -1394,11 +1500,11 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
                 headless: bool = False,
                 model: str = "gpt-5.4-mini", backend: str = "codex",
                 browser: str = "chromium",
-                dry_run: bool = False) -> tuple[int, int]:
+                dry_run: bool = False,
+                continuous: bool = False) -> tuple[int, int]:
     """Run jobs sequentially until limit is reached or queue is empty."""
     applied = 0
     failed = 0
-    continuous = limit == 0
     jobs_done = 0
     empty_polls = 0
     port = BASE_CDP_PORT + worker_id
@@ -1430,6 +1536,7 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             continue
 
         empty_polls = 0
+        jobs_done += 1
         chrome_proc = None
         try:
             if browser == "chrome":
@@ -1452,6 +1559,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             if result == "skipped":
                 release_lock(job["url"])
                 add_event(f"[W{worker_id}] Skipped: {job['title'][:30]}")
+                if target_url:
+                    break
                 continue
             if _is_agent_infrastructure_failure(result):
                 release_lock(job["url"])
@@ -1478,6 +1587,8 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             if _stop_event.is_set():
                 break
             add_event(f"[W{worker_id}] Job skipped (Ctrl+C)")
+            if target_url:
+                break
             continue
         except Exception as e:
             safe_error = _safe_agent_error(e, max_length=100)
@@ -1490,7 +1601,6 @@ def worker_loop(worker_id: int = 0, limit: int = 1,
             if chrome_proc:
                 cleanup_worker(worker_id, chrome_proc)
 
-        jobs_done += 1
         if target_url:
             break
 
@@ -1602,6 +1712,7 @@ def main(limit: int = 1, target_url: str | None = None,
                         backend=backend,
                         browser=browser,
                         dry_run=dry_run,
+                        continuous=continuous,
                     )
                 else:
                     if effective_limit:
@@ -1625,6 +1736,7 @@ def main(limit: int = 1, target_url: str | None = None,
                                 backend=backend,
                                 browser=browser,
                                 dry_run=dry_run,
+                                continuous=continuous,
                             ): i
                             for i in range(workers)
                         }

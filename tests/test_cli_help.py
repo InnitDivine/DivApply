@@ -444,6 +444,157 @@ def test_apply_uses_configured_browser_when_option_omitted(tmp_path, monkeypatch
     assert captured["browser"] == "chrome"
 
 
+def _configure_ready_apply_job(tmp_path, monkeypatch, *, score: int):
+    from divapply.apply import launcher
+
+    db_path = tmp_path / "divapply.db"
+    conn = database.init_db(db_path)
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text("{}", encoding="utf-8")
+    resume_path = tmp_path / "resume.pdf"
+    resume_path.write_bytes(b"pdf")
+    conn.execute(
+        """
+        INSERT INTO jobs (
+            url, title, company, fit_score, tailored_resume_path,
+            discovered_at, application_mode, source_verification,
+            apply_attempts
+        ) VALUES (?, ?, ?, ?, ?, ?, 'active', 'official', 0)
+        """,
+        (
+            "https://jobs.example/ready",
+            "Ready Role",
+            "Example",
+            score,
+            str(resume_path),
+            "2026-07-22T00:00:00Z",
+        ),
+    )
+    conn.commit()
+
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
+    monkeypatch.setattr(config, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(config, "get_apply_browser", lambda _browser=None: "chromium")
+    monkeypatch.setattr(config, "get_apply_browser_label", lambda browser: browser)
+    monkeypatch.setattr(config, "get_apply_backend", lambda _backend=None: "codex")
+    monkeypatch.setattr(config, "get_apply_backend_label", lambda backend: backend)
+    monkeypatch.setattr(config, "check_tier", lambda *_args, **_kwargs: None)
+    return conn, launcher
+
+
+def test_v134_apply_preflight_rejects_empty_score_window(tmp_path, monkeypatch) -> None:
+    conn, launcher = _configure_ready_apply_job(tmp_path, monkeypatch, score=6)
+    launched = False
+
+    def fail_if_launched(**_kwargs):
+        nonlocal launched
+        launched = True
+
+    monkeypatch.setattr(launcher, "main", fail_if_launched)
+
+    result = runner.invoke(app, ["apply", "--min-score", "7", "--yes"])
+    conn.close()
+    output = re.sub(r"\s+", " ", result.output)
+
+    assert result.exit_code == 1
+    assert "No queued jobs match --min-score 7" in output
+    assert "Highest prepared score: 6" in output
+    assert "divapply apply --min-score 6" in output
+    assert launched is False
+
+
+def test_v134_apply_banner_shows_requested_score_window(tmp_path, monkeypatch) -> None:
+    conn, launcher = _configure_ready_apply_job(tmp_path, monkeypatch, score=6)
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(launcher, "main", lambda **kwargs: captured.update(kwargs))
+
+    result = runner.invoke(
+        app,
+        ["apply", "--min-score", "6", "--max-score", "6", "--yes"],
+    )
+    conn.close()
+
+    assert result.exit_code == 0
+    assert "Score:    6 to 6" in result.output
+    assert captured["min_score"] == 6
+    assert captured["max_score"] == 6
+
+
+def test_v138_apply_preflight_matches_queue_exclusions(tmp_path, monkeypatch) -> None:
+    from divapply.apply import launcher
+
+    conn = database.init_db(tmp_path / "divapply.db")
+    rows = [
+        ("https://jobs.example/blocked-site", "blocked", None, 10, "blocked.pdf", 0),
+        ("https://jobs.example/blocked-pattern", "allowed", None, 9, "pattern.pdf", 0),
+        ("https://jobs.example/manual", "allowed", "https://manual.example/apply", 8, "manual.pdf", 0),
+        ("https://jobs.example/unsafe", "allowed", "http://127.0.0.1/apply", 8, "unsafe.pdf", 0),
+        ("https://jobs.example/exhausted", "allowed", None, 7, "exhausted.pdf", 3),
+        ("https://jobs.example/collision-a", "allowed", None, 10, "shared.pdf", 0),
+        ("https://jobs.example/collision-b", "allowed", None, 9, "shared.pdf", 0),
+        ("https://jobs.example/ready", None, None, 6, "ready.pdf", 0),
+    ]
+    conn.executemany(
+        """
+        INSERT INTO jobs (
+            url, title, company, site, application_url, fit_score,
+            tailored_resume_path, apply_attempts, discovered_at,
+            application_mode, source_verification, availability_state
+        ) VALUES (?, 'Support Role', 'Example', ?, ?, ?, ?, ?,
+                  '2026-07-22T00:00:00Z', 'active', 'official', 'open')
+        """,
+        rows,
+    )
+    conn.commit()
+
+    monkeypatch.setattr(
+        launcher,
+        "_load_blocked",
+        lambda: ({"blocked"}, ["%blocked-pattern%"]),
+    )
+    monkeypatch.setattr(
+        launcher.config,
+        "is_manual_ats",
+        lambda url: "manual.example" in str(url),
+    )
+
+    def validate(url, *, field):
+        if str(url).startswith("http://127.0.0.1"):
+            raise launcher.UnsafeUrlError(f"{field} is private")
+        return str(url)
+
+    monkeypatch.setattr(launcher, "validate_external_url", validate)
+
+    eligible, highest = cli._apply_queue_window(
+        conn,
+        min_score=7,
+        max_score=None,
+    )
+    conn.close()
+
+    assert eligible == 0
+    assert highest == 6
+
+
+def test_v139_continuous_apply_can_start_with_empty_queue(tmp_path, monkeypatch) -> None:
+    conn, launcher = _configure_ready_apply_job(tmp_path, monkeypatch, score=6)
+    conn.execute("DELETE FROM jobs")
+    conn.commit()
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(launcher, "main", lambda **kwargs: captured.update(kwargs))
+
+    result = runner.invoke(
+        app,
+        ["apply", "--continuous", "--dry-run", "--yes"],
+    )
+    conn.close()
+
+    assert result.exit_code == 0
+    assert captured["continuous"] is True
+    assert captured["limit"] == 0
+
+
 def test_add_url_is_manual_review_until_official_source_refresh(tmp_path, monkeypatch) -> None:
     db_path = tmp_path / "divapply.db"
     conn = database.init_db(db_path)
