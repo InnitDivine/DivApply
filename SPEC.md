@@ -289,6 +289,7 @@
 |T60|decode structured job descriptions before scoring|encoded JSON-LD qualification regression + target rescore; V38,V73,V112|x|
 |T61|preserve government qualification bodies in score context|linked-preamble + Experience/Training truncation regression + target rescore; V38,V73,V113|x|
 |T62|reopen live manual official jobs + improve truthful résumé generation/layout|official reopen + generation truth guards + sparse HTML/render/ATS QA; V38,V44,V90,V97,V98,V100,V103,V114-V118|x|
+|T63|prepare privacy-clean 0.5.9 release|focused fixture + private tree/dist scan + locked preflight; V14,V48-V50,V63,V81-V84|x|
 
 ## §B
 
@@ -495,13 +496,13 @@
 |B199|full mypy rejects ATS coverage formatting|validator report typed as `dict[str,object]` instead of numeric field contract|V14,V98|T57|typed ATS report + rerun mypy/full gates|
 |B200|live government jobs absent while official boards list them|generic cached CSS plans stale; CalCareers static target never submits search|V102,V105|T58|deterministic board adapters + live canaries|
 |B201|verified-open legacy row remains hidden + cannot produce packet|archive stores timestamp only; official upsert never distinguishes dismissal from stale archive|V103|T58|typed archive reason + verified reopen regression|
-|B202|Logan fallback omitted while query label can misclassify result market|global title filter + target-first market resolution cross policy boundaries|V104,V106|T58|result-location market overlay + market-specific title policy|
+|B202|current-market fallback omitted while query label can misclassify result market|global title filter + target-first market resolution cross policy boundaries|V104,V106|T58|result-location market overlay + market-specific title policy|
 |B203|focused gate cannot import pytest|plain `python` resolves clean runtime venv intentionally lacking dev tools|V94|T58|invoke locked project `.venv` explicitly|
 |B204|migration regression expects schema version 5|fixture hardcodes prior latest version after v6 addition|V51|T58|advance exact expectation + rerun migration gate|
 |B205|live government adapter raises missing `url` argument|new parser tests used variadic fetch mocks that hid hardened fetcher client/headers contract|V102,V105|T58|real-signature mocks + bounded client calls + live rerun|
 |B206|private search config rejects county match patterns|CalCareers emits county-only locations while strict policy requires state-qualified tokens|V31,V104|T58|normalize CalCareers county to `County, CA`; qualify config patterns|
 |B207|correctional/probation officer rows pass destination office allowlist|include-title filter uses raw substring containment|V107|T58|boundary matcher + policy archive regression + local cleanup|
-|B208|allowed Logan dispatcher/custodian marked score 1 before enrichment|detail stage embeds candidate-specific title rejection and mutates score state|V108|T58|remove title prefilter + stage-ownership regression + reset affected rows|
+|B208|allowed current-market dispatcher/custodian marked score 1 before enrichment|detail stage embeds candidate-specific title rejection and mutates score state|V108|T58|remove title prefilter + stage-ownership regression + reset affected rows|
 |B209|CalCareers rows cannot score; one apply URL becomes unrelated SafeLinks PDF|generic detail cascade lacks official DOM adapter and promotes arbitrary page links|V109|T58|official detail parser + exact application-entry regression + bounded DB repair|
 |B210|valid score-5 government résumé has no cover after four drafts|model repeatedly shortens long parenthetical target title; exact-title gate has no deterministic repair|V101|T58|idempotent exact-title normalization + failed-stage rerun|
 |B211|title-repaired cover still exhausts on unsupported `spring`|fabrication watchlist treats academic season/date as Spring software framework|V38,V110|T58|technical-context matcher + season/framework regression + failed-stage rerun|
@@ -516,3 +517,4 @@
 |B220|strict judge rejects exact authoritative `health communication coursework`|LLM absence verdict contradicts supplied exact candidate evidence|V44,V116|T62|narrow quoted-absence contradiction gate; context failures remain closed|
 |B221|Heart Cath packet says municipal work was patient-facing + handled confidential records|healthcare guard enumerates 3 suffixes; confidentiality has no evidence gate|V38,V117|T62|generic patient-facing candidate regex + evidence-bound confidentiality guard; regenerate|
 |B222|Device résumé calls municipal escalation `service desk-style`|paid EXPERIENCE lacks zero-professional-IT desk/ticket phrase gate|V100,V118|T62|exact source-evidence guard; regenerate|
+|B223|0.5.9 preflight finds private locality in public docs + fixture|historical policy wording retained candidate market label|V48,V50|T63|market-neutral wording + focused/private/full release gates|
