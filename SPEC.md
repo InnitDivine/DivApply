@@ -73,6 +73,7 @@
 - I37: `validate_ats_pdf(source_text,pdf_path,required_sections) -> report`; missing/scrambled text layer → raise + delete output.
 - I38: official discovery row → `availability_state`, `availability_checked_at`, `last_seen_at`; archive lifecycle → `archive_reason=user|policy|legacy|source_closed`.
 - I39: official-government adapters → GovernmentJobs/SchoolJobs rendered listing parser; JobAps table parser; CalCareers bounded postback parser; no selector-cache/LLM trust decision.
+- I40: `education_schools[]` → optional `expected_graduation_year`, `completed_coursework[]`, `current_coursework[]`; code sanitizes + renders exact supplied items.
 
 ## §R
 
@@ -222,6 +223,7 @@
 - V116: strict judge absence-only rejection naming quoted phrases all present in candidate evidence → auditable deterministic contradiction pass; any paid-work/context/fabrication issue or unquoted/unsupported phrase remains FAIL.
 - V117: professional healthcare tenure=0 → any candidate `patient-facing *` claim fails; `confidential*` candidate claim requires exact profile/base résumé evidence; employer-requirement statement alone allowed.
 - V118: professional IT tenure=0 → paid EXPERIENCE cannot add `service desk|help desk|ticket handling|ticket queue` absent exact base résumé evidence; target headline/role requirement ≠ paid-work proof.
+- V119: tailored EDUCATION renders only structured profile coursework; future expected graduation stays `in progress`; ⊥ infer course/cert completion from dates/notes.
 
 ## §T
 
@@ -290,6 +292,8 @@
 |T61|preserve government qualification bodies in score context|linked-preamble + Experience/Training truncation regression + target rescore; V38,V73,V113|x|
 |T62|reopen live manual official jobs + improve truthful résumé generation/layout|official reopen + generation truth guards + sparse HTML/render/ATS QA; V38,V44,V90,V97,V98,V100,V103,V114-V118|x|
 |T63|prepare privacy-clean 0.5.9 release|focused fixture + private tree/dist scan + locked preflight; V14,V48-V50,V63,V81-V84|x|
+|T64|render evidence-bound coursework + active-program status|`test_v119_education_renders_structured_coursework_and_expected_status` + strict packet ATS/visual QA; V27,V45,V98,V119,I27,I40|x|
+|T65|prepare privacy-clean 0.5.10 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63|x|
 
 ## §B
 
@@ -518,3 +522,4 @@
 |B221|Heart Cath packet says municipal work was patient-facing + handled confidential records|healthcare guard enumerates 3 suffixes; confidentiality has no evidence gate|V38,V117|T62|generic patient-facing candidate regex + evidence-bound confidentiality guard; regenerate|
 |B222|Device résumé calls municipal escalation `service desk-style`|paid EXPERIENCE lacks zero-professional-IT desk/ticket phrase gate|V100,V118|T62|exact source-evidence guard; regenerate|
 |B223|0.5.9 preflight finds private locality in public docs + fixture|historical policy wording retained candidate market label|V48,V50|T63|market-neutral wording + focused/private/full release gates|
+|B224|IT résumé omits completed course + labels active program `not completed`|assembler ignores structured coursework + treats future year as dropout|V119|T64|structured course lines + active-status rule|named unit + packet ATS/visual QA|
