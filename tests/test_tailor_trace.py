@@ -319,6 +319,97 @@ def test_strict_tailor_fails_closed_when_judge_rejects(monkeypatch) -> None:
     assert normal_report["status"] == "approved_with_judge_warning"
 
 
+def test_v115_tailor_prunes_posting_only_skills_before_validation(monkeypatch) -> None:
+    class Client:
+        def chat(self, *_args, **_kwargs) -> str:
+            return "{}"
+
+    data = {
+        "title": "Support Technician",
+        "summary": "Factual summary.",
+        "skills_section_title": "TECHNICAL SKILLS",
+        "skills": {"Support": "Python, asset tracking"},
+        "experience": [],
+        "projects": [],
+    }
+    captured: dict = {}
+    monkeypatch.setattr(tailor, "get_client_for_stage", lambda _stage: Client())
+    monkeypatch.setattr(tailor, "extract_json", lambda _raw: data)
+
+    def validate(candidate, *_args, **_kwargs):
+        captured.update(candidate)
+        return {"passed": True, "errors": [], "warnings": []}
+
+    monkeypatch.setattr(tailor, "validate_json_fields", validate)
+    monkeypatch.setattr(
+        tailor,
+        "validate_tailored_resume",
+        lambda *_args, **_kwargs: {"passed": True, "errors": [], "warnings": []},
+    )
+    monkeypatch.setattr(tailor, "assemble_resume_text", lambda *_args: "factual resume")
+    monkeypatch.setattr(
+        tailor,
+        "judge_tailored_resume",
+        lambda *_args: {"passed": True, "verdict": "PASS", "issues": "none", "raw": "VERDICT: PASS"},
+    )
+
+    _, report = tailor.tailor_resume(
+        "Built Python reports.",
+        {"title": "Support", "full_description": "Track company assets."},
+        {"skills_boundary": {"Tools": ["Python"]}},
+        max_retries=0,
+        validation_mode="strict",
+    )
+
+    assert report["status"] == "approved"
+    assert captured["skills"] == {"Support": "Python"}
+
+
+def test_v116_judge_absence_rejection_yields_to_exact_candidate_evidence() -> None:
+    judge = {
+        "passed": False,
+        "issues": (
+            "The resume adds \u201chealth communication coursework\u201d, but that phrase is not supported "
+            "by the authoritative evidence."
+        ),
+    }
+    profile = {"skills_boundary": {"Coursework": ["health communication coursework"]}}
+
+    assert tailor._judge_rejection_contradicts_candidate_evidence(judge, profile, "")
+    judge["issues"] = (
+        "The resume adds \u201chealth communication coursework\u201d, but the evidence does not list it."
+    )
+    assert tailor._judge_rejection_contradicts_candidate_evidence(judge, profile, "")
+    judge["issues"] = (
+        "The resume adds \u201chealth communication coursework\u201d and "
+        "\u201cCommunity Health Sciences coursework (transferred)\u201d, but neither is supported."
+    )
+    profile["education_schools"] = [
+        {
+            "school": "Example University",
+            "city_state": "Sampleville, YY",
+            "degree": "Bachelor of Science",
+            "major": "Community Health Sciences",
+            "start_year": "2020",
+            "end_year": "2022",
+            "status": "transferred",
+        }
+    ]
+    assert tailor._judge_rejection_contradicts_candidate_evidence(judge, profile, "")
+
+
+def test_v116_judge_context_rejection_never_gets_absence_override() -> None:
+    judge = {
+        "passed": False,
+        "issues": (
+            "The paid-work bullet moves \u201chealth communication coursework\u201d into professional experience."
+        ),
+    }
+    profile = {"skills_boundary": {"Coursework": ["health communication coursework"]}}
+
+    assert not tailor._judge_rejection_contradicts_candidate_evidence(judge, profile, "")
+
+
 def test_tailor_retry_report_clears_prior_attempt_judge(monkeypatch) -> None:
     class Client:
         def chat(self, *_args, **_kwargs) -> str:

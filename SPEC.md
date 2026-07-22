@@ -217,6 +217,11 @@
 - V111: GovernmentJobs agency landing placeholder ≠ authoritative zero; validated same-origin agency fragment fetched + current cards deduped before availability decision.
 - V112: structured job-description HTML/entities decoded to readable plain text before persistence/scoring; qualification wording retained, markup discarded.
 - V113: bounded scoring context retains requirement bodies under Experience/Training/Education headings; linked qualification preamble alone ≠ sufficient evidence.
+- V114: parsed résumé visible text <400 words → sparse one-column typography/spacing; content unchanged, exactly 1 page, + V98; layout code cannot add applicant claims.
+- V115: before résumé validation, candidate-skill items absent from verified profile/base résumé evidence are deterministically removed; direct validator still rejects any survivor; empty required skills → retry/fail closed.
+- V116: strict judge absence-only rejection naming quoted phrases all present in candidate evidence → auditable deterministic contradiction pass; any paid-work/context/fabrication issue or unquoted/unsupported phrase remains FAIL.
+- V117: professional healthcare tenure=0 → any candidate `patient-facing *` claim fails; `confidential*` candidate claim requires exact profile/base résumé evidence; employer-requirement statement alone allowed.
+- V118: professional IT tenure=0 → paid EXPERIENCE cannot add `service desk|help desk|ticket handling|ticket queue` absent exact base résumé evidence; target headline/role requirement ≠ paid-work proof.
 
 ## §T
 
@@ -283,6 +288,7 @@
 |T59|repair async GovernmentJobs agency discovery|`test_v111_governmentjobs_agency_board_fetches_fragment` + false-zero/dedup regressions + Roseville live canary; V102,V105,V111,I39|x|
 |T60|decode structured job descriptions before scoring|encoded JSON-LD qualification regression + target rescore; V38,V73,V112|x|
 |T61|preserve government qualification bodies in score context|linked-preamble + Experience/Training truncation regression + target rescore; V38,V73,V113|x|
+|T62|reopen live manual official jobs + improve truthful résumé generation/layout|official reopen + generation truth guards + sparse HTML/render/ATS QA; V38,V44,V90,V97,V98,V100,V103,V114-V118|x|
 
 ## §B
 
@@ -504,3 +510,9 @@
 |B214|version parity gate sees lock `0.5.5`|unqualified `uv` absent from PATH; lock update never ran|V14,V49|T59|invoke `.venv/Scripts/uv.exe`; rerun parity gate|
 |B215|Database Analyst score says qualifications unavailable while stored text contains `&lt;...&gt;` degree rules|JSON-LD cleaner parses before decoding HTML entities|V112|T60|decode entities, strip markup, regression + rescore|
 |B216|clean Database Analyst text has bachelor rule; score context retains only `click HERE` preamble|requirement window stops at the next heading but does not sample Experience/Training bodies|V113|T61|recognize bounded requirement subheadings + rescore|
+|B217|live official manual URL remains source-closed|manual official upsert omits `availability_state=open`; reopen guard cannot fire|V97,V103|T62|persist verified-open state + source-closed regression|
+|B218|generated résumés use only 64–71% page depth|fixed compact 9pt layout ignores sparse verified content|V98,V114|T62|content-neutral sparse typography + rendered visual/ATS QA|
+|B219|strict Heart Cath tailoring exhausts on copied posting-only skill phrase|known unsupported skills trigger stochastic retries instead of safe deterministic removal|V90,V115|T62|prune unsupported skill items before validation; retain rejecting validator|
+|B220|strict judge rejects exact authoritative `health communication coursework`|LLM absence verdict contradicts supplied exact candidate evidence|V44,V116|T62|narrow quoted-absence contradiction gate; context failures remain closed|
+|B221|Heart Cath packet says municipal work was patient-facing + handled confidential records|healthcare guard enumerates 3 suffixes; confidentiality has no evidence gate|V38,V117|T62|generic patient-facing candidate regex + evidence-bound confidentiality guard; regenerate|
+|B222|Device résumé calls municipal escalation `service desk-style`|paid EXPERIENCE lacks zero-professional-IT desk/ticket phrase gate|V100,V118|T62|exact source-evidence guard; regenerate|

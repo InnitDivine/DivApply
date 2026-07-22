@@ -289,6 +289,32 @@ def _profile_evidence_text(profile: dict, original_text: str = "") -> str:
     return " ".join(chunks).lower()
 
 
+def candidate_evidence_supports(term: str, profile: dict, original_text: str = "") -> bool:
+    """Return whether one exact phrase appears in candidate-owned evidence."""
+    normalized = " ".join(str(term or "").casefold().split()).strip(" .:-")
+    return bool(normalized) and _term_in_text(normalized, _profile_evidence_text(profile, original_text))
+
+
+def prune_unsupported_tailored_skills(
+    skills: object,
+    profile: dict,
+    original_text: str = "",
+) -> object:
+    """Remove generated skill items that have no candidate-owned evidence."""
+    if not isinstance(skills, dict):
+        return skills
+    pruned: dict[str, str] = {}
+    for category, raw in skills.items():
+        supported: list[str] = []
+        for item in re.split(r"[,;|]", str(raw or "")):
+            normalized = " ".join(item.casefold().split()).strip(" .:-")
+            if candidate_evidence_supports(normalized, profile, original_text):
+                supported.append(item.strip())
+        if supported:
+            pruned[str(category)] = ", ".join(supported)
+    return pruned
+
+
 def _add_unsupported_tailored_skill_findings(
     skills: object,
     profile: dict,
@@ -618,6 +644,31 @@ def _has_paid_setting_it_attribution(sentence: str) -> bool:
     return has_paid_setting and _hands_on_it_match(lowered) is not None
 
 
+def _add_unsupported_confidentiality_findings(
+    text: str,
+    candidate_evidence: str,
+    errors: list[str],
+    *,
+    target_company: str = "",
+) -> None:
+    """Reject candidate confidentiality claims absent from candidate evidence."""
+    if re.search(r"\bconfidential\w*\b", candidate_evidence.casefold()):
+        return
+    company = target_company.casefold().strip()
+    for sentence in re.split(r"(?<=[.!?])\s+|\n+", text.casefold()):
+        if re.search(r"\bconfidential\w*\b", sentence) is None:
+            continue
+        target_requirement = bool(
+            company
+            and company in sentence
+            and re.search(r"\b(?:asks?|requires?|seeks?|needs?|posting|role)\b", sentence)
+            and re.search(r"\b(?:i|my|background|experience|handled|maintained)\b", sentence) is None
+        )
+        if not target_requirement:
+            errors.append("Claims confidentiality handling without candidate evidence.")
+            return
+
+
 def validate_tailored_resume(
     text: str,
     profile: dict,
@@ -736,6 +787,7 @@ def validate_tailored_resume(
     _add_unsupported_metric_findings(text, profile, errors)
     non_education_text = text.replace(_section_text(text, "EDUCATION", ()), "")
     _add_unsupported_credential_findings(non_education_text.lower(), evidence_text, errors)
+    _add_unsupported_confidentiality_findings(text, evidence_text, errors)
 
     # 8d. When the candidate has no professional IT tenure, hands-on IT work
     # must not be moved into a paid public-service setting unless the original
@@ -744,6 +796,12 @@ def validate_tailored_resume(
         (profile.get("experience") or {}).get("years_of_professional_it_experience", "")
     ).strip().casefold()
     if professional_it_years in {"0", "0.0", "none"}:
+        service_desk_pattern = re.compile(
+            r"\b(?:service|help)[ -]desk\b|\bticket(?: handling| queues?)\b",
+            flags=re.IGNORECASE,
+        )
+        if service_desk_pattern.search(experience_block) and not service_desk_pattern.search(original_text):
+            errors.append("Paid experience violates the service-desk evidence boundary.")
         original_supports_pairing = any(
             _has_paid_setting_it_attribution(sentence)
             for sentence in re.split(r"(?<=[.!?])\s+|\n+", original_text)
@@ -753,6 +811,12 @@ def validate_tailored_resume(
             for sentence in re.split(r"(?<=[.!?])\s+|\n+", text)
         ):
             errors.append("Hands-on IT practice is attributed to an unsupported paid-work setting.")
+
+    professional_healthcare_years = str(
+        (profile.get("experience") or {}).get("years_of_professional_healthcare_experience", "")
+    ).strip().casefold()
+    if professional_healthcare_years in {"0", "0.0", "none"} and "patient-facing" in text_lower:
+        errors.append("Violates professional healthcare experience boundary.")
 
     # 9. Em dashes (should be auto-fixed by sanitize_text, but safety net)
     if "\u2014" in text or "\u2013" in text:
@@ -934,6 +998,12 @@ def validate_cover_letter(
         " ",
         f"{resume_evidence} {_profile_evidence_text(profile or {})}",
     )
+    _add_unsupported_confidentiality_findings(
+        text,
+        normalized_candidate_evidence,
+        errors,
+        target_company=str((job or {}).get("company") or ""),
+    )
     raw_missing = (job or {}).get("missing_skills")
     if isinstance(raw_missing, list):
         missing_skills = [str(item).strip().casefold() for item in raw_missing if str(item).strip()]
@@ -1074,13 +1144,21 @@ def validate_cover_letter(
         .casefold()
     )
     if professional_healthcare_years in {"0", "0.0", "none"}:
-        healthcare_overclaim_phrases = (
-            "patient-facing service",
-            "patient-facing experience",
-            "patient-facing work",
-            "professional healthcare experience",
-        )
-        if any(phrase in text_lower for phrase in healthcare_overclaim_phrases):
+        target_company = str((job or {}).get("company") or "").casefold().strip()
+        patient_facing_claim = False
+        for sentence in re.split(r"(?<=[.!?])\s+|\n+", text_lower):
+            if "patient-facing" not in sentence:
+                continue
+            target_requirement = bool(
+                target_company
+                and target_company in sentence
+                and re.search(r"\b(?:asks?|requires?|seeks?|needs?|posting|role)\b", sentence)
+                and re.search(r"\b(?:i|my|background|experience|bring)\b", sentence) is None
+            )
+            if not target_requirement:
+                patient_facing_claim = True
+                break
+        if patient_facing_claim or "professional healthcare experience" in text_lower:
             errors.append("Violates professional healthcare experience boundary.")
 
     # 5. Must start with "Dear" â€” always checked (preamble should have been stripped)

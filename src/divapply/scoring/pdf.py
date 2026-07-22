@@ -324,6 +324,19 @@ def build_html(resume: dict) -> str:
 
     import re as _re
 
+    visible_text = " ".join(
+        str(value or "")
+        for value in (
+            resume.get("name"),
+            resume.get("title"),
+            resume.get("location"),
+            resume.get("contact"),
+            *sections.values(),
+        )
+    )
+    visible_word_count = len(_re.findall(r"\b[\w'-]+\b", visible_text))
+    density_class = "resume-sparse" if visible_word_count < 400 else "resume-standard"
+
     def _esc(value: object) -> str:
         """Escape resume-controlled text before injecting into HTML."""
         return _html_escape(str(value or ""), quote=True)
@@ -654,9 +667,73 @@ li::marker {{
     color: #7a6a58;
     font-weight: 300;
 }}
+
+/* Sparse résumés use the available page for larger, easier-to-scan type.
+   This is layout-only: no applicant text or claims are synthesized here. */
+body.resume-sparse {{
+    font-size: 10pt;
+    line-height: 1.4;
+}}
+body.resume-sparse .header {{
+    padding-bottom: 7px;
+    margin-bottom: 8px;
+}}
+body.resume-sparse .title {{
+    font-size: 10pt;
+    line-height: 1.45;
+    margin-top: 3px;
+}}
+body.resume-sparse .contact {{
+    font-size: 9pt;
+    margin-top: 3px;
+}}
+body.resume-sparse .section {{
+    margin-top: 8px;
+}}
+body.resume-sparse .section-title {{
+    font-size: 9pt;
+    padding-bottom: 3px;
+    margin-bottom: 5px;
+}}
+body.resume-sparse .summary {{
+    font-size: 10pt;
+    line-height: 1.42;
+}}
+body.resume-sparse .skill-row {{
+    font-size: 9.4pt;
+    line-height: 1.35;
+    margin-bottom: 2px;
+}}
+body.resume-sparse .entry {{
+    margin-bottom: 6px;
+}}
+body.resume-sparse .entry-title {{
+    font-size: 9.7pt;
+}}
+body.resume-sparse .entry-meta {{
+    font-size: 9.1pt;
+    margin-bottom: 2px;
+}}
+body.resume-sparse .compact-exp-line,
+body.resume-sparse .cert-item,
+body.resume-sparse .edu-school {{
+    font-size: 9.1pt;
+    line-height: 1.35;
+}}
+body.resume-sparse li {{
+    font-size: 9.2pt;
+    line-height: 1.35;
+    margin-bottom: 1px;
+}}
+body.resume-sparse .edu-degree {{
+    font-size: 9.5pt;
+}}
+body.resume-sparse .edu-details {{
+    font-size: 8.8pt;
+}}
 </style>
 </head>
-<body>
+<body class="resume {density_class}">
 
 <div class="header">
     <div class="header-top">

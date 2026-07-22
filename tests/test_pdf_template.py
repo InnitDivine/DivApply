@@ -67,6 +67,9 @@ Example College | 2024
     assert "Technical Skills" in html
     assert "fonts.googleapis.com" not in html
     assert "grid-template-columns: 1fr 1fr" not in html
+    assert '<body class="resume resume-sparse">' in html
+    assert "body.resume-sparse" in html
+    assert "font-size: 10pt" in html
     assert html.index("Real Employer") < html.index("2025 - Present")
 
 
