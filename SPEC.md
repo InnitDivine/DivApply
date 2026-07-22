@@ -315,7 +315,7 @@
 |T67|prepare privacy-clean 0.5.11 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63|x|
 |T68|scope résumé availability by matched document market|`test_v127_*` + packet ATS/text QA; V38,V41,V64,V91,V98,V127,I42|x|
 |T69|publish privacy-clean 0.5.12 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V127|x|
-|T70|close fresh-rerun schedule/title/static-location gaps|`test_v128_*`, `test_v129_*`, `test_v130_*` + focused/full/release gates + live DB repair; V64,V74,V76,V78,V128-V130,I43-I45|~|
+|T70|close fresh-rerun schedule/title/static-location gaps|`test_v128_*`, `test_v129_*`, `test_v130_*` + focused/full/release gates + live DB repair; V64,V74,V76,V78,V128-V130,I43-I45|x|
 
 ## §B
 
