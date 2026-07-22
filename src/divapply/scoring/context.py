@@ -28,6 +28,12 @@ APPLICATION_BOILERPLATE_BOUNDARIES = (
     "voluntary self-identification",
 )
 
+APPLICATION_BOILERPLATE_HEADING_RE = re.compile(
+    r"(?im)^\s*(?:\d+\.\s*)?(?:the\s+)?(?:application|application and testing (?:information|process)|"
+    r"application procedure|examination process|selection procedure|"
+    r"supplemental questionnaire|supplemental questions)\s*:?\s*$"
+)
+
 
 def _clean_context_value(value: object) -> str:
     """Return safe single-line context text, dropping credential-like values."""
@@ -85,6 +91,34 @@ REQUIREMENT_CONTEXT_MARKERS = (
 )
 
 
+def _line_safe_prefix(text: str, limit: int) -> str:
+    """Clip a prefix without manufacturing a partial structured-text line."""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text.rstrip()
+    candidate = text[:limit]
+    newline = candidate.rfind("\n")
+    if newline >= 0:
+        return candidate[:newline].rstrip()
+    word = candidate.rfind(" ")
+    return candidate[:word].rstrip() if word > 0 else ""
+
+
+def _line_safe_suffix(text: str, limit: int) -> str:
+    """Clip a suffix without manufacturing a partial structured-text line."""
+    if limit <= 0:
+        return ""
+    if len(text) <= limit:
+        return text.lstrip()
+    candidate = text[-limit:]
+    newline = candidate.find("\n")
+    if newline >= 0:
+        return candidate[newline + 1 :].lstrip()
+    word = candidate.find(" ")
+    return candidate[word + 1 :].lstrip() if word >= 0 else ""
+
+
 def _requirement_window(text: str, *, start: int, budget: int) -> str:
     """Extract bounded middle text around requirement-bearing language."""
     if budget <= 0:
@@ -100,23 +134,29 @@ def _requirement_window(text: str, *, start: int, budget: int) -> str:
     if not positions:
         return ""
 
-    pieces: list[str] = []
-    remaining = budget
+    ranges: list[tuple[int, int]] = []
     for position in positions:
-        if remaining <= 0:
-            break
         window_start = max(start, position - 40)
         line_start = text.rfind("\n", start, position)
         if line_start >= start:
             window_start = line_start + 1
-        window_end = min(len(text), position + min(360, remaining))
+        window_end = min(len(text), position + 360)
         next_heading = re.search(r"\n\s*[A-Z][A-Za-z &/\-]{2,50}\s*\n", text[position + 1 : window_end])
         if next_heading:
             window_end = position + 1 + next_heading.start()
-        piece = text[window_start:window_end].strip()
-        if not piece or any(piece in prior for prior in pieces):
+        if ranges and window_start <= ranges[-1][1]:
+            ranges[-1] = (ranges[-1][0], max(ranges[-1][1], window_end))
+        else:
+            ranges.append((window_start, window_end))
+
+    pieces: list[str] = []
+    remaining = budget
+    for window_start, window_end in ranges:
+        if remaining <= 0:
+            break
+        piece = _line_safe_prefix(text[window_start:window_end].strip(), remaining)
+        if not piece:
             continue
-        piece = piece[:remaining]
         pieces.append(piece)
         remaining -= len(piece) + 1
     return "\n".join(pieces)[:budget]
@@ -137,7 +177,9 @@ def _bounded_description(value: object, limit: int) -> str:
         content_limit = limit - len(marker)
         head_length = max(1, int(content_limit * 0.6))
         tail_length = content_limit - head_length
-        return f"{text[:head_length]}{marker}{text[-tail_length:]}"[:limit]
+        head = _line_safe_prefix(text, head_length)
+        tail = _line_safe_suffix(text, tail_length)
+        return f"{head}{marker}{tail}"[:limit]
 
     content_limit = limit - two_markers
     head_length = max(1, int(content_limit * 0.32))
@@ -148,12 +190,16 @@ def _bounded_description(value: object, limit: int) -> str:
         content_limit = limit - len(marker)
         head_length = max(1, int(content_limit * 0.6))
         tail_length = content_limit - head_length
-        return f"{text[:head_length]}{marker}{text[-tail_length:]}"[:limit]
+        head = _line_safe_prefix(text, head_length)
+        tail = _line_safe_suffix(text, tail_length)
+        return f"{head}{marker}{tail}"[:limit]
 
     unused = middle_budget - len(middle)
     head_length += max(0, unused // 2)
     tail_length += max(0, unused - unused // 2)
-    bounded = f"{text[:head_length]}{marker}{middle}{marker}{text[-tail_length:]}"
+    head = _line_safe_prefix(text, head_length)
+    tail = _line_safe_suffix(text, tail_length)
+    bounded = f"{head}{marker}{middle}{marker}{tail}"
     return bounded[:limit]
 
 
@@ -166,6 +212,7 @@ def _strip_application_boilerplate(value: object) -> str:
         for marker in APPLICATION_BOILERPLATE_BOUNDARIES
         if (position := lowered.find(marker)) >= 0
     ]
+    positions.extend(match.start() for match in APPLICATION_BOILERPLATE_HEADING_RE.finditer(text))
     return text[: min(positions)].rstrip() if positions else text
 
 

@@ -16,6 +16,7 @@ import re
 import logging
 
 from divapply.config import profile_skills
+from divapply.scoring.evidence import verified_work_history_text
 
 log = logging.getLogger(__name__)
 
@@ -275,6 +276,7 @@ def _profile_evidence_text(profile: dict, original_text: str = "") -> str:
     chunks.extend(skill for skills in profile_skills(profile).values() for skill in skills)
     chunks.extend(profile.get("coursework_summary", []) or [])
     chunks.extend(profile.get("coursework_skills", []) or [])
+    chunks.append(verified_work_history_text(profile))
     resume_facts = profile.get("resume_facts", {}) or {}
     for value in resume_facts.values():
         if isinstance(value, list):
@@ -797,11 +799,17 @@ def validate_tailored_resume(
     ).strip().casefold()
     if professional_it_years in {"0", "0.0", "none"}:
         service_desk_pattern = re.compile(
-            r"\b(?:service|help)[ -]desk\b|\bticket(?: handling| queues?)\b",
+            r"\b(?:service|help)[ -]desk\b|\bticket(?:[ -]style| handling| queues?)\b",
             flags=re.IGNORECASE,
         )
         if service_desk_pattern.search(experience_block) and not service_desk_pattern.search(original_text):
             errors.append("Paid experience violates the service-desk evidence boundary.")
+        ticket_analogy_pattern = re.compile(
+            r"\bticket(?:[ -]style| handling| queues?)\b",
+            flags=re.IGNORECASE,
+        )
+        if ticket_analogy_pattern.search(text) and not ticket_analogy_pattern.search(original_text):
+            errors.append("Resume violates the service-desk evidence boundary.")
         original_supports_pairing = any(
             _has_paid_setting_it_attribution(sentence)
             for sentence in re.split(r"(?<=[.!?])\s+|\n+", original_text)

@@ -12,6 +12,68 @@ from divapply.database import archive_job
 from divapply.scoring import cover_letter, tailor
 
 
+def test_v126_resume_location_uses_target_market_without_changing_legal_address() -> None:
+    profile = {
+        "personal": {
+            "address": "100 Example Street",
+            "city": "Exampletown",
+            "province_state": "YY",
+            "postal_code": "00000",
+        },
+        "resume_locations": {
+            "destination": {
+                "use_for_resume_header": True,
+                "city": "Sample City",
+                "province_state": "ZZ",
+                "match_patterns": ["ZZ"],
+            }
+        },
+    }
+
+    adjusted = config.profile_for_job_resume_location(
+        profile,
+        {"location": "Nearby City, ZZ"},
+    )
+
+    assert adjusted["personal"]["city"] == "Sample City"
+    assert adjusted["personal"]["province_state"] == "ZZ"
+    assert adjusted["personal"]["address"] == "100 Example Street"
+    assert adjusted["personal"]["postal_code"] == "00000"
+    assert profile["personal"]["city"] == "Exampletown"
+
+
+def test_v126_resume_location_keeps_current_market_header() -> None:
+    profile = {
+        "personal": {"city": "Exampletown", "province_state": "YY"},
+        "resume_locations": {
+            "destination": {
+                "use_for_resume_header": True,
+                "city": "Sample City",
+                "province_state": "ZZ",
+                "match_patterns": ["ZZ"],
+            }
+        },
+    }
+
+    adjusted = config.profile_for_job_resume_location(profile, {"location": "Exampletown, YY"})
+
+    assert adjusted["personal"] == profile["personal"]
+
+
+def test_v126_resume_location_patterns_use_token_boundaries() -> None:
+    target = {
+        "city": "Sample City",
+        "province_state": "YY",
+        "match_patterns": ["ZZ"],
+    }
+
+    assert config.job_matches_application_address({"location": "Nearby, ZZ"}, target)
+    assert not config.job_matches_application_address(
+        {"location": "Fizziness, Sample State"},
+        target,
+    )
+
+
 def _jobs() -> list[dict[str, object]]:
     common = {
         "title": "Support Analyst",

@@ -58,7 +58,7 @@
 - I22: JobSpy remote classifier → on-site contradiction rejects; concrete location + board tag needs explicit description remote evidence; broad/remote location accepted.
 - I23: validation/orchestration → JSON validator accepts original résumé evidence; all-failed tailor/cover/PDF returns error, mixed returns partial.
 - I24: transcript `schools` records overlay matching profile GPA/earned-credit facts at load time; editable profile facts cannot override newer canonical academic evidence.
-- I25: one job-address selector feeds apply prompts + cover generation/PDF headers.
+- I25: application-address selector feeds application prompts; document-location selector feeds résumé/cover city-state only; `resume_locations` cannot change application street/postal data.
 - I26: each apply worker owns a generated Playwright init-page route guard; active requests stay on validated job/application origins.
 - I27: tailor presentation → model selects allowlisted technical/core skills heading; code owns current-program date/GPA/credit rendering.
 - I28: public package consumes private address/employer/site selectors; no candidate geography/employer constants in generic scoring/config.
@@ -74,6 +74,7 @@
 - I38: official discovery row → `availability_state`, `availability_checked_at`, `last_seen_at`; archive lifecycle → `archive_reason=user|policy|legacy|source_closed`.
 - I39: official-government adapters → GovernmentJobs/SchoolJobs rendered listing parser; JobAps table parser; CalCareers bounded postback parser; no selector-cache/LLM trust decision.
 - I40: `education_schools[]` → optional `expected_graduation_year`, `completed_coursework[]`, `current_coursework[]`; code sanitizes + renders exact supplied items.
+- I41: verified work evidence → bounded `work_history[{title,company,dates,tasks}]`; scorer/tailor/judge/validator share same exact facts; unconfirmed prompts excluded.
 
 ## §R
 
@@ -94,7 +95,6 @@
 - R15: BLS support duties = diagnose/document issues, guide users, setup/repair/install/training; EHR app support is recognized specialization. https://www.bls.gov/ooh/computer-and-information-technology/computer-support-specialists.htm
 - R16: health-info technologists support EHR/clinical data/privacy; 15% 2024–34; medical-records specialists 7%; entry requirements vary. https://www.bls.gov/ooh/healthcare/health-information-technologists-and-medical-registrars.htm https://www.bls.gov/ooh/healthcare/medical-records-and-health-information-technicians.htm
 - R17: RHIT eligibility requires CAHIIM-accredited HIM associate-level academic requirements/reciprocity; public-health BS alone ≠ eligible. https://www.ahima.org/certification-careers/certifications-overview/rhit/
-- R18: municipal IT Technician I class = entry level, little/no related work, hardware/software support + desktop/peripheral install/config; validates public-sector bridge. https://www.governmentjobs.com/careers/rosevilleca/classspecs/newprint/1512986
 - R19: Playwright MCP `--init-page` can install context routes; built-in origin lists explicitly ≠ security boundary/redirect control. https://github.com/microsoft/playwright-mcp/blob/main/README.md
 - R20: Attain official board lists remote part-time IT Support Specialist; valid current-market career-building lead @ 2026-07-13. https://job-boards.greenhouse.io/attainpartnershidden
 - R21: iWorQ official careers = Cache Valley SaaS/public-sector software employer + health/dental/vision/life/retirement benefits. https://iworq.com/careers/
@@ -102,6 +102,8 @@
 - R23: destination official IT feeds expose Sacramento technology/system roles. https://careers.smud.org/go/Information-TechnologyTelecommunications/9107600/ https://careers.csus.edu/en-us/listing/
 - R24: CPython 3.12 ZIP constructor reads the declared central directory into memory before exposing `infolist`; TAR PAX/GNU handlers read extension payloads before yielding the logical member. Raw EOCD/header budgets must precede stdlib construction. https://github.com/python/cpython/blob/v3.12.13/Lib/zipfile/__init__.py https://github.com/python/cpython/blob/v3.12.13/Lib/tarfile.py
 - R25: `setup-uv` adds uv—not a synced project venv—to PATH by default; project tools run via `uv run` or explicit environment activation/path. https://github.com/astral-sh/setup-uv https://github.com/astral-sh/uv/blob/main/docs/guides/integration/github.md
+- R26: Sutter Device Support Technician I accepts equivalent experience instead of IT/CS associate; listed knowledge includes Windows/Apple OS/iOS, AD/file systems, networks, endpoint install/maintenance, ITIL, KB updates, asset control + data security. https://jobs.sutterhealth.org/us/en/job/R-135897/Device-Support-Technician-I
+- R27: substitute-teacher norms include lesson-plan continuity, attendance, classroom safety/order, student assistance, materials/AV, staff handoff + incident reporting; norms = confirmation prompts, not applicant facts. https://www.washoeschools.net/fs/resource-manager/view/ddc85e39-9f41-4db5-9000-9006a43437bc https://www.onetonline.org/link/details/25-3031.00
 
 ## §V
 
@@ -154,7 +156,7 @@
 - V47: ∀ pending score/tailor/cover stage S: `count(S)=len(select(S,limit=0))`; archive/description/score/retry/attempt/output gates cannot drift.
 - V48: ∀ public example/test address fixture → explicit fictional street/city/state/postal sentinel; local privacy scan finds 0 exact profile/reference location collisions before publish.
 - V49: ∀ release → project/runtime/tag version equal; version ∉ retired `0.4.2..0.4.8`; artifacts satisfy V46,V48 before publish.
-- V50: ∀ local publish with private profile → tracked tree + wheel + sdist exact-collision count `0` for candidate/reference identity, location, employment, education, employer values; diagnostics ⊥ raw private values.
+- V50: ∀ local publish with private profile → tracked tree + wheel + sdist exact-collision count `0` for candidate/reference identity, residence, configured résumé city, employment, education, employer values; diagnostics ⊥ raw private values.
 - V51: ∀ unit test crossing DB-backed orchestration → explicit initialized temp DB or mocked DB boundary; ⊥ default/user DB state.
 - V52: ∀ cross-platform test → optional OS capability checked before use; unsupported symlink metadata operation cannot suppress portable core assertions or leak test artifacts.
 - V53: ∀ tag release → `GITHUB_SHA` = fetched `origin/main` tip; stale ancestor tag ⊥ publish.
@@ -195,7 +197,7 @@
 - V88: unavailable scoring modality has weight 0; remaining evidence weights renormalize to 1; absence ≠ negative evidence.
 - V89: substitutable credential cannot persist as mandatory/missing in narrative/risk; equivalency stays human-reviewed; real evidence gaps retained.
 - V90: tailored resume skill/claim must have candidate evidence; job-only requirement or recorded missing skill cannot enter candidate text. Cover generation reads exact persisted tailored artifact; missing/unreadable artifact fails closed.
-- V91: generated resume header preserves verified current city/state when available; no street address or planned destination substituted.
+- V91: generated résumé header defaults to verified current/legal city-state; only an explicit matching `resume_locations` entry may override display city-state; no street/postal/application address is changed.
 - V92: untrusted ZIP EOCD/central-directory + decompressed TAR raw headers/pseudo-members pass bounded streaming preflight before `ZipFile`/`TarFile`; parser metadata cannot outrun configured count/byte caps.
 - V93: distribution raw preflight + stdlib parse consume same continuously open verified file handle; path replacement cannot swap unchecked bytes into parser.
 - V94: fresh-install audit invokes locked developer `pip-audit` by explicit project-venv path against smoke site-packages; runtime extra need not/shall not supply audit tooling.
@@ -224,6 +226,13 @@
 - V117: professional healthcare tenure=0 → any candidate `patient-facing *` claim fails; `confidential*` candidate claim requires exact profile/base résumé evidence; employer-requirement statement alone allowed.
 - V118: professional IT tenure=0 → paid EXPERIENCE cannot add `service desk|help desk|ticket handling|ticket queue` absent exact base résumé evidence; target headline/role requirement ≠ paid-work proof.
 - V119: tailored EDUCATION renders only structured profile coursework; future expected graduation stays `in progress`; ⊥ infer course/cert completion from dates/notes.
+- V120: posting accepts equivalent experience → substitutable credential + unstated paid/professional-IT tenure ∉ persisted `missing_skills`, risk, reasoning, + breakdown; equivalency note exactly once; genuine task/tool gaps retained.
+- V121: requirement extraction recognizes `EDUCATION` + `SKILLS AND KNOWLEDGE`; application/testing, physical/working-condition, probation, filing metadata, structural headings, time/rule/PDF-reader fragments ∉ required/preferred skills.
+- V122: tailored work bullets may use only bounded explicit same-role `work_history` evidence; tailor + judge + validator share evidence; unconfirmed comparable-role prompts ⊥ generated claims.
+- V123: keyword evidence uses token/phrase boundaries; `ios` ≠ substring in `operations`; requirement bucket ends at schedule/application/admin headings.
+- V124: persisted active apply/skip reason derives from bounded score/hits/gaps + policy mode; a specifically matched skill cannot remain missing; free-form LLM candidate-duty claims ⊥ persist.
+- V125: long verified résumé uses content-neutral dense one-column typography; no content deletion/synthesis; ATS order/coverage retained; rendered output has no orphan page.
+- V126: configured résumé-location match uses token/phrase boundaries; matching résumé/cover header = exact configured city-state; unmatched header stays verified current/legal city-state; application street/postal data unchanged.
 
 ## §T
 
@@ -287,13 +296,15 @@
 |T56|pay down changed-method complexity debt|CodeFactor PR check + focused/full behavior parity; V95|x|
 |T57|make Phenom discovery + generated PDFs deterministic/ATS-readable/truthful|Phenom current/reopen tests + schedule normalization + ATS extraction/order/render inspection + evidence-context/title/structure regressions + full gates; V73,V78,V86,V87,V97-V101,I36,I37|x|
 |T58|repair official-government availability + market-specific discovery|GovernmentJobs/JobAps/CalCareers fixture/live canaries + archive/market/title/detail/document regressions + local DB repair; V32,V38,V64,V73,V78,V86,V101-V110,I38,I39|x|
-|T59|repair async GovernmentJobs agency discovery|`test_v111_governmentjobs_agency_board_fetches_fragment` + false-zero/dedup regressions + Roseville live canary; V102,V105,V111,I39|x|
+|T59|repair async GovernmentJobs agency discovery|`test_v111_governmentjobs_agency_board_fetches_fragment` + false-zero/dedup regressions + supported-agency live canary; V102,V105,V111,I39|x|
 |T60|decode structured job descriptions before scoring|encoded JSON-LD qualification regression + target rescore; V38,V73,V112|x|
 |T61|preserve government qualification bodies in score context|linked-preamble + Experience/Training truncation regression + target rescore; V38,V73,V113|x|
 |T62|reopen live manual official jobs + improve truthful résumé generation/layout|official reopen + generation truth guards + sparse HTML/render/ATS QA; V38,V44,V90,V97,V98,V100,V103,V114-V118|x|
 |T63|prepare privacy-clean 0.5.9 release|focused fixture + private tree/dist scan + locked preflight; V14,V48-V50,V63,V81-V84|x|
 |T64|render evidence-bound coursework + active-program status|`test_v119_education_renders_structured_coursework_and_expected_status` + strict packet ATS/visual QA; V27,V45,V98,V119,I27,I40|x|
 |T65|prepare privacy-clean 0.5.10 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63|x|
+|T66|repair equivalency/keyword scoring + expose verified work evidence|V120-V126 regressions + targeted rescore/packet QA; V62,V68,V85,V89,V118,V120-V126,I41|x|
+|T67|prepare privacy-clean 0.5.11 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63|x|
 
 ## §B
 
@@ -351,7 +362,7 @@
 |B50|new transcript import conflicts with profile + 8 tailored résumés|profile education injected verbatim; import feeds coursework only|V39|T20|canonical education overlay test + regenerate all artifacts|
 |B51|strict-invalid cover is DB-linked; PDF failure reports zero errors|generator returns exhausted draft; batch drops protected text fallback|V40|T21|exhausted-validation + PDF-fallback regressions|
 |B52|private QA renders + real applicant/reference fixtures enter publishable tree|no `/tmp/` ignore/staging gate; tests copied live profile data|V31|T19|anonymized fixtures + tracked-artifact CI guard|
-|B53|California cover headers show Utah while forms use California|job-address selection exists only in apply prompt|V41|T20|shared selector + generation/PDF address regression|
+|B53|destination cover headers show source-market location while forms use verified legal residence|job-address selection exists only in apply prompt|V41|T20|shared selector + generation/PDF address regression|
 |B54|`City, ST (Remote)` board labels bypass explicit-remote evidence|classifier returns true on any location remote token|V34|T19|concrete tagged-location regression + active DB cleanup|
 |B55|work-arrangement/qualification tail is hidden from scoring/docs|job context truncates description prefix only|V33,V34|T19|bounded head+tail context regression|
 |B56|missing/malformed `TARGET_PRIORITY` can retain score 7+|deterministic cap recognizes only explicit 3/outside|V33|T19|missing-priority fail-closed cap regression|
@@ -511,7 +522,7 @@
 |B210|valid score-5 government résumé has no cover after four drafts|model repeatedly shortens long parenthetical target title; exact-title gate has no deterministic repair|V101|T58|idempotent exact-title normalization + failed-stage rerun|
 |B211|title-repaired cover still exhausts on unsupported `spring`|fabrication watchlist treats academic season/date as Spring software framework|V38,V110|T58|technical-context matcher + season/framework regression + failed-stage rerun|
 |B212|full gate has 9 `no such column` fixture failures|hand-built unit schemas omit v6 availability/archive fields and bypass migrations|V51,V103|T58|advance minimal fixture schemas; keep production gates intact|
-|B213|Roseville board shows 10 live jobs after async load; DivApply returns 0|agency landing placeholder treated authoritative; official fragment never fetched|V111|T59|fragment fetch + card dedup regression + live rediscovery|
+|B213|supported agency board shows live jobs after async load; DivApply returns 0|agency landing placeholder treated authoritative; official fragment never fetched|V111|T59|fragment fetch + card dedup regression + live rediscovery|
 |B214|version parity gate sees lock `0.5.5`|unqualified `uv` absent from PATH; lock update never ran|V14,V49|T59|invoke `.venv/Scripts/uv.exe`; rerun parity gate|
 |B215|Database Analyst score says qualifications unavailable while stored text contains `&lt;...&gt;` degree rules|JSON-LD cleaner parses before decoding HTML entities|V112|T60|decode entities, strip markup, regression + rescore|
 |B216|clean Database Analyst text has bachelor rule; score context retains only `click HERE` preamble|requirement window stops at the next heading but does not sample Experience/Training bodies|V113|T61|recognize bounded requirement subheadings + rescore|
@@ -523,3 +534,25 @@
 |B222|Device résumé calls municipal escalation `service desk-style`|paid EXPERIENCE lacks zero-professional-IT desk/ticket phrase gate|V100,V118|T62|exact source-evidence guard; regenerate|
 |B223|0.5.9 preflight finds private locality in public docs + fixture|historical policy wording retained candidate market label|V48,V50|T63|market-neutral wording + focused/private/full release gates|
 |B224|IT résumé omits completed course + labels active program `not completed`|assembler ignores structured coursework + treats future year as dropout|V119|T64|structured course lines + active-status rule|named unit + packet ATS/visual QA|
+|B225|accepted IT-degree alternative remains missing + equivalency text duplicates|structured gap sanitized after composite; raw gap reused twice|V120|T66|sanitize all substitution fields before composite + dedup narrative|named scorer regressions + target rescore|
+|B226|Sutter role stores keyword score 0 + blank matches|extractor ignores `EDUCATION`/`SKILLS AND KNOWLEDGE` headings|V121|T66|heading support + official-style fixture|named keyword regression + target rescore|
+|B227|government scores list `note`, `a.m`, rule/PDF reader, + credential-evaluation instructions as gaps|application metadata stays in LLM/keyword requirement context|V121|T66|heading-aware boundary + metadata rejection|government fixture regressions + targeted rescore|
+|B228|sparse base résumé blocks richer verified old-job bullets|tailor/judge/validator omit profile `work_history` evidence|V122|T66|shared bounded work-evidence formatter|prompt/judge/validator regressions + packet QA|
+|B229|Sutter rescore matches unsupported `ios`|`keyword_present` uses raw substring search|V85,V123|T66|token/phrase-boundary matcher|`ios`/`operations` regression + target rescore|
+|B230|Sutter gaps include `shift` + `days`|required bucket stays sticky through schedule metadata|V121,V123|T66|schedule/admin bucket reset|official-style regression + target rescore|
+|B231|Sutter action reason invents municipal ticket work|free-form evaluator prose persists outside bounded match evidence|V124|T66|deterministic action reason from score/hits/gaps|active/discovery/manual regressions + target rescore|
+|B232|Sutter hit list collapses `time management` to generic `management`|stopword cleaning strips `time` from recognized exact skill phrase|V85,V121|T66|preserve allowlisted multiword skill phrase before stopword filter|official-style regression + target rescore|
+|B233|government rescore still stores physical-demand/probation paragraphs + `knowledge of`/`use of` as skill gaps|requirement bucket crosses terminal sections + generic subheadings become phrases|V121|T66|terminal section boundaries + structural phrase rejection|live-shaped regression + targeted rescore|
+|B234|intern score repeats identical parenthesized gap|substring dedupe uses terminal word boundary after punctuation|V124|T66|exact normalized gap dedupe before containment pass|named regression + targeted rescore|
+|B235|bounded government context duplicates requirement fragments, truncates words, + retains `Application and Testing Information`|character slicing ignores line boundaries + application heading variant|V77,V121|T66|line-safe head/middle/tail clipping + heading boundary|bounded context regressions + targeted rescore|
+|B236|Sutter rescore simultaneously matches + misses project management|LLM gap merge never subtracts deterministic specific hits|V124|T66|remove only specific hit-covered gaps; retain unrelated gaps|named regression + target rescore|
+|B237|Sutter rescore invents professional IT employment as a gap|equivalency sanitizer removes degree wording only despite no paid/professional tenure in posting|V120|T66|drop unstated paid/professional-IT gap/risk only under explicit equivalency|named regression + target rescore|
+|B238|expanded master résumé renders four education lines on otherwise blank page 2|only sparse/standard density classes exist|V98,V125|T66|content-neutral dense class for long text|named HTML regression + master ATS/visual QA|
+|B239|destination-market packet header renders current-market city/state|tailor never applies job-specific display location; cover supports legal addresses only|V126|T66|separate résumé-display location resolver; preserve application address|market regressions + packet regeneration|
+|B240|Sutter résumé summary claims `ticket-style intake`|zero-professional-IT ticket guard scans paid EXPERIENCE only + misses hyphenated analogy|V118|T66|whole-document ticket/service-desk boundary|named validator regression + packet regeneration|
+|B241|new V118 regression stays green-path input + fails expected assertion|fixture replaces nonexistent summary text|V118|T66|replace exact fixture section content|rerun named regression|
+|B242|full privacy gate rejects new address/state/postal fixture|V126 regression used realistic public location tokens|V48,V126|T66|fictional Example/Sample + YY/ZZ + `00000` fixture|full gate rerun|
+|B243|release privacy scan finds private candidate/education locality in spec|bug note records literal runtime city/state|V48|T67|describe source/target markets generically|private tree/dist collision scan|
+|B244|spec says current city only while explicit document override exists|I25/V91 predate V126 + share legal/document selector wording|I25,V91,V126|T66|separate legal vs display location contracts|check/review drift pass|
+|B245|private scanner ignores configured résumé destination city|collector covers personal/application locations only|V50|T67|collect bounded `resume_locations[].city` values|synthetic collector + live tree/dist scan|
+|B246|short location pattern can match inside unrelated place word|matcher uses raw substring containment|V126|T66|token/phrase-boundary pattern match|named location regression|

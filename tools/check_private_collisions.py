@@ -78,6 +78,10 @@ def collect_private_values(profile: dict[str, Any]) -> list[Needle]:
         for field in ("address", "city", "postal_code"):
             _add(needles, f"alternate_{field}", address.get(field))
 
+    for location in (profile.get("resume_locations") or {}).values():
+        if isinstance(location, dict):
+            _add(needles, "resume_location_city", location.get("city"))
+
     for reference in profile.get("references") or []:
         if not isinstance(reference, dict):
             continue

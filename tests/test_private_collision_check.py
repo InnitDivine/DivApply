@@ -30,6 +30,9 @@ def _profile() -> dict:
         },
         "education_schools": [{"school": "North Star University", "city_state": "Privateville, PV"}],
         "references": [{"name": "Private Reference", "address": "Secretburg, PV"}],
+        "resume_locations": {
+            "destination": {"city": "Destinationville", "province_state": "DV"}
+        },
     }
 
 
@@ -37,6 +40,7 @@ def test_collect_private_values_excludes_short_state_but_includes_school() -> No
     values = collision_tool.collect_private_values(_profile())
 
     assert ("education_school", "north star university") in values
+    assert ("resume_location_city", "destinationville") in values
     assert all(value != "pv" for _category, value in values)
 
 

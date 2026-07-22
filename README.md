@@ -122,6 +122,8 @@ User data lives under `~/.divapply`:
 
 These files are private and ignored by Git. Keep candidate facts in `profile.json`; keep job-search strategy in `searches.yaml` so old preferences do not become resume claims.
 
+For a destination market, `profile.json` may define `resume_locations` entries with `city`, `province_state`, `match_patterns`, and `use_for_resume_header: true`. A matching job then uses that city and state in its résumé and cover-letter header only. Street, postal, and application-form addresses continue to come from `personal` or `application_addresses`; see `profile.example.json` for a fictional example.
+
 ## Core Workflow
 
 Run the full non-submitting pipeline:

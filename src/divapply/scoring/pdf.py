@@ -335,7 +335,12 @@ def build_html(resume: dict) -> str:
         )
     )
     visible_word_count = len(_re.findall(r"\b[\w'-]+\b", visible_text))
-    density_class = "resume-sparse" if visible_word_count < 400 else "resume-standard"
+    if visible_word_count < 400:
+        density_class = "resume-sparse"
+    elif visible_word_count > 560:
+        density_class = "resume-dense"
+    else:
+        density_class = "resume-standard"
 
     def _esc(value: object) -> str:
         """Escape resume-controlled text before injecting into HTML."""
@@ -730,6 +735,75 @@ body.resume-sparse .edu-degree {{
 }}
 body.resume-sparse .edu-details {{
     font-size: 8.8pt;
+}}
+
+/* Long verified résumés compact spacing and type without changing content. */
+body.resume-dense {{
+    font-size: 8.3pt;
+    line-height: 1.18;
+}}
+body.resume-dense .header {{
+    padding-bottom: 3px;
+    margin-bottom: 4px;
+}}
+body.resume-dense .name {{
+    font-size: 19pt;
+}}
+body.resume-dense .title {{
+    font-size: 8.5pt;
+    line-height: 1.2;
+    margin-top: 1px;
+}}
+body.resume-dense .contact {{
+    font-size: 7.8pt;
+    margin-top: 1px;
+}}
+body.resume-dense .section {{
+    margin-top: 4px;
+}}
+body.resume-dense .section-title {{
+    font-size: 7.8pt;
+    padding-bottom: 1px;
+    margin-bottom: 2px;
+}}
+body.resume-dense .summary {{
+    font-size: 8.3pt;
+    line-height: 1.2;
+}}
+body.resume-dense .skill-row {{
+    font-size: 7.9pt;
+    line-height: 1.14;
+    margin-bottom: 0;
+}}
+body.resume-dense .entry {{
+    margin-bottom: 2px;
+}}
+body.resume-dense .entry-title {{
+    font-size: 8.4pt;
+}}
+body.resume-dense .entry-meta {{
+    font-size: 7.9pt;
+    margin-bottom: 0;
+}}
+body.resume-dense .compact-exp-line,
+body.resume-dense .cert-item,
+body.resume-dense .edu-school {{
+    font-size: 7.8pt;
+    line-height: 1.16;
+}}
+body.resume-dense li {{
+    font-size: 7.9pt;
+    line-height: 1.16;
+}}
+body.resume-dense .edu-entry {{
+    margin-bottom: 1px;
+}}
+body.resume-dense .edu-degree {{
+    font-size: 8.3pt;
+}}
+body.resume-dense .edu-details {{
+    font-size: 7.6pt;
+    line-height: 1.14;
 }}
 </style>
 </head>
