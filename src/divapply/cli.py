@@ -54,6 +54,7 @@ SAFE_APPLY_LIMIT = 5
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _apply_cost_guard_message(
     *,
     dry_run: bool,
@@ -129,10 +130,13 @@ def _safe_apply_error(value: str | None) -> str:
 # Commands
 # ---------------------------------------------------------------------------
 
+
 @app.callback()
 def main(
     version: bool = typer.Option(
-        False, "--version", "-V",
+        False,
+        "--version",
+        "-V",
         help="Show version and exit.",
         callback=_version_callback,
         is_eager=True,
@@ -167,7 +171,9 @@ def edit(
 
 @app.command()
 def migrate(
-    overwrite: bool = typer.Option(False, "--overwrite", help="Replace current files with legacy copies when both exist."),
+    overwrite: bool = typer.Option(
+        False, "--overwrite", help="Replace current files with legacy copies when both exist."
+    ),
 ) -> None:
     """Copy legacy user files into the current DivApply layout."""
     from divapply.config import ensure_dirs, migrate_legacy_user_data
@@ -201,9 +207,15 @@ def migrate(
 @app.command()
 def backup(
     out: Optional[Path] = typer.Option(None, "--out", "-o", help="Backup zip path. Defaults to ~/.divapply/backups/."),
-    include_secrets: bool = typer.Option(False, "--include-secrets", help="Include .env and credentials.yaml in the archive."),
-    include_outputs: bool = typer.Option(True, "--include-outputs/--no-outputs", help="Include generated resumes and cover letters."),
-    include_logs: bool = typer.Option(False, "--include-logs", help="Include redacted local logs; disabled by default."),
+    include_secrets: bool = typer.Option(
+        False, "--include-secrets", help="Include .env and credentials.yaml in the archive."
+    ),
+    include_outputs: bool = typer.Option(
+        True, "--include-outputs/--no-outputs", help="Include generated resumes and cover letters."
+    ),
+    include_logs: bool = typer.Option(
+        False, "--include-logs", help="Include redacted local logs; disabled by default."
+    ),
 ) -> None:
     """Create a local recovery backup of user data."""
     from divapply.backup import create_backup
@@ -266,7 +278,9 @@ def cleanup(
 
 @app.command("import-coursework")
 def import_coursework(
-    path: Path = typer.Argument(..., exists=True, readable=True, resolve_path=True, help="Transcript or coursework file to import."),
+    path: Path = typer.Argument(
+        ..., exists=True, readable=True, resolve_path=True, help="Transcript or coursework file to import."
+    ),
     replace: bool = typer.Option(
         False,
         "--replace",
@@ -296,37 +310,41 @@ def import_coursework(
         if isinstance(payload, list):
             for item in payload:
                 if isinstance(item, dict):
-                    entries.append({
-                        "school": item.get("school") or item.get("institution"),
-                        "course_code": item.get("course_code") or item.get("code"),
-                        "course_title": item.get("course_title") or item.get("title") or item.get("name"),
-                        "subject_area": item.get("subject_area") or item.get("subject") or item.get("category"),
-                        "term": item.get("term") or item.get("semester") or item.get("session"),
-                        "status": item.get("status") or item.get("course_status"),
-                        "credits": item.get("credits") or item.get("units"),
-                        "grade": item.get("grade"),
-                        "source": item.get("source") or path.name,
-                        "notes": item.get("notes"),
-                        "raw_text": item.get("raw_text") or item.get("text") or json.dumps(item, ensure_ascii=True),
-                    })
+                    entries.append(
+                        {
+                            "school": item.get("school") or item.get("institution"),
+                            "course_code": item.get("course_code") or item.get("code"),
+                            "course_title": item.get("course_title") or item.get("title") or item.get("name"),
+                            "subject_area": item.get("subject_area") or item.get("subject") or item.get("category"),
+                            "term": item.get("term") or item.get("semester") or item.get("session"),
+                            "status": item.get("status") or item.get("course_status"),
+                            "credits": item.get("credits") or item.get("units"),
+                            "grade": item.get("grade"),
+                            "source": item.get("source") or path.name,
+                            "notes": item.get("notes"),
+                            "raw_text": item.get("raw_text") or item.get("text") or json.dumps(item, ensure_ascii=True),
+                        }
+                    )
         else:
             entries.append({"source": path.name, "raw_text": text})
     elif suffix == ".csv":
         csv_reader = csv.DictReader(text.splitlines())
         for row in csv_reader:
-            entries.append({
-                "school": row.get("school") or row.get("institution"),
-                "course_code": row.get("course_code") or row.get("code"),
-                "course_title": row.get("course_title") or row.get("title") or row.get("name"),
-                "subject_area": row.get("subject_area") or row.get("subject") or row.get("category"),
-                "term": row.get("term") or row.get("semester") or row.get("session"),
-                "status": row.get("status") or row.get("course_status"),
-                "credits": row.get("credits") or row.get("units"),
-                "grade": row.get("grade"),
-                "source": path.name,
-                "notes": row.get("notes"),
-                "raw_text": json.dumps(row, ensure_ascii=True),
-            })
+            entries.append(
+                {
+                    "school": row.get("school") or row.get("institution"),
+                    "course_code": row.get("course_code") or row.get("code"),
+                    "course_title": row.get("course_title") or row.get("title") or row.get("name"),
+                    "subject_area": row.get("subject_area") or row.get("subject") or row.get("category"),
+                    "term": row.get("term") or row.get("semester") or row.get("session"),
+                    "status": row.get("status") or row.get("course_status"),
+                    "credits": row.get("credits") or row.get("units"),
+                    "grade": row.get("grade"),
+                    "source": path.name,
+                    "notes": row.get("notes"),
+                    "raw_text": json.dumps(row, ensure_ascii=True),
+                }
+            )
     elif suffix == ".pdf":
         try:
             from pypdf import PdfReader
@@ -347,14 +365,12 @@ def import_coursework(
     if replace:
         inserted = replace_coursework(entries)
         console.print(
-            f"[yellow]Replaced coursework table:[/yellow] {inserted} row(s) inserted "
-            "(prior coursework wiped)."
+            f"[yellow]Replaced coursework table:[/yellow] {inserted} row(s) inserted (prior coursework wiped)."
         )
     else:
         result = append_coursework(entries)
         console.print(
-            f"[green]Appended coursework:[/green] {result['inserted']} new, "
-            f"{result['skipped']} duplicate(s) skipped."
+            f"[green]Appended coursework:[/green] {result['inserted']} new, {result['skipped']} duplicate(s) skipped."
         )
 
 
@@ -381,7 +397,9 @@ def coursework_summary() -> None:
     table.add_row("Import sources", _join(summary["import_sources"]))
     console.print()
     console.print(table)
-    console.print("[dim]Coursework is hidden matching/tailoring knowledge. Transcript text is not shown or exported.[/dim]\n")
+    console.print(
+        "[dim]Coursework is hidden matching/tailoring knowledge. Transcript text is not shown or exported.[/dim]\n"
+    )
 
 
 def _extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
@@ -629,9 +647,7 @@ def add_url(
 
     configured_source = configured_official_source_name(safe_url) if not no_fetch else None
     official_source = (
-        configured_source
-        if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch
-        else None
+        configured_source if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch else None
     )
     closed_official_source = configured_source if inactive and not no_fetch else None
     if closed_official_source and company is None:
@@ -668,7 +684,9 @@ def add_url(
 
     if not prepare:
         if official_source:
-            console.print("[dim]Run again with --prepare to score this verified URL and create eligible documents.[/dim]")
+            console.print(
+                "[dim]Run again with --prepare to score this verified URL and create eligible documents.[/dim]"
+            )
         else:
             console.print(
                 "[dim]Run again with --prepare to score this URL. "
@@ -683,14 +701,12 @@ def add_url(
 def run(
     stages: Optional[list[str]] = typer.Argument(
         None,
-        help=(
-            "Pipeline stages to run. "
-            f"Valid: {', '.join(VALID_STAGES)}, all. "
-            "Defaults to 'all' if omitted."
-        ),
+        help=(f"Pipeline stages to run. Valid: {', '.join(VALID_STAGES)}, all. Defaults to 'all' if omitted."),
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
-    prune_score: int = typer.Option(0, "--prune-score", help="Auto-delete jobs scoring at or below this after scoring (0 = off)."),
+    prune_score: int = typer.Option(
+        0, "--prune-score", help="Auto-delete jobs scoring at or below this after scoring (0 = off)."
+    ),
     workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
     stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
@@ -717,25 +733,20 @@ def run(
     # Validate stage names
     for s in stage_list:
         if s != "all" and s not in VALID_STAGES:
-            console.print(
-                f"[red]Unknown stage:[/red] '{s}'. "
-                f"Valid stages: {', '.join(VALID_STAGES)}, all"
-            )
+            console.print(f"[red]Unknown stage:[/red] '{s}'. Valid stages: {', '.join(VALID_STAGES)}, all")
             raise typer.Exit(code=1)
 
     # Gate AI stages behind Tier 2
     llm_stages = {"score", "tailor", "cover"}
     if any(s in stage_list for s in llm_stages) or "all" in stage_list:
         from divapply.config import check_tier
+
         check_tier(2, "AI scoring/tailoring")
 
     # Validate the --validation flag value
     valid_modes = ("strict", "normal", "lenient", "none")
     if validation not in valid_modes:
-        console.print(
-            f"[red]Invalid --validation value:[/red] '{validation}'. "
-            f"Choose from: {', '.join(valid_modes)}"
-        )
+        console.print(f"[red]Invalid --validation value:[/red] '{validation}'. Choose from: {', '.join(valid_modes)}")
         raise typer.Exit(code=1)
 
     if prune_score > 0 and not dry_run and not yes and ("all" in stage_list or "score" in stage_list):
@@ -913,14 +924,18 @@ def apply(
     max_score: Optional[int] = typer.Option(None, "--max-score", help="Maximum fit score for job selection."),
     model: Optional[str] = typer.Option(None, "--model", "-m", help="Apply agent model name."),
     backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Apply agent backend: codex or claude."),
-    browser: Optional[str] = typer.Option(None, "--browser", help="Apply browser. Defaults to DIVAPPLY_BROWSER, or chromium."),
+    browser: Optional[str] = typer.Option(
+        None, "--browser", help="Apply browser. Defaults to DIVAPPLY_BROWSER, or chromium."
+    ),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
     url: Optional[str] = typer.Option(None, "--url", help="Apply to a specific job URL."),
     gen: bool = typer.Option(False, "--gen", help="Generate prompt file for manual debugging instead of running."),
     mark_applied: Optional[str] = typer.Option(None, "--mark-applied", help="Manually mark a job URL as applied."),
-    mark_failed: Optional[str] = typer.Option(None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."),
+    mark_failed: Optional[str] = typer.Option(
+        None, "--mark-failed", help="Manually mark a job URL as failed (provide URL)."
+    ),
     fail_reason: Optional[str] = typer.Option(None, "--fail-reason", help="Reason for --mark-failed."),
     reset_failed: bool = typer.Option(False, "--reset-failed", help="Reset all failed jobs for retry."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Confirm real browser submission mode."),
@@ -948,18 +963,21 @@ def apply(
 
     if mark_applied:
         from divapply.apply.launcher import mark_job
+
         mark_job(mark_applied, "applied")
         console.print(f"[green]Marked as applied:[/green] {mark_applied}")
         return
 
     if mark_failed:
         from divapply.apply.launcher import mark_job
+
         mark_job(mark_failed, "failed", reason=fail_reason)
         console.print(f"[yellow]Marked as failed:[/yellow] {mark_failed} ({fail_reason or 'manual'})")
         return
 
     if reset_failed:
         from divapply.apply.launcher import reset_failed as do_reset
+
         count = do_reset()
         console.print(f"[green]Reset {count} failed job(s) for retry.[/green]")
         return
@@ -986,10 +1004,7 @@ def apply(
 
     # Check 2: Profile exists
     if not _profile_path.exists():
-        console.print(
-            "[red]Profile not found.[/red]\n"
-            "Run [bold]divapply init[/bold] to create your profile first."
-        )
+        console.print("[red]Profile not found.[/red]\nRun [bold]divapply init[/bold] to create your profile first.")
         raise typer.Exit(code=1)
 
     # Check 3: Tailored resumes exist (skip for --gen with --url)
@@ -1029,6 +1044,7 @@ def apply(
 
     if gen:
         from divapply.apply.launcher import gen_prompt, get_manual_command
+
         target = url or ""
         if not target:
             console.print("[red]--gen requires --url to specify which job.[/red]")
@@ -1051,6 +1067,7 @@ def apply(
         return
 
     from divapply.apply.launcher import main as apply_main
+    from divapply.apply.prompt import ApplicationAuthorization, AuthorizationSource
 
     effective_limit = limit if limit is not None else (0 if continuous else 1)
     cost_guard_message = _apply_cost_guard_message(
@@ -1086,13 +1103,19 @@ def apply(
         console.print(f"  Target:   {url}")
     console.print()
 
+    authorization_source: AuthorizationSource = "dry_run_request" if dry_run else "cli_yes"
     if not dry_run and not yes:
-        confirmed = typer.confirm(
-            "Real auto-apply mode may click final Submit/Apply buttons. Continue?"
-        )
+        confirmed = typer.confirm("Real auto-apply mode may click final Submit/Apply buttons. Continue?")
         if not confirmed:
             console.print("[dim]Cancelled. Use --dry-run to test safely or --yes to confirm real submissions.[/dim]")
             return
+        authorization_source = "interactive_confirmation"
+
+    authorization = ApplicationAuthorization(
+        profile_fields=True,
+        final_submit=not dry_run,
+        source=authorization_source,
+    )
 
     apply_main(
         limit=effective_limit,
@@ -1106,6 +1129,7 @@ def apply(
         dry_run=dry_run,
         continuous=continuous,
         workers=workers,
+        authorization=authorization,
     )
 
 
@@ -1263,6 +1287,7 @@ def answers_add(
     _bootstrap()
 
     from divapply.apply.answers import add_answer
+
     result = add_answer(question, answer, tags=tag or [])
     verb = "Updated" if result["replaced"] else "Added"
     console.print(f"[green]{verb} answer:[/green] {question}")
@@ -1274,6 +1299,7 @@ def answers_list() -> None:
     _bootstrap()
 
     from divapply.apply.answers import load_answer_bank
+
     entries = load_answer_bank()
     table = Table(title="Answer Bank", show_header=True, header_style="bold cyan")
     table.add_column("#", justify="right")
@@ -1298,6 +1324,7 @@ def answers_match(
     _bootstrap()
 
     from divapply.apply.answers import match_answers
+
     matches = match_answers(question, limit=limit)
     table = Table(title="Answer Matches", show_header=True, header_style="bold cyan")
     table.add_column("Score", justify="right")
@@ -1314,7 +1341,9 @@ def answers_match(
 
 @app.command()
 def track(
-    event: str = typer.Argument(..., help="Lifecycle event: applied, screening, interview, offer, rejection, withdrawn."),
+    event: str = typer.Argument(
+        ..., help="Lifecycle event: applied, screening, interview, offer, rejection, withdrawn."
+    ),
     job_url: str = typer.Argument(..., help="Job URL to track."),
     follow_up: Optional[str] = typer.Option(None, "--follow-up", help="Follow-up date YYYY-MM-DD."),
     notes: Optional[str] = typer.Option(None, "--notes", "-n", help="Short private note."),
@@ -1331,6 +1360,7 @@ def track(
         raise typer.Exit(code=1)
     if follow_up:
         import re
+
         if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", follow_up):
             console.print("[red]--follow-up must be YYYY-MM-DD[/red]")
             raise typer.Exit(code=1)
@@ -1356,6 +1386,7 @@ def followups() -> None:
     _bootstrap()
 
     from divapply.database import get_due_followups
+
     rows = get_due_followups()
     table = Table(title="Due Follow-ups", show_header=True, header_style="bold cyan")
     table.add_column("Due")
@@ -1382,6 +1413,7 @@ def analytics() -> None:
     _bootstrap()
 
     from divapply.database import get_application_analytics
+
     data = get_application_analytics()
 
     states = Table(title="Application States", show_header=True, header_style="bold cyan")
@@ -1434,10 +1466,20 @@ def explain(
     table.add_column("Field", style="bold")
     table.add_column("Value")
     for key in (
-        "title", "company", "site", "fit_score", "llm_score",
-        "keyword_score", "embedding_score", "composite_score",
-        "matched_skills", "missing_skills", "keyword_hits",
-        "risk_flags", "apply_or_skip_reason", "score_reasoning",
+        "title",
+        "company",
+        "site",
+        "fit_score",
+        "llm_score",
+        "keyword_score",
+        "embedding_score",
+        "composite_score",
+        "matched_skills",
+        "missing_skills",
+        "keyword_hits",
+        "risk_flags",
+        "apply_or_skip_reason",
+        "score_reasoning",
     ):
         table.add_row(key, str(row[key] if row[key] is not None else "legacy/missing"))
     console.print()
@@ -1463,13 +1505,16 @@ def rescore(
     _bootstrap()
 
     from divapply.scoring.scorer import run_scoring
+
     result = run_scoring(limit=limit, rescore=True)
     console.print(f"[green]Rescored {result['scored']} job(s).[/green] Errors: {result['errors']}")
 
 
 @app.command()
 def dashboard(
-    static: bool = typer.Option(False, "--static", help="Write a static HTML file instead of starting the interactive dashboard."),
+    static: bool = typer.Option(
+        False, "--static", help="Write a static HTML file instead of starting the interactive dashboard."
+    ),
     port: int = typer.Option(8776, "--port", help="Preferred localhost port for the interactive dashboard."),
     no_open: bool = typer.Option(False, "--no-open", help="Print the URL/path without opening a browser."),
 ) -> None:
@@ -1597,9 +1642,17 @@ def doctor() -> None:
     import shutil
     import sys
     from divapply.config import (
-        load_env, ensure_dirs, PROFILE_PATH, RESUME_PATH, RESUME_PDF_PATH,
-        SEARCH_CONFIG_PATH, TAILORED_DIR, COVER_LETTER_DIR, get_chrome_path,
-        get_apply_browser, get_apply_browser_label,
+        load_env,
+        ensure_dirs,
+        PROFILE_PATH,
+        RESUME_PATH,
+        RESUME_PDF_PATH,
+        SEARCH_CONFIG_PATH,
+        TAILORED_DIR,
+        COVER_LETTER_DIR,
+        get_chrome_path,
+        get_apply_browser,
+        get_apply_browser_label,
     )
     from divapply.database import get_active_db_path, get_coursework_summary, init_db
 
@@ -1617,11 +1670,13 @@ def doctor() -> None:
     results.append(("Python executable", ok_mark, sys.executable))
     results.append(("Python version", ok_mark, sys.version.split()[0]))
     if sys.version_info >= (3, 13):
-        results.append((
-            "JobSpy Python",
-            warn_mark,
-            "Python 3.12 recommended; Python 3.13/3.14 may fail with python-jobspy/numpy pins",
-        ))
+        results.append(
+            (
+                "JobSpy Python",
+                warn_mark,
+                "Python 3.12 recommended; Python 3.13/3.14 may fail with python-jobspy/numpy pins",
+            )
+        )
     else:
         results.append(("JobSpy Python", ok_mark, "Python 3.12 recommended for full JobSpy support"))
     results.append(("database path", ok_mark, str(get_active_db_path())))
@@ -1657,6 +1712,7 @@ def doctor() -> None:
     # jobspy (discovery dep installed separately)
     try:
         import jobspy  # noqa: F401
+
         jobspy_issues = validate_installed_jobspy()
         if jobspy_issues:
             results.append(("python-jobspy", fail_mark, "; ".join(jobspy_issues)))
@@ -1673,6 +1729,7 @@ def doctor() -> None:
 
     # --- Tier 2 checks ---
     import os
+
     has_gemini = bool(os.environ.get("GEMINI_API_KEY"))
     has_openai = bool(os.environ.get("OPENAI_API_KEY"))
     has_local = bool(os.environ.get("LLM_URL"))
@@ -1685,21 +1742,18 @@ def doctor() -> None:
     elif has_local:
         results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
     else:
-        results.append(("LLM API key", fail_mark,
-                        "Set GEMINI_API_KEY in ~/.divapply/.env (run 'divapply init')"))
+        results.append(("LLM API key", fail_mark, "Set GEMINI_API_KEY in ~/.divapply/.env (run 'divapply init')"))
 
     # --- Tier 3 checks ---
     from divapply.config import get_apply_backend, get_apply_backend_label, get_available_apply_backends
+
     detected_backends = get_available_apply_backends()
     selected_backend = get_apply_backend()
     if detected_backends:
-        note = ", ".join(
-            f"{get_apply_backend_label(name)}: {path}" for name, path in detected_backends.items()
-        )
+        note = ", ".join(f"{get_apply_backend_label(name)}: {path}" for name, path in detected_backends.items())
         results.append(("Apply agent CLI", ok_mark, note))
     else:
-        results.append(("Apply agent CLI", fail_mark,
-                        "Install Codex or Claude Code (needed for auto-apply)"))
+        results.append(("Apply agent CLI", fail_mark, "Install Codex or Claude Code (needed for auto-apply)"))
 
     # Browser runtime
     selected_browser = get_apply_browser()
@@ -1708,11 +1762,9 @@ def doctor() -> None:
             chrome_path = get_chrome_path()
             results.append(("Browser", ok_mark, chrome_path))
         except FileNotFoundError:
-            results.append(("Browser", fail_mark,
-                            "Install Chrome or set CHROME_PATH env var (needed for Chrome mode)"))
+            results.append(("Browser", fail_mark, "Install Chrome or set CHROME_PATH env var (needed for Chrome mode)"))
     else:
-        results.append(("Browser", ok_mark,
-                        f"Playwright channel: {get_apply_browser_label(selected_browser)}"))
+        results.append(("Browser", ok_mark, f"Playwright channel: {get_apply_browser_label(selected_browser)}"))
 
     # Node.js + npm provision the integrity-locked MCP runtime.
     node_bin = shutil.which("node")
@@ -1720,8 +1772,9 @@ def doctor() -> None:
     if node_bin and npm_bin:
         results.append(("Node.js / npm", ok_mark, f"{node_bin}; {npm_bin}"))
     else:
-        results.append(("Node.js / npm", fail_mark,
-                        "Install Node.js 18+ from nodejs.org (needed for locked auto-apply runtime)"))
+        results.append(
+            ("Node.js / npm", fail_mark, "Install Node.js 18+ from nodejs.org (needed for locked auto-apply runtime)")
+        )
 
     # --- Render results ---
     console.print()
@@ -1736,6 +1789,7 @@ def doctor() -> None:
 
     # Tier summary
     from divapply.config import get_tier, TIER_LABELS
+
     tier = get_tier()
     if selected_backend:
         console.print(f"[dim]  Auto-apply backend: {get_apply_backend_label(selected_backend)}[/dim]")
@@ -1743,9 +1797,13 @@ def doctor() -> None:
 
     if tier == 1:
         console.print("[dim]  -> Tier 2 unlocks: scoring, tailoring, cover letters (needs LLM API key)[/dim]")
-        console.print("[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]")
+        console.print(
+            "[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]"
+        )
     elif tier == 2:
-        console.print("[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]")
+        console.print(
+            "[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]"
+        )
 
     console.print()
 
@@ -1860,6 +1918,7 @@ def sync(
 
     # Mention the saved snapshot
     from divapply.config import APP_DIR as _app_dir
+
     console.print(f"[dim]Full content saved to {_app_dir / 'social_sync.json'}[/dim]")
     console.print(f"[dim]Debug screenshots in {_app_dir / 'social_screenshots/'}[/dim]\n")
 

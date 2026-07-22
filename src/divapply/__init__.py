@@ -1,3 +1,3 @@
 """DivApply — AI-powered end-to-end job application pipeline."""
 
-__version__ = "0.5.16"
+__version__ = "0.5.17"
