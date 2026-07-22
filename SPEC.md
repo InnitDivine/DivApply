@@ -59,7 +59,7 @@
 - I23: validation/orchestration → JSON validator accepts original résumé evidence; all-failed tailor/cover/PDF returns error, mixed returns partial.
 - I24: transcript `schools` records overlay matching profile GPA/earned-credit facts at load time; editable profile facts cannot override newer canonical academic evidence.
 - I25: application-address selector feeds application prompts; document-location selector feeds résumé/cover city-state only; `resume_locations` cannot change application street/postal data.
-- I26: each apply worker owns a generated Playwright init-page route guard; active requests stay on validated job/application origins.
+- I26: each apply worker owns generated Playwright init-page route guard; active requests stay on validated job/application origins or source-scoped HTTPS support hosts for non-document API types.
 - I27: tailor presentation → model selects allowlisted technical/core skills heading; code owns current-program date/GPA/credit rendering.
 - I28: public package consumes private address/employer/site selectors; no candidate geography/employer constants in generic scoring/config.
 - I29: pending-work catalog → one DB-owned predicate builder feeds selection + count for score/tailor/cover; forced target/rescore remain explicit.
@@ -258,6 +258,8 @@
 - V139: explicit `--continuous` may start with zero prepared/eligible jobs and enters bounded polling; empty-queue preflight exits remain mandatory for finite runs.
 - V140: Codex apply side-effecting Playwright calls → `approval_policy="on-request"` + `approvals_reviewer="auto_review"`; read-only sandbox + shell/web/unsafe-browser denial retained; ⊥ `approval_policy="never"`.
 - V141: MCP navigation/control cancellation before application interaction → infrastructure failure; release lock + stop queue; ⊥ job failure/attempt/event mutation.
+- V142: source-scoped ATS support host allowlist → HTTPS `xhr|fetch` only; document navigation + unrelated cross-origin active request remain blocked; Sutter form loads required Phenom APIs.
+- V143: dedicated Chrome launch ⊥ `--use-fake-device-for-media-stream`/`--use-fake-ui-for-media-stream`; permission + notification denial retained.
 
 ## §T
 
@@ -337,6 +339,8 @@
 |T72|repair apply startup compatibility, global quota, + queue diagnostics|`test_v132_*`-`test_v139_*` + focused/full/release gates + bounded DB repair; V1-V4,V23,V25,V32,V132-V139,I47-I49|x|
 |T73|repair Codex browser approval handoff + infra classification|`test_v140_*`, `test_v141_*` + safe installed-CLI navigation probe + full gates; V1,V3,V25,V132,V135,V136,V140,V141,I4,I47|x|
 |T74|publish privacy-clean 0.5.15 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V140,V141|x|
+|T75|restore Sutter Phenom apply form in restricted browser|`test_v142_*`, `test_v143_*` + controlled live form probe + full/release gates; V1,V3,V7,V12,V142,V143,I26|x|
+|T76|publish privacy-clean 0.5.16 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V142,V143|x|
 
 ## §B
 
@@ -603,3 +607,4 @@
 |B259|`--continuous` cannot start with an empty initial queue|finite-run preflight exits also gate explicit polling mode|V139|T72|bypass empty-initial-queue fatal checks only for continuous mode|`test_v139_*`|
 |B260|Codex snapshot works but navigation/tab/key calls cancel; job consumes failed attempt|`approval_policy="never"` leaves approval-required MCP actions no reviewer + browser cancellation classified candidate failure|V140,V141|T73|on-request auto-review + infrastructure mapping|named launcher regressions + safe installed-CLI probe|
 |B261|0.5.15 version test sees `uv.lock` 0.5.14|version sources bumped before lock refresh|V49|T74|`uv lock`|`test_v49_release_version_is_consistent_and_not_retired`|
+|B262|Sutter Apply click renders `Something went wrong`; normal Firefox renders live form|origin-only guard aborts required Phenom `xhr/fetch`; fake-media flags add misleading Chrome warning|V142,V143|T75|source-scoped Phenom API hosts + remove fake-media flags|named guard/Chrome regressions + controlled live form probe|

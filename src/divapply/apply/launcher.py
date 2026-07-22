@@ -253,12 +253,29 @@ def _trusted_job_origins(job: dict) -> list[str]:
     return sorted(origins)
 
 
+_TRUSTED_SUPPORT_HOST_SUFFIXES_BY_SOURCE_HOST: dict[str, tuple[str, ...]] = {
+    "jobs.sutterhealth.org": ("phenompeople.com",),
+}
+
+
+def _trusted_job_support_host_suffixes(job: dict) -> list[str]:
+    """Return source-scoped HTTPS API host suffixes for the browser guard."""
+    suffixes: set[str] = set()
+    for origin in _trusted_job_origins(job):
+        hostname = (urlsplit(origin).hostname or "").casefold()
+        suffixes.update(_TRUSTED_SUPPORT_HOST_SUFFIXES_BY_SOURCE_HOST.get(hostname, ()))
+    return sorted(suffixes)
+
+
 def _write_navigation_guard(path: Path, job: dict) -> Path:
     """Write an owned Playwright route that blocks active cross-origin requests."""
     origins = _trusted_job_origins(job)
+    support_host_suffixes = _trusted_job_support_host_suffixes(job)
     source = f"""// DivApply owned navigation guard. Generated per job; do not edit.
 const allowedOrigins = new Set({json.dumps(origins)});
+const allowedSupportHostSuffixes = {json.dumps(support_host_suffixes)};
 const protectedTypes = new Set(['document', 'xhr', 'fetch', 'websocket', 'eventsource']);
+const allowedSupportTypes = new Set(['xhr', 'fetch']);
 
 export default async ({{ page }}) => {{
   await page.context().route('**/*', async route => {{
@@ -266,7 +283,13 @@ export default async ({{ page }}) => {{
     let parsed;
     try {{ parsed = new URL(request.url()); }} catch {{ await route.abort('blockedbyclient'); return; }}
     if (['data:', 'blob:', 'about:'].includes(parsed.protocol)) {{ await route.continue(); return; }}
-    if (protectedTypes.has(request.resourceType()) && !allowedOrigins.has(parsed.origin.toLowerCase())) {{
+    const supportHost = allowedSupportHostSuffixes.some(suffix =>
+      parsed.hostname.toLowerCase() === suffix || parsed.hostname.toLowerCase().endsWith(`.${{suffix}}`)
+    );
+    const allowedSupportRequest = parsed.protocol === 'https:' &&
+      allowedSupportTypes.has(request.resourceType()) && supportHost;
+    if (protectedTypes.has(request.resourceType()) &&
+        !allowedOrigins.has(parsed.origin.toLowerCase()) && !allowedSupportRequest) {{
       await route.abort('blockedbyclient');
       return;
     }}

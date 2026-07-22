@@ -2,6 +2,11 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.16
+
+- Restored Sutter Health application forms by allowing only source-scoped HTTPS Phenom API requests while continuing to block unrelated cross-origin requests and cross-site document navigation.
+- Removed Chrome's unnecessary fake-media command-line flags and warning banner while retaining browser-level permission and notification denial.
+
 ## 0.5.15
 
 - Routed approval-required Codex Playwright actions through supported automatic review while retaining the read-only sandbox, disabled shell/web tools, locked browser allowlist, and per-job navigation guard.

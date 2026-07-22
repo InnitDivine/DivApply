@@ -758,6 +758,31 @@ def test_owned_navigation_guard_restricts_active_requests_to_job_origins(tmp_pat
     assert "playwright" in launcher._validated_mcp_servers(mcp_path)
 
 
+def test_v142_sutter_guard_allows_only_non_document_phenom_api_requests(tmp_path) -> None:
+    job = {
+        "url": "https://jobs.sutterhealth.org/us/en/job/R-135897/Device-Support-Technician-I",
+        "application_url": "https://jobs.sutterhealth.org/us/en/apply?jobSeqNo=example",
+    }
+    guard = launcher._write_navigation_guard(tmp_path / "navigation_guard.ts", job)
+    source = guard.read_text(encoding="utf-8")
+
+    assert launcher._trusted_job_support_host_suffixes(job) == ["phenompeople.com"]
+    assert "const allowedSupportHostSuffixes = [\"phenompeople.com\"]" in source
+    assert "const allowedSupportTypes = new Set(['xhr', 'fetch'])" in source
+    assert "allowedSupportTypes.has(request.resourceType())" in source
+    assert "parsed.protocol === 'https:'" in source
+    assert "parsed.hostname.toLowerCase().endsWith(`.${suffix}`)" in source
+
+    unrelated = launcher._write_navigation_guard(
+        tmp_path / "unrelated_guard.ts",
+        {"url": "https://jobs.example/posting/1"},
+    ).read_text(encoding="utf-8")
+    assert launcher._trusted_job_support_host_suffixes(
+        {"url": "https://jobs.example/posting/1"}
+    ) == []
+    assert "phenompeople.com" not in unrelated
+
+
 def test_mcp_config_rejects_navigation_guard_outside_worker(tmp_path) -> None:
     worker = tmp_path / "worker"
     worker.mkdir()

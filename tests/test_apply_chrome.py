@@ -86,6 +86,38 @@ def test_launch_chrome_refuses_occupied_port_without_killing_process(monkeypatch
         raise AssertionError("occupied CDP port was accepted")
 
 
+def test_v143_launch_chrome_denies_permissions_without_fake_media_flags(tmp_path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    class Proc:
+        pid = 4242
+
+        def poll(self):
+            return None
+
+    def fake_popen(cmd, **kwargs):
+        captured["cmd"] = cmd
+        captured["kwargs"] = kwargs
+        return Proc()
+
+    monkeypatch.setattr(chrome, "_port_is_available", lambda _port: True)
+    monkeypatch.setattr(chrome, "setup_worker_profile", lambda _worker_id: tmp_path)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "chrome.exe")
+    monkeypatch.setattr(chrome, "_wait_for_cdp", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chrome.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(chrome, "_chrome_procs", {})
+
+    chrome.launch_chrome(0, port=9222)
+
+    cmd = captured["cmd"]
+    assert isinstance(cmd, list)
+    assert "--deny-permission-prompts" in cmd
+    assert "--disable-notifications" in cmd
+    assert "--use-fake-device-for-media-stream" not in cmd
+    assert "--use-fake-ui-for-media-stream" not in cmd
+
+
 def test_kill_all_chrome_only_terminates_tracked_processes(monkeypatch) -> None:
     assert not hasattr(chrome, "_kill_on_port")
     killed: list[int] = []
