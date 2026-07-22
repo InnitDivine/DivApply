@@ -25,6 +25,16 @@
       "postal_code": "00000"
     }
   },
+  "resume_locations": {
+    "destination_market": {
+      "use_for_resume_header": true,
+      "city": "Sample City",
+      "province_state": "YY",
+      "match_patterns": [
+        "Sample State"
+      ]
+    }
+  },
   "work_authorization": {
     "legally_authorized_to_work": "Yes",
     "require_sponsorship": "No",

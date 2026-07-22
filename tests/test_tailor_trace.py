@@ -3,7 +3,7 @@ from __future__ import annotations
 from divapply.scoring.tailor import assemble_resume_text
 from divapply.scoring.tailor import _build_tailor_prompt, _format_job_trace
 from divapply.scoring import tailor
-from divapply.scoring.validator import validate_tailored_resume
+from divapply.scoring.validator import candidate_evidence_supports, validate_tailored_resume
 
 
 def test_job_trace_keeps_company_and_source_separate() -> None:
@@ -188,6 +188,31 @@ def test_tailor_prompt_allows_coursework_skills_without_paid_work_claims() -> No
     assert "Coursework may support the skills section" in prompt
     assert "do not present coursework exposure as job experience" in prompt
     assert "Active Directory" in prompt
+
+
+def test_v122_tailor_judge_and_validator_share_only_explicit_work_history_evidence() -> None:
+    profile = {
+        "work_history": [
+            {
+                "title": "Substitute Teacher",
+                "company": "Example School District",
+                "dates": "2023 to 2024",
+                "tasks": "Followed teacher lesson plans, took attendance, maintained classroom safety, and documented daily handoff notes.",
+                "memory_prompts": ["Unconfirmed smartboard administration"],
+            }
+        ]
+    }
+
+    tailor_prompt = _build_tailor_prompt(profile)
+    judge_prompt = tailor._build_judge_prompt(profile)
+
+    for prompt in (tailor_prompt, judge_prompt):
+        assert "Substitute Teacher | Example School District | 2023 to 2024" in prompt
+        assert "documented daily handoff notes" in prompt
+        assert "Unconfirmed smartboard administration" not in prompt
+    assert candidate_evidence_supports("took attendance", profile)
+    assert candidate_evidence_supports("documented daily handoff notes", profile)
+    assert not candidate_evidence_supports("smartboard administration", profile)
 
 
 def test_tailor_prompt_requires_target_positioning_without_assumed_role_or_metrics() -> None:

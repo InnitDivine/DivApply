@@ -268,6 +268,22 @@ def test_v118_resume_rejects_service_desk_phrase_added_to_paid_experience() -> N
     assert any("service-desk evidence boundary" in error.casefold() for error in report["errors"])
 
 
+def test_v118_resume_rejects_ticket_style_analogy_in_summary() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+        "experience": {"years_of_professional_it_experience": "0"},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "SUMMARY\nBuilt reports for Example Employer.",
+        "SUMMARY\nIT candidate with ticket-style intake in public-sector work.",
+    )
+
+    report = validate_tailored_resume(tailored, profile, original_text=_RESUME_NO_PROJECTS, mode="strict")
+
+    assert any("service-desk evidence boundary" in error.casefold() for error in report["errors"])
+
+
 def test_validate_tailored_resume_banned_words_warn_in_normal_mode() -> None:
     profile = {
         "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},

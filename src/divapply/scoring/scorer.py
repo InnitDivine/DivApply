@@ -22,12 +22,35 @@ from divapply.privacy import redact_error_snippet
 from divapply.search_policy import effective_search_config, job_has_schedule_exception
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
+from divapply.scoring.evidence import format_verified_work_history
 
 log = logging.getLogger(__name__)
 
 MAX_SCORE_ATTEMPTS = 5
 BASE_SCORE_RETRY_SECONDS = 300
 MAX_SCORE_RETRY_SECONDS = 24 * 60 * 60
+
+_EXPERIENCE_SUBSTITUTION_TERMS = (
+    "equivalent experience",
+    "experience accepted",
+    "experience may substitute",
+    "or equivalent",
+)
+_SUBSTITUTABLE_EDUCATION_RE = re.compile(
+    r"\b(?:associate(?:'s)?|bachelor(?:'s)?|master(?:'s)?|doctorate|degree|diploma|education)\b",
+    re.IGNORECASE,
+)
+_PROFESSIONAL_IT_GAP_RE = re.compile(
+    r"\b(?:paid|professional)\s+(?:it|information\s+technology)\s+(?:employment\s+)?experience\b",
+    re.IGNORECASE,
+)
+_EXPLICIT_PROFESSIONAL_IT_REQUIREMENT_RE = re.compile(
+    r"(?:\b(?:requires?|minimum|at\s+least)\b.{0,100}"
+    r"\b(?:paid|professional)\s+(?:it|information\s+technology)\s+(?:employment\s+)?experience\b|"
+    r"\b(?:paid|professional)\s+(?:it|information\s+technology)\s+(?:employment\s+)?experience\b"
+    r".{0,60}\b(?:required|minimum|at\s+least)\b)",
+    re.IGNORECASE | re.DOTALL,
+)
 
 EXPERIENCE_INFERENCE_GUIDANCE = (
     "Use each job title and task summary to infer common, truthful duties normally tied to that work. "
@@ -118,18 +141,29 @@ def _sanitize_substitution_narrative(
 ) -> tuple[str, str]:
     """Prevent a substitutable credential from being restated as mandatory."""
     job_lower = job_text.casefold()
-    if not any(
-        term in job_lower
-        for term in ("equivalent experience", "experience accepted", "experience may substitute", "or equivalent")
-    ):
+    if not any(term in job_lower for term in _EXPERIENCE_SUBSTITUTION_TERMS):
         return reasoning, risk_flags
 
-    credential_terms = ("associate", "bachelor", "certificate", "certification", "degree")
+    explicit_professional_it = bool(_EXPLICIT_PROFESSIONAL_IT_REQUIREMENT_RE.search(job_text))
+    if not explicit_professional_it and _PROFESSIONAL_IT_GAP_RE.search(reasoning):
+        reasoning = " ".join(
+            sentence
+            for sentence in re.split(r"(?<=[.!?])\s+", reasoning)
+            if not _PROFESSIONAL_IT_GAP_RE.search(sentence)
+        ).strip()
+
     reasoning_lower = reasoning.casefold()
-    if any(term in reasoning_lower for term in credential_terms) and any(
-        term in reasoning_lower for term in ("gap", "lack", "missing", "not completed", "in progress", "in-progress")
+    if _SUBSTITUTABLE_EDUCATION_RE.search(reasoning_lower) and any(
+        term in reasoning_lower
+        for term in ("gap", "lack", "missing", "no completed", "not completed", "in progress", "in-progress")
     ):
-        base = re.split(r"\b(?:but|however)\b", reasoning, maxsplit=1, flags=re.IGNORECASE)[0].strip(" ,.;")
+        base = re.split(
+            r"\b(?:but|however|main gaps?|remaining gaps?|(?:the\s+)?main deductions?|"
+            r"(?:the\s+)?score\s+is\s+capped(?:\s+by)?)\b",
+            reasoning,
+            maxsplit=1,
+            flags=re.IGNORECASE,
+        )[0].strip(" ,.;")
         if base:
             base += "."
         parts = [base] if base else []
@@ -145,20 +179,151 @@ def _sanitize_substitution_narrative(
         part
         for part in risk_parts
         if not (
-            any(term in part.casefold() for term in credential_terms)
+            _SUBSTITUTABLE_EDUCATION_RE.search(part)
             and any(
                 term in part.casefold()
-                for term in ("gap", "lack", "missing", "not completed", "in progress", "in-progress", "not explicitly")
+                for term in (
+                    "gap",
+                    "lack",
+                    "missing",
+                    "no completed",
+                    "not completed",
+                    "in progress",
+                    "in-progress",
+                    "not explicitly",
+                    "not clearly satisfied",
+                )
             )
+        )
+        and not (
+            not explicit_professional_it
+            and _PROFESSIONAL_IT_GAP_RE.search(part)
         )
     ]
     return reasoning, ", ".join(risk_parts)
 
 
+def _sanitize_substitution_gaps(value: object, job_text: str) -> str:
+    """Drop only degree/diploma gaps when the posting accepts experience instead."""
+    text = str(value or "").strip()
+    if not text or not any(term in job_text.casefold() for term in _EXPERIENCE_SUBSTITUTION_TERMS):
+        return text
+    explicit_professional_it = bool(_EXPLICIT_PROFESSIONAL_IT_REQUIREMENT_RE.search(job_text))
+    kept: list[str] = []
+    seen: set[str] = set()
+    for part in _split_evidence_items(text):
+        item = part.strip(" .")
+        if (
+            not item
+            or _SUBSTITUTABLE_EDUCATION_RE.search(item)
+            or (
+                not explicit_professional_it
+                and _PROFESSIONAL_IT_GAP_RE.search(item)
+            )
+        ):
+            continue
+        key = item.casefold()
+        if key not in seen:
+            seen.add(key)
+            kept.append(item)
+    return ", ".join(kept)
+
+
+def _merge_evidence_gaps(*values: object, limit: int = 20) -> str:
+    """Merge bounded keyword and evaluator gaps without duplicate phrases."""
+    merged: list[str] = []
+    for value in values:
+        for part in _split_evidence_items(value):
+            item = part.strip(" .")
+            key = item.casefold()
+            if not item or key in {"none", "n/a"}:
+                continue
+            if any(key == prior.casefold() for prior in merged):
+                continue
+            if any(re.search(r"\b" + re.escape(key) + r"\b", prior.casefold()) for prior in merged):
+                continue
+            merged = [
+                prior
+                for prior in merged
+                if not re.search(r"\b" + re.escape(prior.casefold()) + r"\b", key)
+            ]
+            merged.append(item)
+            if len(merged) >= limit:
+                return ", ".join(merged)
+    return ", ".join(merged)
+
+
+def _split_evidence_items(value: object) -> list[str]:
+    """Split comma/semicolon lists while preserving parenthesized explanations."""
+    text = str(value or "")
+    items: list[str] = []
+    start = 0
+    depth = 0
+    for index, char in enumerate(text):
+        if char == "(":
+            depth += 1
+        elif char == ")" and depth:
+            depth -= 1
+        elif char in ",;" and depth == 0:
+            items.append(text[start:index])
+            start = index + 1
+    items.append(text[start:])
+    return items
+
+
+def _remove_hit_covered_gaps(gaps: object, hits: object) -> str:
+    """Remove only gaps contradicted by a specific multiword deterministic hit."""
+    specific_hits = [
+        hit.strip().casefold()
+        for hit in _split_evidence_items(hits)
+        if len(hit.strip().split()) >= 2
+    ]
+    kept: list[str] = []
+    for item in _split_evidence_items(gaps):
+        gap = item.strip(" .")
+        gap_lower = gap.casefold()
+        if not gap:
+            continue
+        if any(
+            re.search(r"(?<!\w)" + re.escape(hit) + r"(?!\w)", gap_lower)
+            for hit in specific_hits
+        ):
+            continue
+        kept.append(gap)
+    return ", ".join(kept)
+
+
+def _build_action_reason(hybrid: dict) -> str:
+    """Build one bounded action reason from deterministic score evidence."""
+    score = int(hybrid.get("score") or 0)
+    hits = [
+        part.strip()
+        for part in _split_evidence_items(hybrid.get("keyword_hits"))
+        if part.strip()
+    ][:4]
+    gaps = [
+        part.strip()
+        for part in _split_evidence_items(hybrid.get("missing_skills"))
+        if part.strip()
+    ][:3]
+    if score >= 7:
+        prefix = f"Apply - strong verified fit ({score}/10)"
+    elif score >= 5:
+        prefix = f"Review - moderate verified fit ({score}/10)"
+    else:
+        prefix = f"Skip or review carefully - limited verified fit ({score}/10)"
+    parts = [prefix]
+    if hits:
+        parts.append("supported overlap: " + ", ".join(hits))
+    if gaps:
+        parts.append("review gaps: " + ", ".join(gaps))
+    return "; ".join(parts)[:500].rstrip(" ,;") + "."
+
+
 def _build_evidence_reasoning(hybrid: dict, job_text: str) -> str:
     """Build persisted reasoning from bounded evidence instead of LLM prose."""
     generic_hits = {"communication", "compliance", "customer", "inventory", "microsoft", "security", "support"}
-    hits = [part.strip() for part in str(hybrid.get("keyword_hits", "") or "").split(",") if part.strip()]
+    hits = [part.strip() for part in _split_evidence_items(hybrid.get("keyword_hits")) if part.strip()]
     specific_hits = [hit for hit in hits if hit.casefold() not in generic_hits]
     selected_hits = (specific_hits or hits)[:8]
     gaps = str(hybrid.get("missing_skills", "") or "").strip()
@@ -167,10 +332,7 @@ def _build_evidence_reasoning(hybrid: dict, job_text: str) -> str:
     if selected_hits:
         parts.append(f"Supported overlap: {', '.join(selected_hits)}.")
     job_lower = job_text.casefold()
-    if any(
-        term in job_lower
-        for term in ("equivalent experience", "experience accepted", "experience may substitute", "or equivalent")
-    ):
+    if any(term in job_lower for term in _EXPERIENCE_SUBSTITUTION_TERMS):
         parts.append(
             "The posting explicitly accepts equivalent experience; a human reviewer should assess that alternative from verified duties and projects."
         )
@@ -234,6 +396,21 @@ def _parse_score_response(response: str) -> dict:
     return {"score": score, **fields}
 
 
+def _completed_degree_rank(school: dict) -> tuple[int, str]:
+    """Rank explicitly completed degree levels for concise scoring context."""
+    degree = str(school.get("degree") or "").strip()
+    lowered = degree.casefold()
+    levels = (
+        (5, ("doctor", "phd", "ph.d")),
+        (4, ("master", "m.s", "m.a", "mba")),
+        (3, ("bachelor", "b.s", "b.a")),
+        (2, ("associate", "a.a", "a.s", "a.a.s")),
+        (1, ("certificate", "diploma")),
+    )
+    rank = next((value for value, terms in levels if any(term in lowered for term in terms)), 0)
+    return rank, degree
+
+
 def _build_profile_evidence_context(profile: dict) -> str:
     """Build scoring-safe profile facts without credentials or EEO data."""
     lines: list[str] = []
@@ -283,16 +460,8 @@ def _build_profile_evidence_context(profile: dict) -> str:
         if "password" not in text.lower() and "credential" not in text.lower():
             lines.append(f"Application context: {text}")
 
-    for job in profile.get("work_history", []) or []:
-        if not isinstance(job, dict):
-            continue
-        parts = [
-            job.get("title"),
-            job.get("company"),
-            job.get("dates"),
-            job.get("tasks") or job.get("description"),
-        ]
-        lines.append("Work history: " + " | ".join(str(part) for part in parts if part))
+    for work_line in format_verified_work_history(profile).splitlines():
+        lines.append(f"Work history: {work_line}")
 
     lines.append(f"Experience inference guidance: {EXPERIENCE_INFERENCE_GUIDANCE}")
 
@@ -301,9 +470,19 @@ def _build_profile_evidence_context(profile: dict) -> str:
             label = category.replace("_", " ").title()
             lines.append(f"{label}: {', '.join(str(item) for item in items)}")
 
-    for school in profile.get("education_schools", []) or []:
-        if not isinstance(school, dict):
-            continue
+    schools = [
+        school
+        for school in profile.get("education_schools", []) or []
+        if isinstance(school, dict)
+    ]
+    completed_degrees = [school for school in schools if school.get("degree_received") is True]
+    if completed_degrees:
+        highest = max(completed_degrees, key=_completed_degree_rank)
+        highest_degree = str(highest.get("degree") or "").strip()
+        if highest_degree:
+            lines.append(f"Highest completed degree: {highest_degree}")
+
+    for school in schools:
         profile_status = str(school.get("status", "")).strip().lower()
         if profile_status in {"transferred", "transfer"}:
             status = "transferred"
@@ -473,6 +652,17 @@ def score_job(
         client = get_client_for_stage("score")
         response = client.chat(messages, max_tokens=4096, temperature=0.1)
         llm_result = _parse_score_response(response)
+        llm_result["missing_skills"] = _sanitize_substitution_gaps(
+            llm_result.get("missing_skills"), job_text
+        )
+        sanitized_reasoning, sanitized_risks = _sanitize_substitution_narrative(
+            str(llm_result.get("reasoning", "") or ""),
+            str(llm_result.get("risk_flags", "") or ""),
+            job_text,
+            str(llm_result.get("missing_skills", "") or ""),
+        )
+        llm_result["reasoning"] = sanitized_reasoning
+        llm_result["risk_flags"] = sanitized_risks
         hybrid = composite_score(
             job_description=job_text,
             resume_text=evidence_text,
@@ -484,13 +674,19 @@ def score_job(
             require_benefits=require_benefits,
             source_verification=source_verification,
         )
-        reasoning, risk_flags = _sanitize_substitution_narrative(
-            _build_evidence_reasoning(hybrid, job_text),
-            str(llm_result.get("risk_flags", "") or ""),
-            job_text,
-            str(hybrid.get("missing_skills", "") or ""),
+        hybrid["missing_skills"] = _remove_hit_covered_gaps(
+            _sanitize_substitution_gaps(
+                _merge_evidence_gaps(
+                    hybrid.get("missing_skills"),
+                    llm_result.get("missing_skills"),
+                ),
+                job_text,
+            ),
+            hybrid.get("keyword_hits"),
         )
-        action_reason = str(llm_result.get("apply_or_skip_reason", "") or "")
+        reasoning = _build_evidence_reasoning(hybrid, job_text)
+        risk_flags = str(llm_result.get("risk_flags", "") or "")
+        action_reason = _build_action_reason(hybrid)
         normalized_mode = str(application_mode or "active").strip().casefold()
         if normalized_mode == "discovery_only":
             action_reason = (

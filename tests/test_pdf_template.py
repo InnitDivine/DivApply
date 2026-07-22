@@ -73,6 +73,34 @@ Example College | 2024
     assert html.index("Real Employer") < html.index("2025 - Present")
 
 
+def test_v125_long_resume_uses_content_neutral_dense_layout() -> None:
+    repeated = " ".join(f"verified{index}" for index in range(620))
+    resume = parse_resume(
+        f"""Example Person
+IT Support Specialist
+Sampleville, CA | person@example.com
+
+SUMMARY
+{repeated}
+
+EXPERIENCE
+Support Analyst
+Real Employer | 2025 - Present
+- Troubleshot user issues and documented fixes.
+
+EDUCATION
+Associate Degree
+Example College | 2024
+"""
+    )
+
+    html = build_html(resume)
+
+    assert '<body class="resume resume-dense">' in html
+    assert "body.resume-dense" in html
+    assert repeated in html
+
+
 def test_v98_ats_pdf_validator_accepts_complete_linear_text(monkeypatch, tmp_path) -> None:
     source = """Example Person
 person@example.com

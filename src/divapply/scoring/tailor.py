@@ -17,7 +17,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from divapply.artifacts import tailored_artifact_paths
-from divapply.config import RESUME_PATH, TAILORED_DIR, load_profile, profile_skills
+from divapply.config import (
+    RESUME_PATH,
+    TAILORED_DIR,
+    load_profile,
+    profile_for_job_resume_location,
+    profile_skills,
+)
 from divapply.database import (
     ACTIONABLE_JOB_SQL,
     MEANINGFUL_FULL_DESCRIPTION_SQL,
@@ -26,6 +32,7 @@ from divapply.database import (
 )
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
+from divapply.scoring.evidence import format_verified_work_history
 from divapply.scoring.validator import (
     ALLOWED_SKILLS_SECTION_TITLES,
     BANNED_WORDS,
@@ -108,6 +115,7 @@ def _build_tailor_prompt(profile: dict) -> str:
     real_metrics = resume_facts.get("real_metrics", [])
     coursework = profile.get("coursework_summary", [])
     coursework_skills = profile.get("coursework_skills", [])
+    work_history = format_verified_work_history(profile)
 
     companies_str = ", ".join(companies) if companies else "N/A"
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
@@ -118,6 +126,7 @@ def _build_tailor_prompt(profile: dict) -> str:
 
     coursework_block = "\n".join(f"- {item}" for item in coursework) if coursework else "N/A"
     coursework_skills_block = "\n".join(f"- {item}" for item in coursework_skills) if coursework_skills else "N/A"
+    work_history_block = work_history or "N/A"
     truth_items: list[str] = []
     for key in ("truthfulness_rules", "application_context", "answer_context"):
         value = profile.get(key)
@@ -145,6 +154,9 @@ Take the base resume and job description. Return a tailored resume as a JSON obj
 
 ## ACADEMIC SKILL MAP (can inform skills, not paid work):
 {coursework_skills_block}
+
+## VERIFIED WORK HISTORY (exact candidate-owned evidence):
+{work_history_block}
 
 Coursework may support the skills section when it is relevant, but do not present coursework exposure as job experience.
 Do not add new tools unless they are directly supported by the profile, resume, or academic skill map. Keep everything factual.
@@ -226,6 +238,7 @@ def _build_judge_prompt(profile: dict) -> str:
 
     real_metrics = resume_facts.get("real_metrics", [])
     metrics_str = ", ".join(real_metrics) if real_metrics else "N/A"
+    work_history_evidence = format_verified_work_history(profile) or "N/A"
 
     education_lines: list[str] = []
     for school in profile.get("education_schools", []) or []:
@@ -271,6 +284,9 @@ VERDICT DECISION: FAIL only when ISSUES names at least one concrete claim and ex
 
 ## AUTHORITATIVE ALLOWED SKILLS (profile; exact listed phrases are supported):
 {skills_evidence}
+
+## AUTHORITATIVE VERIFIED WORK HISTORY (exact listed role facts are supported):
+{work_history_evidence}
 
 ## WHAT IS FABRICATION (FAIL for these):
 1. Adding tools, languages, or frameworks that are absent from both the original and AUTHORITATIVE ALLOWED SKILLS above. Any exact listed profile skill is supported and must not be failed merely because the base résumé omits it.
@@ -1015,7 +1031,13 @@ def run_tailoring(
     for job in jobs:
         completed += 1
         try:
-            tailored, report = tailor_resume(resume_text, job, profile, validation_mode=validation_mode)
+            job_profile = profile_for_job_resume_location(profile, job)
+            tailored, report = tailor_resume(
+                resume_text,
+                job,
+                job_profile,
+                validation_mode=validation_mode,
+            )
 
             txt_path, job_path, report_path = tailored_artifact_paths(TAILORED_DIR, job)
             txt_path.write_text(tailored, encoding="utf-8")

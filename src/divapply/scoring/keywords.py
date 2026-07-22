@@ -19,13 +19,14 @@ _STOPWORDS = {
     "could", "daily", "duties", "each", "employee", "employees", "equal",
     "etc", "from", "full", "have", "help", "high", "including", "into",
     "education", "e.g", "eg", "job", "jobs", "least", "level", "like", "looking", "more", "must",
-    "advantage", "bonus", "certification", "certifications", "desired",
+    "advantage", "bonus", "certification", "certifications", "desirable", "desired",
     "mandatory", "minimum", "nice",
     "need", "needs", "offer", "only", "optional", "other", "our", "plus", "qualification", "qualifications",
     "preferred", "provide", "required", "requirements", "responsibilities", "role",
     "should", "skill", "skills", "some", "team", "than", "that", "the", "their", "them",
+    "experience", "in", "knowledge", "of", "substitution", "use",
     "then", "this", "through", "time", "using", "will", "with", "work",
-    "years", "your",
+    "years", "your", "note", "a.m", "p.m", "am", "pm",
 }
 _REQUIRED_MARKERS = {
     "must", "required", "requirement", "requirements", "minimum",
@@ -39,19 +40,27 @@ _PREFERRED_MARKERS = {
 _REQUIRED_LINE_RE = re.compile(
     r"^(?:job\s+)?(?:special\s+requirements?|required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
     r"minimum(?:\s+qualifications)?|mandatory|qualifications?|responsibilities|duties)\b|"
+    r"^(?:(?:employment|general|special)\s+qualifications?|special\s+selection\s+criteria)\s*:?\s*$|"
+    r"^(?:(?:examples\s+of\s+)?knowledge\s+and\s+abilities|knowledge\s+of|skills?\s+in|ability\s+to|"
+    r"experience\s+and\s+education|education\s+and\s+experience|experience|training|substitution|"
+    r"education|skills\s+and\s+knowledge)\s*:?\s*$|"
     r"\b(?:must\s+have|required\s+to|is\s+required|are\s+required|minimum\s+of)\b",
     re.IGNORECASE,
 )
 _PREFERRED_LINE_RE = re.compile(
-    r"^(?:desirable\s+qualifications?|preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
+    r"^(?:desirable(?:\s+(?:qualifications?|knowledge|skills?))?|preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
     r"nice[- ]to[- ]have|bonus|desired|optional|advantage)\b",
     re.IGNORECASE,
 )
 _REQUIREMENT_HEADING_RE = re.compile(
     r"^(?:job\s+)?(?:special\s+requirements?|required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
     r"minimum(?:\s+qualifications)?|mandatory|qualifications?(?:\s*(?:&|and)\s*education)?|"
+    r"(?:employment|general|special)\s+qualifications?|special\s+selection\s+criteria|"
+    r"(?:examples\s+of\s+)?knowledge\s+and\s+abilities|knowledge\s+of|skills?\s+in|ability\s+to|"
+    r"experience\s+and\s+education|education\s+and\s+experience|experience|training|substitution|"
+    r"education|skills\s+and\s+knowledge|"
     r"responsibilities|duties|preferred(?:\s+(?:skills|qualifications|experience|certifications?))?|"
-    r"desirable\s+qualifications?|nice[- ]to[- ]have|bonus|desired|optional|advantage)\s*:?[\s]*$",
+    r"desirable(?:\s+(?:qualifications?|knowledge|skills?))?|nice[- ]to[- ]have|bonus|desired|optional|advantage)\s*:?[\s]*$",
     re.IGNORECASE,
 )
 _NON_REQUIREMENT_HEADINGS = {
@@ -65,6 +74,7 @@ _NON_REQUIREMENT_HEADINGS = {
     "hourly rate",
     "job code",
     "number of positions",
+    "note",
     "pay range",
     "perks",
     "please note",
@@ -76,10 +86,13 @@ _NON_REQUIREMENT_HEADINGS = {
 }
 _NON_REQUIREMENT_LINE_RE = re.compile(
     r"^(?:\.\.\.\[?middle omitted\]?\.\.\.|additional information\b|about\b|"
-    r"benefits?\b|compensation\b|employment type\b|hourly rate\b|job type\b|"
+    r"benefits?\b|compensation\b|employment type\b|hourly rate\b|job type\b|job shift\b|"
     r"#\s*of positions?\b|job code\b|location\s*:|new to state candidates?\b|"
     r"number of positions?\b|pay\b|position\s*#|position details?\b|salary\b|"
-    r"schedule\s*:|telework\b|work arrangement\b|work location\b|working title\b)",
+    r"schedule\s*:|shift\s*:|days of the week\b|weekend requirements?\b|weekly hours?\b|"
+    r"employee status\b|position status\b|unions?\s*:|telework\b|work arrangement\b|"
+    r"work location\b|working title\b|"
+    r"\d+\.\s*application\s*:)",
     re.IGNORECASE,
 )
 _BOILERPLATE_BOUNDARIES = {
@@ -98,12 +111,23 @@ _BOILERPLATE_BOUNDARIES = {
     "supplemental questionnaire",
     "voluntary self-identification",
     "who may apply",
+    "application and testing process",
+    "application and testing information",
+    "application procedure",
+    "examination process",
+    "selection procedure",
+    "supplemental questions",
+    "physical requirements",
+    "probationary period",
+    "working conditions",
 }
 _ADMINISTRATIVE_PHRASE_RE = re.compile(
     r"(?:"
     r"\b(?:alternate range|hourly rate|new to state candidates?|pay range|salary)\b|"
     r"\b(?:application (?:deadline|form|instructions?|materials?|package|process)|state application)\b|"
     r"\b(?:statement of qualifications?|std\s*678|transcripts?)\b|"
+    r"\b(?:credential(?:'s)? evaluation service|education records? evaluated|degree obtained outside|proof of education)\b|"
+    r"\b(?:final filing (?:date|deadline)|download pdf reader|civil service board rule)\b|"
     r"\b(?:confidential information|employment history|filing date|how to apply|mailing address|selection process|"
     r"who may apply)\b|"
     r"\b(?:incomplete resumes?|please note)\b|"
@@ -112,8 +136,19 @@ _ADMINISTRATIVE_PHRASE_RE = re.compile(
     r")",
     re.IGNORECASE,
 )
+_CREDENTIAL_REQUIREMENT_RE = re.compile(
+    r"\b(?:associate(?:'s)?|bachelor(?:'s)?|master(?:'s)?|doctorate|degree|diploma)\b",
+    re.IGNORECASE,
+)
+_STRUCTURAL_PHRASE_RE = re.compile(
+    r"^(?:(?:examples\s+of\s+)?knowledge\s+and\s+abilities|knowledge\s+of|skills?\s+in|ability\s+to|"
+    r"experience(?:\s+and\s+education)?|education\s+and\s+experience|substitution|"
+    r"(?:employment|general|special)\s+qualifications?|special\s+selection\s+criteria|"
+    r"relevant\s+coursework\s+may\s+substitute\s+for\s+experience)$",
+    re.IGNORECASE,
+)
 _SKILL_HINTS = {
-    "aws", "azure", "gcp", "linux", "windows", "python", "sql", "excel",
+    "aws", "azure", "gcp", "linux", "windows", "apple", "ios", "macos", "itil", "python", "sql", "excel",
     "access", "administrative", "answering", "appointments", "billing", "cash",
     "cashier", "clerical", "confidentiality", "data entry", "front desk",
     "insurance", "microsoft", "office", "patient", "payments", "phone",
@@ -121,8 +156,8 @@ _SKILL_HINTS = {
     "powerpoint", "word", "javascript", "typescript", "react", "node",
     "kubernetes", "docker", "terraform", "salesforce", "workday",
     "greenhouse", "lever", "customer", "support", "accounting", "finance",
-    "data", "analysis", "analytics", "documentation", "communication",
-    "troubleshooting", "networking", "security", "compliance", "inventory",
+    "data", "analysis", "analytics", "documentation", "communication", "network",
+    "troubleshoot", "troubleshooting", "networking", "security", "compliance", "inventory",
     "scheduling", "reporting", "reconciliation", "billing", "crm",
 }
 _SKILL_PHRASES = {
@@ -141,13 +176,21 @@ _SKILL_PHRASES = {
     "patient registration",
     "phone etiquette",
     "problem-solving",
+    "project management",
     "technical documentation",
+    "time management",
     "user account management",
 }
 _EVIDENCE_EQUIVALENTS = {
     "device setup": ("workstation setup", "pc building", "windows installation"),
     "end-user support": ("end user support", "user assistance", "user support", "helped staff"),
+    "functional understanding of project management concepts": (
+        "project planning and coordination",
+        "project management fundamentals",
+        "project coordination",
+    ),
     "problem-solving": ("problem solving", "troubleshooting", "resolved", "discrepancy research"),
+    "time management": ("time management and prioritization",),
 }
 
 
@@ -182,6 +225,9 @@ def _is_boilerplate_boundary(line: str) -> bool:
 
 def _clean_phrase(phrase: str) -> str:
     parts = [_normalize_token(part) for part in phrase.split()]
+    normalized = " ".join(part for part in parts if part).strip()
+    if normalized in _SKILL_PHRASES:
+        return normalized
     parts = [part for part in parts if part and part not in _STOPWORDS]
     return " ".join(parts).strip()
 
@@ -190,7 +236,15 @@ def _is_requirement_phrase(raw_phrase: str, clean_phrase: str) -> bool:
     """Reject metadata and application prose that cannot be a candidate skill."""
     if not re.search(r"[a-z]", clean_phrase, re.IGNORECASE):
         return False
-    return _ADMINISTRATIVE_PHRASE_RE.search(f"{raw_phrase} {clean_phrase}") is None
+    normalized_raw = " ".join(raw_phrase.casefold().strip(" :.-").split())
+    if _STRUCTURAL_PHRASE_RE.fullmatch(normalized_raw):
+        return False
+    if len(clean_phrase.split()) > 6:
+        return False
+    combined = f"{raw_phrase} {clean_phrase}"
+    if _CREDENTIAL_REQUIREMENT_RE.search(combined):
+        return False
+    return _ADMINISTRATIVE_PHRASE_RE.search(combined) is None
 
 
 def _strip_marker_prefix(line: str) -> str:
@@ -227,7 +281,11 @@ def _candidate_phrases(text: str, *, bucket: str = "required") -> list[str]:
         if _REQUIRED_LINE_RE.search(line) or _PREFERRED_LINE_RE.search(line):
             chunks = re.split(r"[,;/]| and | or ", line)
             phrases.extend(chunk.strip() for chunk in chunks)
-        elif 1 <= len(markerless.split()) <= 6:
+        elif (
+            1 <= len(markerless.split()) <= 6
+            and not any(phrase in markerless for phrase in _SKILL_PHRASES)
+            and not any(_normalize_token(word) in _SKILL_HINTS for word in _WORD_RE.findall(markerless))
+        ):
             phrases.append(markerless)
 
     bucket_text = "\n".join(bucket_lines)
@@ -302,14 +360,25 @@ def extract_preferred_keywords(job_description: str) -> tuple[str, ...]:
 
 def keyword_present(keyword: str, text: str) -> bool:
     """Return True when a keyword or all meaningful keyword parts are present."""
-    if not keyword:
+    normalized_keyword = keyword.casefold().strip()
+    normalized_text = text.casefold()
+    if not normalized_keyword:
         return False
-    if keyword in text:
+
+    def bounded_present(term: str) -> bool:
+        return bool(
+            re.search(
+                r"(?<![\w+#.])" + re.escape(term) + r"(?![\w+#]|\.(?=[a-z0-9]))",
+                normalized_text,
+            )
+        )
+
+    if bounded_present(normalized_keyword):
         return True
-    if any(evidence in text for evidence in _EVIDENCE_EQUIVALENTS.get(keyword, ())):
+    if any(bounded_present(evidence) for evidence in _EVIDENCE_EQUIVALENTS.get(normalized_keyword, ())):
         return True
-    parts = [part for part in keyword.split() if part not in _STOPWORDS]
-    return bool(parts) and all(part in text for part in parts)
+    parts = [part for part in normalized_keyword.split() if part not in _STOPWORDS]
+    return bool(parts) and all(bounded_present(part) for part in parts)
 
 
 def score_keywords(

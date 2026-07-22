@@ -2,6 +2,15 @@
 
 All notable changes to DivApply will be documented here.
 
+## 0.5.11
+
+- Credited the highest completed degree and accepted experience substitutions without inventing mandatory paid IT tenure.
+- Unified bounded work-history evidence across scoring, tailoring, judging, and validation while blocking unsupported help-desk and ticket claims.
+- Improved requirement extraction for Sutter-style and public-sector postings, including exact phrase and token-boundary matching.
+- Added content-neutral dense one-page résumé rendering with the existing selectable-text and source-coverage gates.
+- Added document-only destination-market city/state headers without changing legal application addresses.
+- Extended release privacy scans to configured résumé cities and bounded location-pattern matching.
+
 ## 0.5.10
 
 - Rendered explicitly structured completed and current coursework in tailored résumé education sections.

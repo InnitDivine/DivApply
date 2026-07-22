@@ -34,12 +34,22 @@ def test_keyword_present_matches_meaningful_phrase_parts() -> None:
     assert not keyword_present("customer support", "customer records only")
 
 
+def test_v123_keyword_present_requires_token_boundary_for_short_skills() -> None:
+    assert keyword_present("ios", "Apple iOS device support")
+    assert not keyword_present("ios", "Municipal operations and registrations")
+
+
 def test_keyword_present_accepts_explicit_resume_evidence_equivalents() -> None:
-    resume = "Workstation setup, PC building, user assistance, troubleshooting, and discrepancy research."
+    resume = (
+        "Workstation setup, PC building, user assistance, troubleshooting, discrepancy research, "
+        "project planning and coordination, time management and prioritization."
+    )
 
     assert keyword_present("device setup", resume.casefold())
     assert keyword_present("end-user support", resume.casefold())
     assert keyword_present("problem-solving", resume.casefold())
+    assert keyword_present("functional understanding of project management concepts", resume.casefold())
+    assert keyword_present("time management", resume.casefold())
     assert not keyword_present("asset inventory", resume.casefold())
 
 
@@ -112,6 +122,184 @@ def test_keyword_extraction_captures_admin_service_bullets_without_marker_repeti
     assert "microsoft office" in keywords
     assert "medical terminology" in preferred["preferred_misses"]
     assert preferred["score"] >= 0.75
+
+
+def test_v121_sutter_style_headings_produce_skill_keywords_without_degree_gap() -> None:
+    jd = "\n".join(
+        [
+            "EDUCATION:",
+            "Equivalent experience will be accepted in lieu of the required degree or diploma.",
+            "Associate's in Computer Science, Information Technology, or related field",
+            "SKILLS AND KNOWLEDGE:",
+            "Basic knowledge in Microsoft Windows and Apple OS/iOS operating systems.",
+            "Basic knowledge of active directory and associated file systems.",
+            "Basic knowledge of network topologies and troubleshooting.",
+            "Basic knowledge of ITIL Foundations concepts.",
+            "Adept in time management within provided guidelines.",
+            "Job Shift:",
+            "Days",
+            "Schedule:",
+            "Full Time",
+        ]
+    )
+
+    keywords = extract_requirement_keywords(jd)
+
+    assert "windows" in keywords
+    assert "active directory" in keywords
+    assert "troubleshooting" in keywords
+    assert "time management" in keywords
+    assert "management" not in keywords
+    assert all("degree" not in keyword for keyword in keywords)
+    assert all("associate" not in keyword for keyword in keywords)
+    assert "shift" not in keywords
+    assert "days" not in keywords
+
+
+def test_v121_government_application_metadata_never_becomes_skill_gap() -> None:
+    jd = "\n".join(
+        [
+            "MINIMUM QUALIFICATIONS:",
+            "English usage, spelling, grammar, and punctuation.",
+            "An applicant with a college degree obtained outside the United States must have education records evaluated by a credential's evaluation service.",
+            "DESIRABLE KNOWLEDGE:",
+            "Microsoft Office",
+            "NOTE:",
+            "Part-time experience is converted to full-time equivalency.",
+            "1. APPLICATION:",
+            "Applications must be submitted by 5:00 p.m. on the final filing deadline.",
+            "See Civil Service Board rule4.9C. (Download PDF reader)",
+        ]
+    )
+
+    context = format_job_context({"title": "Administrative Assistant", "full_description": jd})
+    result = score_keywords(context, "English grammar punctuation and Microsoft Office")
+    all_keywords = [*result["required_keywords"], *result["preferred_keywords"]]
+
+    assert "Microsoft Office".casefold() in result["preferred_keywords"]
+    assert not any(
+        noise in keyword
+        for keyword in all_keywords
+        for noise in ("note", "a.m", "p.m", "rule4.9c", "pdf reader", "credential", "filing deadline")
+    )
+    assert "download pdf reader" not in context.casefold()
+
+
+def test_v121_government_structural_and_physical_sections_never_become_keywords() -> None:
+    jd = "\n".join(
+        [
+            "QUALIFICATIONS",
+            "Knowledge of:",
+            "English usage, spelling, grammar, and punctuation.",
+            "Skill in:",
+            "Use of computers and Microsoft Word.",
+            "Ability to:",
+            "Maintain records and communicate effectively.",
+            "EXPERIENCE AND EDUCATION",
+            "Experience:",
+            "Four years of progressively responsible clerical experience including a minimum of two years performing complex duties.",
+            "Substitution:",
+            "Relevant coursework may substitute for experience.",
+            "SPECIAL QUALIFICATIONS",
+            "Special Selection Criteria:",
+            "Dictation at a speed of up to 100 net words per minute.",
+            "WORKING CONDITIONS",
+            "Positions in this class may be required to lift materials weighing up to 50 pounds.",
+            "PROBATIONARY PERIOD",
+            "Employees must complete twelve months of probation.",
+            "APPLICATION AND TESTING INFORMATION",
+            "Submit the online application by the filing deadline.",
+        ]
+    )
+
+    keywords = extract_requirement_keywords(jd)
+
+    assert "microsoft" in keywords
+    assert "word" in keywords
+    assert "records" in keywords
+    assert "clerical" in keywords
+    noise = (
+        "knowledge of",
+        "skill in",
+        "ability to",
+        "use of",
+        "experience",
+        "substitution",
+        "four progressively responsible",
+        "special",
+        "selection criteria",
+        "working conditions",
+        "probationary period",
+        "lift materials",
+        "application testing information",
+    )
+    assert not any(fragment in keyword for keyword in keywords for fragment in noise)
+
+
+def test_v121_context_cuts_government_application_testing_information() -> None:
+    jd = "\n".join(
+        [
+            "Minimum Qualifications:",
+            "Six months of customer relations and data entry experience.",
+            "Application and Testing Information",
+            "Submit the online application by 5:00 p.m.",
+        ]
+    )
+
+    context = format_job_context({"title": "Election Clerk", "full_description": jd})
+
+    assert "customer relations" in context
+    assert "Application and Testing Information" not in context
+    assert "5:00 p.m." not in context
+
+
+def test_v121_bounded_context_never_emits_partial_description_lines() -> None:
+    original_lines = [
+        "Opening overview with complete duties and responsibilities.",
+        *[
+            f"General detail line {index} with enough content to consume the context budget."
+            for index in range(20)
+        ],
+        "MINIMUM QUALIFICATIONS",
+        "Knowledge of Microsoft Word and records management.",
+        "Ability to communicate clearly with employees and the public.",
+        *[
+            f"Closing caveat line {index} with complete scheduling context."
+            for index in range(20)
+        ],
+    ]
+    jd = "\n".join(original_lines)
+
+    context = format_job_context(
+        {"title": "Administrative Assistant", "full_description": jd},
+        description_limit=520,
+    )
+    description = context.split("DESCRIPTION:\n", 1)[1]
+
+    for line in description.splitlines():
+        if line and line != "...[middle omitted]...":
+            assert line in original_lines
+
+
+def test_v124_evidence_gap_merge_deduplicates_parenthesized_items() -> None:
+    gap = "explicit inbox experience (beyond public counter support)"
+
+    merged = scorer._merge_evidence_gaps(gap, gap)
+
+    assert merged == gap
+
+
+def test_v124_matched_specific_skill_cannot_remain_a_missing_gap() -> None:
+    gaps = (
+        "Apple OS/iOS support, project management concepts (only inferred, not explicit), "
+        "ITIL Foundations concepts"
+    )
+
+    filtered = scorer._remove_hit_covered_gaps(gaps, "windows, project management")
+
+    assert "project management" not in filtered.casefold()
+    assert "Apple OS/iOS support" in filtered
+    assert "ITIL Foundations concepts" in filtered
 
 
 def test_keyword_extraction_ignores_company_copy_and_application_boilerplate() -> None:
@@ -472,6 +660,77 @@ def test_substitutable_degree_narrative_keeps_real_gaps_without_calling_degree_m
     assert "onboarding ownership" in risks
 
 
+def test_v120_score_job_removes_accepted_degree_gap_from_every_persisted_field(monkeypatch) -> None:
+    class FakeClient:
+        def chat(self, *_args, **_kwargs) -> str:
+            return "\n".join(
+                [
+                    "FIT_SCORE: 7",
+                    "TARGET_PRIORITY: 1",
+                    "MATCHED_SKILLS: Windows, Active Directory, network troubleshooting",
+                    "MISSING_SKILLS: Apple macOS/iOS, ITIL Foundations, degree/diploma in CS/IT or related, professional IT employment experience",
+                    "KEYWORD_HITS: Windows, Active Directory, troubleshooting",
+                    "RISK_FLAGS: Apple support not evidenced; professional IT employment experience absent; IT degree requirement not clearly satisfied (equivalent experience accepted but resume shows 0 paid IT experience)",
+                    "APPLY_OR_SKIP_REASON: Apply - municipal ticket support aligns with the role.",
+                    "SCORE_REASONING: Strong support fit. The score is capped by Apple and ITIL, and no completed IT-related degree/certification.",
+                ]
+            )
+
+    monkeypatch.setattr(scorer, "get_client_for_stage", lambda _stage: FakeClient())
+    result = scorer.score_job(
+        resume_text=(
+            "Associate of General Studies completed. Windows troubleshooting, Active Directory fundamentals, "
+            "networking coursework, PC building, and three years of IT projects."
+        ),
+        job={
+            "title": "Device Support Technician I",
+            "company": "Example Health System",
+            "full_description": "\n".join(
+                [
+                    "EDUCATION:",
+                    "Equivalent experience will be accepted in lieu of the required degree or diploma.",
+                    "Associate's in Computer Science, Information Technology, or related field",
+                    "SKILLS AND KNOWLEDGE:",
+                    "Microsoft Windows and Apple OS/iOS operating systems.",
+                    "Active directory and associated file systems.",
+                    "Network topologies and basic troubleshooting.",
+                    "ITIL Foundations concepts.",
+                ]
+            ),
+        },
+    )
+
+    assert "degree" not in result["missing_skills"].casefold()
+    assert "associate" not in result["risk_flags"].casefold()
+    assert "professional it" not in result["missing_skills"].casefold()
+    assert "professional it" not in result["risk_flags"].casefold()
+    assert "degree" not in result["reasoning"].casefold()
+    assert "apple" in result["missing_skills"].casefold()
+    assert "itil" in result["missing_skills"].casefold()
+    assert result["reasoning"].casefold().count("explicitly accepts equivalent experience") == 1
+    assert result["apply_or_skip_reason"].startswith("Apply -")
+    assert "ticket" not in result["apply_or_skip_reason"].casefold()
+    breakdown = json.loads(result["score_breakdown"])
+    assert "degree" not in breakdown["llm"]["reasoning"].casefold()
+    assert result["matched_skills"]
+
+
+def test_v120_keeps_explicit_professional_it_experience_requirement() -> None:
+    job_text = (
+        "Associate degree in IT or equivalent experience. "
+        "At least two years of professional IT experience required."
+    )
+
+    filtered = scorer._sanitize_substitution_gaps(
+        "IT degree, professional IT experience, Apple support",
+        job_text,
+    )
+
+    assert "degree" not in filtered.casefold()
+    assert "professional IT experience" in filtered
+    assert "Apple support" in filtered
+
+
 def test_persisted_score_reasoning_is_built_only_from_bounded_evidence() -> None:
     reasoning = scorer._build_evidence_reasoning(
         {
@@ -705,6 +964,33 @@ def test_score_job_overrides_apply_wording_for_discovery_only(monkeypatch) -> No
     assert "Apply now" not in result["apply_or_skip_reason"]
 
 
+def test_v124_score_job_overrides_apply_wording_for_manual_review(monkeypatch) -> None:
+    class FakeClient:
+        def chat(self, *_args, **_kwargs) -> str:
+            return "\n".join(
+                [
+                    "FIT_SCORE: 7",
+                    "TARGET_PRIORITY: 1",
+                    "MATCHED_SKILLS: support",
+                    "MISSING_SKILLS: none",
+                    "KEYWORD_HITS: support",
+                    "RISK_FLAGS: none",
+                    "APPLY_OR_SKIP_REASON: Apply now using invented ticket experience.",
+                    "SCORE_REASONING: Strong fit.",
+                ]
+            )
+
+    monkeypatch.setattr(scorer, "get_client_for_stage", lambda _stage: FakeClient())
+    result = scorer.score_job(
+        resume_text="Verified user support.",
+        job={"title": "Support Assistant", "full_description": "Required: user support."},
+        application_mode="manual_review",
+    )
+
+    assert result["apply_or_skip_reason"].startswith("Manual review")
+    assert "invented ticket" not in result["apply_or_skip_reason"]
+
+
 def test_score_job_does_not_store_unverified_or_implied_llm_matches(monkeypatch) -> None:
     class FakeClient:
         def chat(self, messages, **kwargs):
@@ -812,6 +1098,32 @@ def test_profile_evidence_context_marks_in_progress_education_without_completion
 
     assert "Example College | AAS | Information Technology | in progress" in context
     assert "Example College | AAS | Information Technology | completed" not in context
+
+
+def test_profile_evidence_context_states_highest_completed_degree_separately_from_active_programs() -> None:
+    context = _build_profile_evidence_context(
+        {
+            "education_schools": [
+                {
+                    "school": "Example Community College",
+                    "degree": "Associate of General Studies",
+                    "major": "General Studies",
+                    "degree_received": True,
+                    "end_year": "2024",
+                },
+                {
+                    "school": "Example University",
+                    "degree": "Bachelor of Science",
+                    "major": "Public Health",
+                    "degree_received": False,
+                    "end_year": "present",
+                },
+            ]
+        }
+    )
+
+    assert "Highest completed degree: Associate of General Studies" in context
+    assert "Highest completed degree: Bachelor of Science" not in context
 
 
 def test_profile_evidence_context_separates_professional_and_project_it_time() -> None:

@@ -92,7 +92,12 @@ def job_matches_application_address(job: dict, address: dict) -> bool:
     if isinstance(configured_patterns, str):
         configured_patterns = [configured_patterns]
     if isinstance(configured_patterns, list) and any(
-        str(pattern).strip().casefold() in location for pattern in configured_patterns if str(pattern).strip()
+        re.search(
+            rf"(?<!\w){re.escape(str(pattern).strip().casefold())}(?!\w)",
+            location,
+        )
+        for pattern in configured_patterns
+        if str(pattern).strip()
     ):
         return True
 
@@ -121,6 +126,29 @@ def profile_for_job_address(profile: dict, job: dict) -> dict:
                 personal[key] = address[key]
         return adjusted
     return profile
+
+
+def profile_for_job_resume_location(profile: dict, job: dict) -> dict:
+    """Return a document-only copy using a configured target-market city/state."""
+    adjusted_profile = profile_for_job_address(profile, job)
+    locations = profile.get("resume_locations", {}) or {}
+    if not isinstance(locations, dict):
+        return adjusted_profile
+
+    for location in locations.values():
+        if (
+            not isinstance(location, dict)
+            or location.get("use_for_resume_header") is not True
+            or not job_matches_application_address(job, location)
+        ):
+            continue
+        adjusted = copy.deepcopy(adjusted_profile)
+        personal = adjusted.setdefault("personal", {})
+        for key in ("city", "province_state"):
+            if location.get(key):
+                personal[key] = location[key]
+        return adjusted
+    return adjusted_profile
 
 
 def _read_text_with_legacy(current: Path, legacy: Path | None = None, *, encoding: str = "utf-8") -> str | None:

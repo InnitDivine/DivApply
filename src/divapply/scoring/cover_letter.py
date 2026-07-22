@@ -16,7 +16,7 @@ from divapply.config import (
     COVER_LETTER_DIR,
     TAILORED_DIR,
     load_profile,
-    profile_for_job_address,
+    profile_for_job_resume_location,
     profile_skills,
 )
 from divapply.database import (
@@ -542,7 +542,7 @@ def run_cover_letters(
     for job in jobs:
         completed += 1
         try:
-            job_profile = profile_for_job_address(profile, job)
+            job_profile = profile_for_job_resume_location(profile, job)
             resume_text = _read_tailored_resume_text(job)
             letter = generate_cover_letter(resume_text, job, job_profile, validation_mode=validation_mode)
 
