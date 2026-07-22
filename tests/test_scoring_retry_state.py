@@ -36,6 +36,7 @@ def _scoring_db() -> sqlite3.Connection:
             score_attempts INTEGER DEFAULT 0,
             score_error TEXT,
             score_retry_at TEXT,
+            application_mode TEXT,
             archived_at TEXT,
             discovered_at TEXT
         )
@@ -55,6 +56,7 @@ def _job(url: str = "https://jobs.example.test/retry") -> dict[str, object]:
         "score_attempts": 0,
         "score_error": None,
         "score_retry_at": None,
+        "application_mode": "active",
         "discovered_at": "2026-07-11T00:00:00+00:00",
     }
 
@@ -73,6 +75,40 @@ def _insert_job(conn: sqlite3.Connection, job: dict[str, object]) -> None:
         job,
     )
     conn.commit()
+
+
+def test_v128_score_persistence_demotes_schedule_conflict_before_documents() -> None:
+    conn = _scoring_db()
+    job = _job()
+    _insert_job(conn, job)
+    result = {
+        "url": job["url"],
+        "score": 5,
+        "llm_score": 5,
+        "keyword_score": 0.5,
+        "embedding_score": 0.5,
+        "composite_score": 5.0,
+        "score_breakdown": "{}",
+        "reasoning": "schedule conflict requires review",
+        "matched_skills": "support",
+        "missing_skills": "",
+        "keyword_hits": "support",
+        "risk_flags": "part-time schedule conflict",
+        "apply_or_skip_reason": "Manual review",
+        "resolved_application_mode": "manual_review",
+    }
+
+    scorer._persist_score_results(
+        conn,
+        [result],
+        now="2026-07-22T00:00:00+00:00",
+    )
+
+    row = conn.execute(
+        "SELECT fit_score, application_mode FROM jobs WHERE url = ?",
+        (job["url"],),
+    ).fetchone()
+    assert dict(row) == {"fit_score": 5, "application_mode": "manual_review"}
 
 
 def test_score_job_marks_provider_exception_separately_from_valid_zero(monkeypatch) -> None:

@@ -229,6 +229,39 @@ def test_build_scrape_targets_honors_query_location_scopes() -> None:
     assert "Sample+City%2C+ZZ" in targets[1]["url"]
 
 
+def test_v130_static_source_default_location_fills_only_blank_results() -> None:
+    search_cfg = {
+        "locations": [{"label": "Future market", "location": "Sample City, ZZ"}],
+        "market_policies": {"Future market": {"application_mode": "active"}},
+    }
+    targets = smartextract.build_scrape_targets(
+        sites=[
+            {
+                "name": "Sample City",
+                "type": "static",
+                "url": "https://jobs.example.com/careers/sample",
+                "source_verification": "official",
+                "location_label": "Future market",
+                "default_location": "Sample City, ZZ",
+            }
+        ],
+        search_cfg=search_cfg,
+    )
+
+    assert targets[0]["location_label"] == "Future market"
+    assert targets[0]["default_location"] == "Sample City, ZZ"
+    assert targets[0]["application_mode"] == "active"
+    jobs = smartextract._apply_target_location_default(
+        [
+            {"title": "Blank", "location": ""},
+            {"title": "Concrete", "location": "Other City, ZZ"},
+        ],
+        targets[0],
+    )
+    assert jobs[0]["location"] == "Sample City, ZZ"
+    assert jobs[1]["location"] == "Other City, ZZ"
+
+
 def test_greenhouse_target_uses_deterministic_adapter() -> None:
     targets = smartextract.build_scrape_targets(
         sites=[

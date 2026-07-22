@@ -19,7 +19,11 @@ from divapply.database import (
 )
 from divapply.llm import get_client_for_stage
 from divapply.privacy import redact_error_snippet
-from divapply.search_policy import effective_search_config, job_has_schedule_exception
+from divapply.search_policy import (
+    effective_search_config,
+    job_has_schedule_exception,
+    resolved_application_mode,
+)
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
 from divapply.scoring.evidence import format_verified_work_history
@@ -762,16 +766,6 @@ def _load_score_candidates(
     return rows
 
 
-def _resolved_application_mode(effective_config: dict, job: dict) -> str:
-    policy_mode = str(effective_config.get("application_mode") or "manual_review").strip().casefold()
-    stored_mode = str(job.get("application_mode") or "").strip().casefold()
-    if "discovery_only" in {policy_mode, stored_mode}:
-        return "discovery_only"
-    if "manual_review" in {policy_mode, stored_mode}:
-        return "manual_review"
-    return "active"
-
-
 def _score_candidate(
     job: dict,
     *,
@@ -782,6 +776,7 @@ def _score_candidate(
     profile_evidence_context: str,
 ) -> dict:
     effective_config = effective_search_config(search_config, job)
+    application_mode = resolved_application_mode(search_config, job)
     search_context = _build_search_evidence_context(search_config, job=job)
     profile_context = "\n".join(
         part for part in (profile_evidence_context, search_context) if part
@@ -793,7 +788,7 @@ def _score_candidate(
         coursework_skills_summary,
         profile_context,
         schedule_exception=job_has_schedule_exception(effective_config, job),
-        application_mode=_resolved_application_mode(effective_config, job),
+        application_mode=application_mode,
         preferred_schedule=str(effective_config.get("preferred_schedule") or "any"),
         require_part_time=bool(
             effective_config.get("require_part_time")
@@ -808,6 +803,7 @@ def _score_candidate(
     )
     result["url"] = job["url"]
     result["prior_score_attempts"] = int(job.get("score_attempts") or 0)
+    result["resolved_application_mode"] = application_mode
     return result
 
 
@@ -818,13 +814,15 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
             conn.execute(
                 """
                 UPDATE jobs
-                SET score_error = ?, score_attempts = ?, score_retry_at = ?
+                SET score_error = ?, score_attempts = ?, score_retry_at = ?,
+                    application_mode = COALESCE(?, application_mode)
                 WHERE url = ? AND archived_at IS NULL
                 """,
                 (
                     result["error"],
                     attempt,
                     _score_retry_time(attempt, now=datetime.fromisoformat(now)),
+                    result.get("resolved_application_mode"),
                     result["url"],
                 ),
             )
@@ -847,7 +845,8 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
                 scored_at = ?,
                 score_error = NULL,
                 score_attempts = 0,
-                score_retry_at = NULL
+                score_retry_at = NULL,
+                application_mode = COALESCE(?, application_mode)
             WHERE url = ? AND archived_at IS NULL
             """,
             (
@@ -864,6 +863,7 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
                 result.get("risk_flags", ""),
                 result.get("apply_or_skip_reason", ""),
                 now,
+                result.get("resolved_application_mode"),
                 result["url"],
             ),
         )
