@@ -20,6 +20,7 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -33,7 +34,9 @@ from divapply import config
 from divapply.artifacts import ArtifactCollisionError, ensure_job_artifacts_unshared, job_artifact_stem
 from divapply.database import (
     ACTIONABLE_JOB_SQL,
+    ASSISTED_ACTIONABLE_JOB_SQL,
     add_application_event,
+    ensure_columns,
     get_connection,
     record_reliability_event,
 )
@@ -50,6 +53,7 @@ from divapply.apply.chrome import (
 )
 from divapply.mcp_runtime import (
     McpRuntime,
+    ensure_mcp_browser,
     ensure_mcp_runtime,
     expected_mcp_runtime,
 )
@@ -226,6 +230,7 @@ PLAYWRIGHT_AGENT_TOOLS = (
     "browser_type",
     "browser_wait_for",
 )
+ASSISTED_PLAYWRIGHT_AGENT_TOOLS = tuple(tool for tool in PLAYWRIGHT_AGENT_TOOLS if tool != "browser_close")
 
 
 def _make_mcp_config(
@@ -352,7 +357,12 @@ export default async ({{ page }}) => {{
 
 
 def acquire_job(
-    target_url: str | None = None, min_score: int = 7, max_score: int | None = None, worker_id: int = 0
+    target_url: str | None = None,
+    min_score: int = 7,
+    max_score: int | None = None,
+    worker_id: int = 0,
+    assisted: bool = False,
+    agent_id: str | None = None,
 ) -> dict | None:
     """Atomically acquire the next job to apply to.
 
@@ -361,15 +371,21 @@ def acquire_job(
         min_score: Minimum fit_score threshold.
         max_score: Optional maximum fit_score threshold.
         worker_id: Worker claiming this job (for tracking).
+        assisted: Permit only an explicit user-confirmed target in no-submit assisted mode.
 
     Returns:
         Job dict or None if the queue is empty.
     """
+    if assisted and not target_url:
+        raise ValueError("assisted acquisition requires an explicit target URL")
+    if max_score is not None and max_score < min_score:
+        raise ValueError("max_score cannot be less than min_score")
     target_identity = _canonical_url_identity(target_url) if target_url else None
     if target_url and target_identity is None:
         return None
 
     conn = get_connection()
+    ensure_columns(conn)
     recover_stale_apply_locks(conn=conn)
     # Load blocked sites BEFORE acquiring the DB lock to avoid file I/O inside transaction
     blocked_sites, blocked_patterns = _load_blocked()
@@ -378,17 +394,27 @@ def acquire_job(
             conn.execute("BEGIN IMMEDIATE")
 
             if target_url:
+                actionable_job = ASSISTED_ACTIONABLE_JOB_SQL if assisted else ACTIONABLE_JOB_SQL
+                target_params: list[object] = [config.DEFAULTS["max_apply_attempts"], min_score]
+                max_score_clause = ""
+                if max_score is not None:
+                    max_score_clause = "AND fit_score <= ?"
+                    target_params.append(max_score)
                 rows = conn.execute(
                     f"""
                     SELECT url, title, company, site, application_url, tailored_resume_path,
                            fit_score, location, full_description, cover_letter_path,
                            application_mode, source_verification
                     FROM jobs
-                    WHERE {ACTIONABLE_JOB_SQL}
+                    WHERE {actionable_job}
                       AND archived_at IS NULL
                       AND tailored_resume_path IS NOT NULL
                       AND (apply_status IS NULL OR apply_status IN ('failed', 'manual'))
-                """
+                      AND (apply_attempts IS NULL OR apply_attempts < ?)
+                      AND fit_score >= ?
+                      {max_score_clause}
+                """,
+                    target_params,
                 ).fetchall()
                 matches = [
                     candidate
@@ -465,7 +491,7 @@ def acquire_job(
                 if target_url:
                     return None
                 continue
-            if is_manual_ats(apply_url):
+            if is_manual_ats(apply_url) and not assisted:
                 conn.execute(
                     "UPDATE jobs SET apply_status = 'manual', apply_error = 'manual ATS' WHERE url = ?",
                     (row["url"],),
@@ -497,7 +523,7 @@ def acquire_job(
                                last_attempted_at = ?
                 WHERE url = ?
             """,
-                (f"worker-{worker_id}", now, row["url"]),
+                (agent_id or f"worker-{worker_id}", now, row["url"]),
             )
             conn.commit()
 
@@ -538,6 +564,70 @@ def recover_stale_apply_locks(
     return recovered
 
 
+def _refresh_assisted_lease(url: str, agent_id: str) -> bool:
+    """Refresh one live assisted claim without changing its application state."""
+    conn = get_connection()
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET last_attempted_at = ?
+        WHERE url = ? AND apply_status = 'in_progress' AND agent_id = ?
+        """,
+        (datetime.now(timezone.utc).isoformat(), url, agent_id),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+def _maintain_assisted_lease(
+    url: str,
+    agent_id: str,
+    stop_event: threading.Event,
+    lease_lost_event: threading.Event,
+    *,
+    interval_seconds: float,
+) -> None:
+    """Keep a handed-off browser claim fresh until the session is resolved."""
+    while not stop_event.wait(interval_seconds):
+        try:
+            if not _refresh_assisted_lease(url, agent_id):
+                lease_lost_event.set()
+                logger.error("Assisted apply lease was lost for %s", redact_url_for_log(url)[:80])
+                return
+        except Exception:
+            logger.warning("Could not refresh assisted apply lease for %s", redact_url_for_log(url)[:80], exc_info=True)
+
+
+def _start_assisted_lease_heartbeat(
+    url: str,
+    agent_id: str,
+    lease_lost_event: threading.Event,
+) -> tuple[threading.Event, threading.Thread]:
+    """Start a daemon heartbeat at a safely bounded fraction of lock timeout."""
+    lock_timeout = max(3, int(config.DEFAULTS.get("apply_lock_timeout", 3600)))
+    interval = max(1.0, min(30.0, lock_timeout / 3))
+    stop_event = threading.Event()
+    thread = threading.Thread(
+        target=_maintain_assisted_lease,
+        args=(url, agent_id, stop_event, lease_lost_event),
+        kwargs={"interval_seconds": interval},
+        daemon=True,
+        name=f"assisted-lease-{agent_id[-8:]}",
+    )
+    thread.start()
+    return stop_event, thread
+
+
+class AssistedApplyLeaseLostError(RuntimeError):
+    """Raised when an assisted session no longer owns its database claim."""
+
+
+def _require_owned_transition(cursor: sqlite3.Cursor, agent_id: str | None) -> None:
+    """Reject an assisted transition that did not update its owned claim."""
+    if agent_id is not None and cursor.rowcount != 1:
+        raise AssistedApplyLeaseLostError("assisted apply session no longer owns this job")
+
+
 def mark_result(
     url: str,
     status: str,
@@ -545,6 +635,7 @@ def mark_result(
     permanent: bool = False,
     duration_ms: int | None = None,
     task_id: str | None = None,
+    agent_id: str | None = None,
 ) -> None:
     """Update a job's apply status in the database."""
     conn = get_connection()
@@ -552,40 +643,44 @@ def mark_result(
     safe_error = _safe_agent_error(error or "unknown")
     try:
         conn.execute("BEGIN IMMEDIATE")
+        owner_clause = " AND apply_status = 'in_progress' AND agent_id = ?" if agent_id is not None else ""
+        owner_params: tuple[str, ...] = (agent_id,) if agent_id is not None else ()
         if status == "applied":
-            conn.execute(
-                """
+            cursor = conn.execute(
+                f"""
                 UPDATE jobs SET apply_status = 'applied', applied_at = ?,
                                apply_error = NULL, agent_id = NULL,
                                apply_duration_ms = ?, apply_task_id = ?
-                WHERE url = ?
+                WHERE url = ?{owner_clause}
             """,
-                (now, duration_ms, task_id, url),
+                (now, duration_ms, task_id, url, *owner_params),
             )
+            _require_owned_transition(cursor, agent_id)
             add_application_event(url, "applied", notes="Auto-apply submitted", ts=now, conn=conn)
         else:
             if permanent:
-                conn.execute(
-                    """
+                cursor = conn.execute(
+                    f"""
                     UPDATE jobs SET apply_status = ?, apply_error = ?,
                                    applied_at = NULL,
                                    apply_attempts = 99, agent_id = NULL,
                                    apply_duration_ms = ?, apply_task_id = ?
-                    WHERE url = ?
+                    WHERE url = ?{owner_clause}
                 """,
-                    (status, safe_error, duration_ms, task_id, url),
+                    (status, safe_error, duration_ms, task_id, url, *owner_params),
                 )
             else:
-                conn.execute(
-                    """
+                cursor = conn.execute(
+                    f"""
                     UPDATE jobs SET apply_status = ?, apply_error = ?,
                                    apply_attempts = COALESCE(apply_attempts, 0) + 1,
                                    applied_at = NULL, agent_id = NULL,
                                    apply_duration_ms = ?, apply_task_id = ?
-                    WHERE url = ?
+                    WHERE url = ?{owner_clause}
                 """,
-                    (status, safe_error, duration_ms, task_id, url),
+                    (status, safe_error, duration_ms, task_id, url, *owner_params),
                 )
+            _require_owned_transition(cursor, agent_id)
             add_application_event(url, status, notes=safe_error, ts=now, conn=conn)
         conn.commit()
     except Exception:
@@ -631,6 +726,7 @@ def mark_manual_review(
     reason: str,
     duration_ms: int | None = None,
     task_id: str | None = None,
+    agent_id: str | None = None,
 ) -> None:
     """Persist a job-specific human-review blocker without consuming an attempt."""
     conn = get_connection()
@@ -638,18 +734,21 @@ def mark_manual_review(
     safe_reason = _safe_agent_error(reason)
     try:
         conn.execute("BEGIN IMMEDIATE")
-        conn.execute(
-            """
+        owner_clause = " AND apply_status = 'in_progress' AND agent_id = ?" if agent_id is not None else ""
+        owner_params: tuple[str, ...] = (agent_id,) if agent_id is not None else ()
+        cursor = conn.execute(
+            f"""
             UPDATE jobs SET apply_status = 'manual',
                            apply_error = ?,
                            applied_at = NULL,
                            agent_id = NULL,
                            apply_duration_ms = ?,
                            apply_task_id = ?
-            WHERE url = ?
-            """,
-            (safe_reason, duration_ms, task_id, url),
+            WHERE url = ?{owner_clause}
+        """,
+            (safe_reason, duration_ms, task_id, url, *owner_params),
         )
+        _require_owned_transition(cursor, agent_id)
         add_application_event(url, "manual_review_required", notes=safe_reason, ts=now, conn=conn)
         conn.commit()
     except Exception:
@@ -657,14 +756,18 @@ def mark_manual_review(
         raise
 
 
-def release_lock(url: str) -> None:
+def release_lock(url: str, *, agent_id: str | None = None) -> bool:
     """Release the in_progress lock without changing status."""
     conn = get_connection()
-    conn.execute(
-        "UPDATE jobs SET apply_status = NULL, agent_id = NULL WHERE url = ? AND apply_status = 'in_progress'",
-        (url,),
+    owner_clause = " AND agent_id = ?" if agent_id is not None else ""
+    params: tuple[str, ...] = (url, agent_id) if agent_id is not None else (url,)
+    cursor = conn.execute(
+        f"UPDATE jobs SET apply_status = NULL, agent_id = NULL "
+        f"WHERE url = ? AND apply_status = 'in_progress'{owner_clause}",
+        params,
     )
     conn.commit()
+    return cursor.rowcount == 1
 
 
 # ---------------------------------------------------------------------------
@@ -672,7 +775,13 @@ def release_lock(url: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def mark_job(url: str, status: str, reason: str | None = None) -> None:
+def mark_job(
+    url: str,
+    status: str,
+    reason: str | None = None,
+    *,
+    agent_id: str | None = None,
+) -> None:
     """Manually mark a job's apply status in the database.
 
     Args:
@@ -685,25 +794,29 @@ def mark_job(url: str, status: str, reason: str | None = None) -> None:
     safe_reason = _safe_agent_error(reason or "manual")
     try:
         conn.execute("BEGIN IMMEDIATE")
+        owner_clause = " AND apply_status = 'in_progress' AND agent_id = ?" if agent_id is not None else ""
+        owner_params: tuple[str, ...] = (agent_id,) if agent_id is not None else ()
         if status == "applied":
-            conn.execute(
-                """
+            cursor = conn.execute(
+                f"""
                 UPDATE jobs SET apply_status = 'applied', applied_at = ?,
                                apply_error = NULL, agent_id = NULL
-                WHERE url = ?
+                WHERE url = ?{owner_clause}
             """,
-                (now, url),
+                (now, url, *owner_params),
             )
+            _require_owned_transition(cursor, agent_id)
             add_application_event(url, "applied", notes="Manually marked applied", ts=now, conn=conn)
         else:
-            conn.execute(
-                """
+            cursor = conn.execute(
+                f"""
                 UPDATE jobs SET apply_status = 'failed', apply_error = ?,
                                apply_attempts = 99, agent_id = NULL
-                WHERE url = ?
+                WHERE url = ?{owner_clause}
             """,
-                (safe_reason, url),
+                (safe_reason, url, *owner_params),
             )
+            _require_owned_transition(cursor, agent_id)
             add_application_event(url, "failed", notes=safe_reason, ts=now, conn=conn)
         conn.commit()
     except Exception:
@@ -887,7 +1000,7 @@ def parse_submission_proof(output: str, job: dict) -> SubmissionProof:
 
 
 RESULT_LINE_RE = re.compile(
-    r"^\s*RESULT:\s*(APPLIED|EXPIRED|CAPTCHA|LOGIN_ISSUE|FAILED(?:\s*:\s*[^\r\n]+)?)\s*$",
+    r"^\s*RESULT:\s*(APPLIED|READY_FOR_REVIEW|EXPIRED|CAPTCHA|LOGIN_ISSUE|FAILED(?:\s*:\s*[^\r\n]+)?)\s*$",
     re.IGNORECASE,
 )
 
@@ -999,10 +1112,11 @@ def _extract_result(
                 add_event(f"[W{worker_id}] FAILED ({elapsed}s): {reason}")
                 update_state(worker_id, status="failed", last_action=f"FAILED: {reason}")
                 return f"failed:{reason}", duration_ms
-        if result_status in {"APPLIED", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"}:
+        if result_status in {"APPLIED", "READY_FOR_REVIEW", "EXPIRED", "CAPTCHA", "LOGIN_ISSUE"}:
             add_event(f"[W{worker_id}] {result_status} ({elapsed}s): {job['title'][:30]}")
-            update_state(worker_id, status=result_status.lower(), last_action=f"{result_status} ({elapsed}s)")
-            return result_status.lower(), duration_ms
+            normalized_status = result_status.lower()
+            update_state(worker_id, status=normalized_status, last_action=f"{result_status} ({elapsed}s)")
+            return normalized_status, duration_ms
 
     agent_region = _agent_output_region(output)
     if "result:failed" in agent_region.lower():
@@ -1154,11 +1268,15 @@ def _build_agent_command(
     model: str,
     mcp_config_path: Path,
     prompt_file: Path,
+    *,
+    assisted: bool = False,
 ) -> list[str]:
     """Build the selected CLI command without invoking a shell."""
     backend = backend.strip().lower()
     servers = _validated_mcp_servers(mcp_config_path)
-    allowed_tools = [f"mcp__playwright__{name}" for name in PLAYWRIGHT_AGENT_TOOLS]
+    browser_tools = ASSISTED_PLAYWRIGHT_AGENT_TOOLS if assisted else PLAYWRIGHT_AGENT_TOOLS
+    disabled_tools = UNSAFE_PLAYWRIGHT_TOOLS + (("browser_close",) if assisted else ())
+    allowed_tools = [f"mcp__playwright__{name}" for name in browser_tools]
 
     if backend == "claude":
         claude_executable = config.get_apply_backend_executable("claude") or "claude"
@@ -1180,7 +1298,7 @@ def _build_agent_command(
             ",".join(allowed_tools),
             "--no-session-persistence",
             "--disallowedTools",
-            ",".join(f"mcp__playwright__{tool}" for tool in UNSAFE_PLAYWRIGHT_TOOLS),
+            ",".join(f"mcp__playwright__{tool}" for tool in disabled_tools),
             "--output-format",
             "stream-json",
             "--verbose",
@@ -1242,9 +1360,9 @@ def _build_agent_command(
         codex_args.extend(
             [
                 "-c",
-                f"{prefix}.enabled_tools={_compact_json(list(PLAYWRIGHT_AGENT_TOOLS))}",
+                f"{prefix}.enabled_tools={_compact_json(list(browser_tools))}",
                 "-c",
-                f"{prefix}.disabled_tools={_compact_json(list(UNSAFE_PLAYWRIGHT_TOOLS))}",
+                f"{prefix}.disabled_tools={_compact_json(list(disabled_tools))}",
             ]
         )
 
@@ -1321,7 +1439,7 @@ def gen_prompt(
     target_url: str,
     min_score: int = 7,
     max_score: int | None = None,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-luna",
     worker_id: int = 0,
     backend: str | None = None,
     browser: str = "chromium",
@@ -1362,6 +1480,7 @@ def gen_prompt(
     port = BASE_CDP_PORT + worker_id
     worker_profile_dir = setup_worker_profile(worker_id, browser)
     mcp_runtime = ensure_mcp_runtime()
+    ensure_mcp_browser(browser, runtime=mcp_runtime)
     mcp_path = config.APP_DIR / f".mcp-apply-{worker_id}.json"
     navigation_guard_path = _write_navigation_guard(mcp_path.with_name("navigation_guard.ts"), job)
     write_private_text(
@@ -1411,6 +1530,7 @@ def _prepare_worker_run(
     dry_run: bool,
     headless: bool,
     authorization: prompt_mod.ApplicationAuthorization | None = None,
+    resume_current_page: bool = False,
 ) -> tuple[Path, str, Path, list[str], dict[str, str]]:
     """Stage one agent run entirely below its fresh worker directory."""
     worker_dir = reset_worker_dir(worker_id)
@@ -1425,10 +1545,12 @@ def _prepare_worker_run(
             gmail_enabled=gmail_enabled,
             upload_dir=worker_dir,
             authorization=authorization,
+            resume_current_page=resume_current_page,
         )
 
         worker_profile_dir = setup_worker_profile(worker_id, browser)
         mcp_runtime = ensure_mcp_runtime()
+        ensure_mcp_browser(browser, runtime=mcp_runtime)
         mcp_config_path = worker_dir / "mcp.json"
         navigation_guard_path = _write_navigation_guard(worker_dir / "navigation_guard.ts", job)
         write_private_text(
@@ -1449,7 +1571,8 @@ def _prepare_worker_run(
 
         prompt_file = worker_dir / "apply_prompt.txt"
         write_private_text(prompt_file, agent_prompt, strict=True)
-        cmd = _build_agent_command(backend, model, mcp_config_path, prompt_file)
+        assisted = authorization is not None and authorization.source == "assisted_review"
+        cmd = _build_agent_command(backend, model, mcp_config_path, prompt_file, assisted=assisted)
         return worker_dir, agent_prompt, prompt_file, cmd, _agent_environment(backend)
     except Exception:
         _remove_worker_run_dir(worker_dir)
@@ -1460,12 +1583,13 @@ def run_job(
     job: dict,
     port: int,
     worker_id: int = 0,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-luna",
     backend: str = "codex",
     browser: str = "chromium",
     dry_run: bool = False,
     headless: bool = False,
     authorization: prompt_mod.ApplicationAuthorization | None = None,
+    resume_current_page: bool = False,
 ) -> tuple[str, int]:
     """Run one auto-apply job through the selected backend."""
     start = time.time()
@@ -1493,6 +1617,7 @@ def run_job(
             dry_run,
             headless,
             authorization,
+            resume_current_page,
         )
     except Exception as exc:
         duration_ms = int((time.time() - start) * 1000)
@@ -1697,6 +1822,214 @@ def run_job(
             _remove_worker_run_dir(worker_dir)
 
 
+@dataclass
+class AssistedApplySession:
+    """A visible, no-submit Chrome handoff that remains open for the user."""
+
+    job: dict
+    browser_process: subprocess.Popen
+    result: str
+    duration_ms: int
+    model: str
+    backend: str
+    authorization: prompt_mod.ApplicationAuthorization
+    worker_id: int = 0
+    agent_id: str | None = None
+    lease_stop_event: threading.Event | None = None
+    lease_thread: threading.Thread | None = None
+    lease_lost_event: threading.Event | None = None
+    closed: bool = False
+
+
+def _close_assisted_session(session: AssistedApplySession) -> None:
+    """Stop lease maintenance and close DivApply's owned browser once."""
+    if session.lease_stop_event is not None:
+        session.lease_stop_event.set()
+    if session.lease_thread is not None:
+        session.lease_thread.join(timeout=2)
+    try:
+        cleanup_worker(session.worker_id, session.browser_process)
+    finally:
+        session.closed = True
+
+
+def _assert_assisted_session_owns_lease(session: AssistedApplySession) -> str:
+    """Return the owner token or reject a closed, unowned, or invalid session."""
+    if session.closed:
+        raise ValueError("assisted apply session is already closed")
+    if session.agent_id is None:
+        raise AssistedApplyLeaseLostError("assisted apply session has no owner token")
+    if session.lease_lost_event is not None and session.lease_lost_event.is_set():
+        raise AssistedApplyLeaseLostError("assisted apply session lost its database lease")
+    return session.agent_id
+
+
+def start_assisted_apply(
+    target_url: str,
+    *,
+    min_score: int = 0,
+    max_score: int | None = None,
+    model: str = "gpt-5.6-luna",
+    backend: str = "codex",
+    authorization: prompt_mod.ApplicationAuthorization | None = None,
+    worker_id: int = 0,
+) -> AssistedApplySession | None:
+    """Autofill one explicit job in visible Chrome and keep it open for human review."""
+    prompt_mod.validate_application_authorization(authorization, dry_run=True)
+    if authorization is None or authorization.source != "assisted_review":
+        raise ValueError("assisted apply requires assisted_review authorization")
+    if not target_url:
+        raise ValueError("assisted apply requires an explicit target URL")
+
+    init_worker(worker_id)
+    recover_stale_apply_locks()
+    agent_id = f"assisted-{os.getpid()}-{uuid.uuid4().hex}"
+    job = acquire_job(
+        target_url=target_url,
+        min_score=min_score,
+        max_score=max_score,
+        worker_id=worker_id,
+        assisted=True,
+        agent_id=agent_id,
+    )
+    if job is None:
+        return None
+
+    port = BASE_CDP_PORT + worker_id
+    browser_process: subprocess.Popen | None = None
+    lease_stop_event: threading.Event | None = None
+    lease_thread: threading.Thread | None = None
+    lease_lost_event = threading.Event()
+    try:
+        lease_stop_event, lease_thread = _start_assisted_lease_heartbeat(job["url"], agent_id, lease_lost_event)
+        browser_process = launch_chrome(worker_id, port=port, headless=False)
+        result, duration_ms = run_job(
+            job,
+            port=port,
+            worker_id=worker_id,
+            model=model,
+            backend=backend,
+            browser="chrome",
+            dry_run=True,
+            headless=False,
+            authorization=authorization,
+        )
+        return AssistedApplySession(
+            job=job,
+            browser_process=browser_process,
+            result=result,
+            duration_ms=duration_ms,
+            model=model,
+            backend=backend,
+            authorization=authorization,
+            worker_id=worker_id,
+            agent_id=agent_id,
+            lease_stop_event=lease_stop_event,
+            lease_thread=lease_thread,
+            lease_lost_event=lease_lost_event,
+        )
+    except BaseException as original_error:
+        if lease_stop_event is not None:
+            lease_stop_event.set()
+        if lease_thread is not None:
+            lease_thread.join(timeout=2)
+        try:
+            release_lock(job["url"], agent_id=agent_id)
+        except Exception as cleanup_error:
+            logger.warning(
+                "Could not release assisted apply lock after %s: %s",
+                type(original_error).__name__,
+                _safe_agent_error(cleanup_error),
+            )
+        if browser_process is not None:
+            try:
+                cleanup_worker(worker_id, browser_process)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Could not clean assisted Chrome after %s: %s",
+                    type(original_error).__name__,
+                    _safe_agent_error(cleanup_error),
+                )
+        raise
+
+
+def resume_assisted_apply(session: AssistedApplySession) -> str:
+    """Resume the same visible CDP browser after the user resolves a blocker."""
+    _assert_assisted_session_owns_lease(session)
+    if session.browser_process.poll() is not None:
+        raise RuntimeError("the assisted Chrome window is no longer running")
+    result, duration_ms = run_job(
+        session.job,
+        port=BASE_CDP_PORT + session.worker_id,
+        worker_id=session.worker_id,
+        model=session.model,
+        backend=session.backend,
+        browser="chrome",
+        dry_run=True,
+        headless=False,
+        authorization=session.authorization,
+        resume_current_page=True,
+    )
+    session.result = result
+    session.duration_ms += duration_ms
+    return result
+
+
+def finish_assisted_apply(
+    session: AssistedApplySession,
+    decision: str,
+    *,
+    reason: str | None = None,
+) -> str:
+    """Record the user's handoff decision and close only DivApply's owned Chrome."""
+    agent_id = _assert_assisted_session_owns_lease(session)
+    normalized = decision.strip().casefold()
+    try:
+        if normalized in {"submitted", "applied"}:
+            mark_job(session.job["url"], "applied", agent_id=agent_id)
+            outcome = "user_confirmed_applied"
+        elif normalized in {"later", "save", "pending"}:
+            mark_manual_review(
+                session.job["url"],
+                reason or "Assisted application saved for later",
+                duration_ms=session.duration_ms,
+                agent_id=agent_id,
+            )
+            outcome = "saved_for_later"
+        elif normalized == "failed":
+            mark_result(
+                session.job["url"],
+                "failed",
+                reason or "User reported assisted application failure",
+                duration_ms=session.duration_ms,
+                agent_id=agent_id,
+            )
+            outcome = "failed"
+        elif normalized in {"skip", "quit", "cancel"}:
+            if not release_lock(session.job["url"], agent_id=agent_id):
+                raise AssistedApplyLeaseLostError("assisted apply session no longer owns this job")
+            outcome = "skipped"
+        else:
+            raise ValueError("decision must be submitted, later, failed, or skip")
+    except AssistedApplyLeaseLostError:
+        if session.lease_lost_event is not None:
+            session.lease_lost_event.set()
+        raise
+    _close_assisted_session(session)
+    return outcome
+
+
+def abort_assisted_apply(session: AssistedApplySession) -> str:
+    """Explicitly abandon an assisted handoff and close its owned browser."""
+    if session.closed:
+        raise ValueError("assisted apply session is already closed")
+    try:
+        release_lock(session.job["url"], agent_id=session.agent_id)
+    finally:
+        _close_assisted_session(session)
+    return "aborted"
+
+
 # ---------------------------------------------------------------------------
 # Worker queue loop
 # ---------------------------------------------------------------------------
@@ -1709,7 +2042,7 @@ def worker_loop(
     min_score: int = 7,
     max_score: int | None = None,
     headless: bool = False,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-luna",
     backend: str = "codex",
     browser: str = "chromium",
     dry_run: bool = False,
@@ -1839,7 +2172,7 @@ def main(
     min_score: int = 7,
     max_score: int | None = None,
     headless: bool = False,
-    model: str = "gpt-5.4-mini",
+    model: str = "gpt-5.6-luna",
     backend: str = "codex",
     browser: str = "chromium",
     dry_run: bool = False,

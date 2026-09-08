@@ -27,6 +27,13 @@ MEANINGFUL_FULL_DESCRIPTION_SQL = (
 )
 ACTIONABLE_JOB_SQL = (
     "application_mode = 'active' AND source_verification = 'official' "
+    "AND COALESCE(eligibility_status, '') != 'unmet' "
+    "AND COALESCE(availability_state, 'unknown') != 'closed'"
+)
+ASSISTED_ACTIONABLE_JOB_SQL = (
+    "application_mode IN ('active', 'manual_review') "
+    "AND COALESCE(eligibility_status, '') != 'unmet' "
+    "AND source_verification IN ('official', 'user_confirmed_direct') "
     "AND COALESCE(availability_state, 'unknown') != 'closed'"
 )
 
@@ -187,6 +194,9 @@ def init_db(db_path: Path | str | None = None) -> sqlite3.Connection:
 
             -- Scoring stage (job_scorer)
             fit_score             INTEGER,
+            qualification_score   INTEGER,
+            application_readiness TEXT,
+            readiness_flags       TEXT,
             llm_score             INTEGER,
             keyword_score         REAL,
             embedding_score       REAL,
@@ -282,6 +292,9 @@ _ALL_COLUMNS: dict[str, str] = {
     "detail_error": "TEXT",
     # Scoring
     "fit_score": "INTEGER",
+    "qualification_score": "INTEGER",
+    "application_readiness": "TEXT",
+    "readiness_flags": "TEXT",
     "llm_score": "INTEGER",
     "keyword_score": "REAL",
     "embedding_score": "REAL",
@@ -297,14 +310,26 @@ _ALL_COLUMNS: dict[str, str] = {
     "score_attempts": "INTEGER DEFAULT 0",
     "score_error": "TEXT",
     "score_retry_at": "TEXT",
+    "eligibility_status": "TEXT",
+    "requirements_assessment": "TEXT",
+    "scoring_version": "TEXT",
+    "scoring_input_hash": "TEXT",
+    "requirements_description": "TEXT",
+    "requirements_sources": "TEXT",
+    "requirements_error": "TEXT",
+    "requirements_checked_at": "TEXT",
+    "detail_source_url": "TEXT",
+    "scoring_source_url": "TEXT",
     # Tailoring
     "tailored_resume_path": "TEXT",
     "tailored_at": "TEXT",
     "tailor_attempts": "INTEGER DEFAULT 0",
+    "tailor_error": "TEXT",
     # Cover letter
     "cover_letter_path": "TEXT",
     "cover_letter_at": "TEXT",
     "cover_attempts": "INTEGER DEFAULT 0",
+    "cover_error": "TEXT",
     # Application
     "applied_at": "TEXT",
     "apply_status": "TEXT",

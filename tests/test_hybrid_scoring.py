@@ -712,7 +712,8 @@ def test_v120_score_job_removes_accepted_degree_gap_from_every_persisted_field(m
     assert "apple" in result["missing_skills"].casefold()
     assert "itil" in result["missing_skills"].casefold()
     assert result["reasoning"].casefold().count("explicitly accepts equivalent experience") == 1
-    assert result["apply_or_skip_reason"].startswith("Apply -")
+    assert result["eligibility_status"] == "uncertain"
+    assert result["apply_or_skip_reason"].startswith("Review -")
     assert "ticket" not in result["apply_or_skip_reason"].casefold()
     breakdown = json.loads(result["score_breakdown"])
     assert "degree" not in breakdown["llm"]["reasoning"].casefold()
@@ -963,7 +964,8 @@ def test_score_job_overrides_apply_wording_for_discovery_only(monkeypatch) -> No
         require_benefits=True,
     )
 
-    assert result["score"] >= 7
+    assert result["score"] == 6
+    assert result["eligibility_status"] == "uncertain"
     assert result["apply_or_skip_reason"].startswith("Discovery only")
     assert "Apply now" not in result["apply_or_skip_reason"]
 
@@ -1031,8 +1033,9 @@ def test_score_prompt_does_not_penalize_job_category_alone() -> None:
     prompt = scorer.SCORE_PROMPT
 
     assert "Rank only job fit" in prompt
-    assert "active search filters state schedule limits" in prompt
-    assert "unless active search filters or verified profile facts make it relevant" in prompt
+    assert "Do not lower qualification fit because of search priority" in prompt
+    assert "reported separately" in prompt
+    assert "Do not reward or penalize any job family" in prompt
     assert "do not require the same prior job title or exact industry/tool" in prompt
     assert "avoid scoring below 6 solely because the candidate lacks exact same-title experience" in prompt
     assert "Do not penalize legitimate remote" in prompt
@@ -1130,6 +1133,52 @@ def test_profile_evidence_context_states_highest_completed_degree_separately_fro
     assert "Highest completed degree: Bachelor of Science" not in context
 
 
+def test_profile_evidence_context_honors_academic_record_completion_status() -> None:
+    context = _build_profile_evidence_context(
+        {
+            "education_schools": [
+                {
+                    "school": "Example Community College",
+                    "degree": "Associate of General Studies",
+                    "major": "General Studies",
+                    "degree_received": False,
+                    "status": "in progress",
+                    "education_record_degree_status": "conferred",
+                    "end_year": "2024",
+                }
+            ]
+        }
+    )
+
+    assert "Highest completed degree: Associate of General Studies" in context
+    assert "Example Community College | Associate of General Studies | General Studies | completed" in context
+    assert "in progress" not in context
+
+
+def test_profile_evidence_context_can_project_bachelors_for_scoring_only() -> None:
+    context = _build_profile_evidence_context(
+        {
+            "education_schools": [
+                {
+                    "school": "Example University",
+                    "degree": "Bachelor of Science",
+                    "major": "Public Health",
+                    "degree_received": False,
+                    "status": "in progress",
+                    "notes": "In progress; expected next year.",
+                }
+            ]
+        },
+        assume_completed_bachelors=True,
+    )
+
+    assert "SCORING-ONLY EDUCATION PROJECTION" in context
+    assert "Bachelor of Science in Public Health" in context
+    assert "completed for scoring projection only" in context
+    assert "Highest completed degree: Bachelor of Science" not in context
+    assert "expected next year" not in context
+
+
 def test_profile_evidence_context_separates_professional_and_project_it_time() -> None:
     context = _build_profile_evidence_context(
         {
@@ -1209,7 +1258,7 @@ def test_score_job_prompt_includes_coursework_as_internal_only(monkeypatch) -> N
     assert "ACADEMIC COURSEWORK (internal only, do not cite unless already in resume)" in user_prompt
     assert "COURSEWORK SKILL MAP (internal only, do not cite unless already in resume)" in user_prompt
     assert "Active Directory exposure" in user_prompt
-    assert "do not treat in-progress credentials as completed" in user_prompt
+    assert "honor only explicitly labeled scoring projections" in user_prompt
 
 
 def test_search_evidence_context_includes_schedule_filters() -> None:
@@ -1453,16 +1502,16 @@ def test_v128_required_part_time_conflict_and_exact_exception() -> None:
     ) == "active"
 
 
-def test_score_prompt_keeps_fallback_and_low_hour_roles_out_of_primary_queue() -> None:
+def test_score_prompt_separates_qualification_from_queue_readiness() -> None:
     prompt = scorer.SCORE_PROMPT
 
-    assert "Priority 3 or outside all named target families: maximum score 6" in prompt
-    assert "part-time, per-diem, temporary, or seasonal role: maximum score 6" in prompt
+    assert "must not change FIT_SCORE" in prompt
+    assert "application-readiness concerns reported separately" in prompt
     assert "TARGET_PRIORITY: [1, 2, 3, or outside]" in prompt
     assert "Do not say a degree level is absent" in prompt
 
 
-def test_composite_score_deterministically_caps_fallback_priority() -> None:
+def test_composite_score_flags_fallback_without_lowering_qualification() -> None:
     result = composite_score(
         job_description="Full-time customer success coordinator.",
         resume_text="Priority semantics: 1=primary, 2=bridge, 3=fallback",
@@ -1477,11 +1526,13 @@ def test_composite_score_deterministically_caps_fallback_priority() -> None:
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert result["application_readiness"] == "review"
+    assert "outside_primary_target" in json.loads(result["readiness_flags"])
     assert breakdown["search_priority_cap"] is True
 
 
-def test_composite_score_caps_missing_target_priority() -> None:
+def test_composite_score_flags_missing_target_priority_without_lowering_qualification() -> None:
     result = composite_score(
         job_description="Full-time support analyst.",
         resume_text="Priority semantics: 1=primary, 2=bridge, 3=fallback",
@@ -1495,11 +1546,12 @@ def test_composite_score_caps_missing_target_priority() -> None:
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert "outside_primary_target" in json.loads(result["readiness_flags"])
     assert breakdown["search_priority_cap"] is True
 
 
-def test_composite_score_deterministically_caps_low_hour_full_time_preference_conflict() -> None:
+def test_composite_score_flags_low_hour_full_time_preference_conflict() -> None:
     result = composite_score(
         job_description="Part-time seasonal office assistant, 12 hours per week.",
         resume_text="Search schedule preference: full-time professional roles",
@@ -1515,11 +1567,12 @@ def test_composite_score_deterministically_caps_low_hour_full_time_preference_co
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert "schedule_needs_review" in json.loads(result["readiness_flags"])
     assert breakdown["schedule_preference_cap"] is True
 
 
-def test_composite_score_caps_unknown_current_part_time_schedule() -> None:
+def test_composite_score_flags_unknown_current_part_time_schedule() -> None:
     result = composite_score(
         job_description="IT support specialist. Troubleshoot devices and accounts.",
         resume_text="Device troubleshooting and account support projects.",
@@ -1536,7 +1589,7 @@ def test_composite_score_caps_unknown_current_part_time_schedule() -> None:
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
     assert breakdown["schedule_preference_cap"] is True
 
 
@@ -1561,7 +1614,29 @@ def test_composite_score_accepts_explicit_part_time_without_invented_hour_limit(
     assert breakdown["schedule_preference_cap"] is False
 
 
-def test_composite_score_caps_configured_max_hours_when_posting_exceeds_it() -> None:
+def test_composite_score_uses_structured_full_time_metadata_for_readiness() -> None:
+    result = composite_score(
+        job_description="IT support specialist. Troubleshoot devices and accounts.",
+        resume_text="Device troubleshooting and account support projects.",
+        llm_result={
+            "score": 8,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong skills fit.",
+        },
+        preferred_schedule="full_time",
+        employment_type="Permanent Fulltime",
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert breakdown["schedule_preference_cap"] is False
+    assert "schedule_needs_review" not in json.loads(result["readiness_flags"])
+
+
+def test_composite_score_flags_configured_max_hours_when_posting_exceeds_it() -> None:
     result = composite_score(
         job_description="Part-time IT support specialist, 30 hours per week.",
         resume_text="IT support projects.",
@@ -1577,10 +1652,11 @@ def test_composite_score_caps_configured_max_hours_when_posting_exceeds_it() -> 
         max_hours_per_week=24,
     )
 
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert "schedule_needs_review" in json.loads(result["readiness_flags"])
 
 
-def test_composite_score_caps_destination_without_full_time_or_benefits_evidence() -> None:
+def test_composite_score_flags_destination_without_full_time_or_benefits_evidence() -> None:
     result = composite_score(
         job_description="IT systems analyst supporting applications and users.",
         resume_text="Application support and troubleshooting projects.",
@@ -1597,7 +1673,11 @@ def test_composite_score_caps_destination_without_full_time_or_benefits_evidence
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert set(json.loads(result["readiness_flags"])) >= {
+        "schedule_needs_review",
+        "benefits_not_confirmed",
+    }
     assert breakdown["schedule_preference_cap"] is True
     assert breakdown["benefits_evidence_cap"] is True
 
@@ -1646,11 +1726,12 @@ def test_posting_text_cannot_spoof_schedule_exception() -> None:
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert "schedule_needs_review" in json.loads(result["readiness_flags"])
     assert breakdown["referral_schedule_exception"] is False
 
 
-def test_composite_score_caps_unverified_aggregator_discovery() -> None:
+def test_composite_score_flags_unverified_aggregator_without_lowering_qualification() -> None:
     result = composite_score(
         job_description="Full-time IT support. Benefits include medical and retirement.",
         resume_text="IT support and troubleshooting projects.",
@@ -1668,5 +1749,29 @@ def test_composite_score_caps_unverified_aggregator_discovery() -> None:
     )
 
     breakdown = json.loads(result["score_breakdown"])
-    assert result["score"] <= 6
+    assert result["score"] >= 7
+    assert "source_needs_verification" in json.loads(result["readiness_flags"])
     assert breakdown["source_verification_cap"] is True
+
+
+def test_composite_score_flags_relocation_without_lowering_qualification() -> None:
+    result = composite_score(
+        job_description="Full-time IT support technician with medical and retirement benefits.",
+        resume_text="IT support and troubleshooting projects.",
+        llm_result={
+            "score": 9,
+            "target_priority": "1",
+            "risk_flags": "none",
+            "missing_skills": "none",
+            "apply_or_skip_reason": "Apply.",
+            "reasoning": "Strong fit.",
+        },
+        preferred_schedule="full_time",
+        require_benefits=True,
+        relocation_needed=True,
+    )
+
+    breakdown = json.loads(result["score_breakdown"])
+    assert result["score"] >= 7
+    assert "relocation_needed" in json.loads(result["readiness_flags"])
+    assert breakdown["relocation_needed"] is True

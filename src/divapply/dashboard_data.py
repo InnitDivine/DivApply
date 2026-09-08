@@ -14,6 +14,7 @@ from divapply.database import (
     ensure_columns,
     get_connection,
 )
+from divapply.scoring.requirements import SCORING_VERSION
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,7 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     if conn is None:
         conn = get_connection()
     ensure_columns(conn)
+    current_score = f"CASE WHEN scoring_version = '{SCORING_VERSION}' THEN fit_score END"
     dashboard_score_table = (
         "jobs INDEXED BY idx_jobs_dashboard_score"
         if _has_index(conn, "idx_jobs_dashboard_score")
@@ -70,11 +72,11 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     ).fetchone()[0] or 0)
     scored = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
-        "WHERE archived_at IS NULL AND fit_score IS NOT NULL"
+        f"WHERE archived_at IS NULL AND {current_score} IS NOT NULL"
     ).fetchone()[0] or 0)
     high_fit = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
-        "WHERE archived_at IS NULL AND fit_score >= 7"
+        f"WHERE archived_at IS NULL AND {current_score} >= 7"
     ).fetchone()[0] or 0)
     tailored = int(conn.execute(
         f"SELECT COUNT(*) FROM {dashboard_score_table} "
@@ -109,7 +111,7 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     if scored:
         rows = conn.execute(
             f"SELECT fit_score, COUNT(*) FROM {dashboard_score_table} "
-            "WHERE archived_at IS NULL AND fit_score IS NOT NULL "
+            f"WHERE archived_at IS NULL AND {current_score} IS NOT NULL "
             "GROUP BY fit_score ORDER BY fit_score DESC"
         ).fetchall()
         for row in rows:
@@ -118,11 +120,11 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     site_stats = conn.execute(f"""
         SELECT site,
                COUNT(*) as total,
-               SUM(CASE WHEN fit_score >= 7 THEN 1 ELSE 0 END) as high_fit,
-               SUM(CASE WHEN fit_score BETWEEN 5 AND 6 THEN 1 ELSE 0 END) as mid_fit,
-               SUM(CASE WHEN fit_score < 5 AND fit_score IS NOT NULL THEN 1 ELSE 0 END) as low_fit,
-               SUM(CASE WHEN fit_score IS NULL THEN 1 ELSE 0 END) as unscored,
-               ROUND(AVG(fit_score), 1) as avg_score
+               SUM(CASE WHEN {current_score} >= 7 THEN 1 ELSE 0 END) as high_fit,
+               SUM(CASE WHEN {current_score} BETWEEN 5 AND 6 THEN 1 ELSE 0 END) as mid_fit,
+               SUM(CASE WHEN {current_score} < 5 THEN 1 ELSE 0 END) as low_fit,
+               SUM(CASE WHEN {current_score} IS NULL THEN 1 ELSE 0 END) as unscored,
+               ROUND(AVG({current_score}), 1) as avg_score
         FROM {dashboard_score_table}
         WHERE archived_at IS NULL
         GROUP BY site ORDER BY high_fit DESC, total DESC
@@ -131,11 +133,16 @@ def fetch_dashboard_snapshot(conn: sqlite3.Connection | None = None) -> Dashboar
     jobs = conn.execute(f"""
         SELECT url, title, salary, description, location, site, strategy,
                full_description, application_url, detail_error,
-               fit_score, score_reasoning, tailored_resume_path, cover_letter_path,
+               {current_score} AS fit_score, fit_score AS prior_fit_score,
+               qualification_score, application_readiness, readiness_flags,
+               company, eligibility_status, requirements_assessment, scoring_version,
+               requirements_error, tailor_error, cover_error, tailor_attempts, cover_attempts,
+               availability_state, score_error, detail_source_url, scoring_source_url, detail_scraped_at,
+               score_reasoning, tailored_resume_path, cover_letter_path,
                apply_status, applied_at, apply_error, verification_confidence,
-               market_label, application_mode, source_verification
+               market_label, application_mode, employment_type, source_verification
         FROM {dashboard_score_table}
-        WHERE archived_at IS NULL AND fit_score >= 5
+        WHERE archived_at IS NULL
         ORDER BY fit_score DESC, site, title
     """).fetchall()
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from divapply.scoring.tailor import assemble_resume_text
 from divapply.scoring.tailor import _build_tailor_prompt, _format_job_trace
 from divapply.scoring import tailor
@@ -92,7 +94,8 @@ def test_assemble_resume_labels_major_transfer_and_selective_verified_gpa() -> N
                 "gpa_as_of": "2026-07-12",
                 "units": "113",
                 "units_scope": "total",
-                "expected_graduation_year": "2027",
+                "expected_graduation_year": "2026",
+                "expected_graduation_month": 12,
             },
             {
                 "degree": "Associate of General Studies",
@@ -124,8 +127,9 @@ def test_assemble_resume_labels_major_transfer_and_selective_verified_gpa() -> N
 
     text = assemble_resume_text(data, profile)
 
-    assert "Bachelor of Science in Public Health (in progress; expected 2027)" in text
-    assert "GPA: 3.6 (as of July 12, 2026)" in text
+    assert "Bachelor of Science in Public Health (in progress; expected December 2026)" in text
+    assert "GPA: 3.6" in text
+    assert "as of July 12, 2026" not in text
     assert "Earned credits: 113" in text
     assert "Associate of General Studies (conferred 2024)" in text
     assert "GPA: 2.92" not in text
@@ -133,6 +137,110 @@ def test_assemble_resume_labels_major_transfer_and_selective_verified_gpa() -> N
     assert "Community Health Sciences coursework (transferred)" in text
     assert "Bachelor of Science (transferred)" not in text
     assert text.count("Minor:") == 1
+
+
+def test_assemble_resume_keeps_each_school_paired_with_its_own_degree_status() -> None:
+    data = {
+        "title": "Information Technology Analyst",
+        "summary": "Factual summary.",
+        "skills": {},
+        "experience": [],
+        "projects": [],
+    }
+    profile = {
+        "personal": {"full_name": "Jane Doe"},
+        "experience": {"education_level": "Bachelor's Degree (in progress)"},
+        "education_schools": [
+            {
+                "school": "Example State University",
+                "city_state": "Example City, KY",
+                "degree": "Bachelor of Science",
+                "major": "Public Health",
+                "degree_received": False,
+                "status": "in progress",
+                "start_year": "2024",
+                "end_year": "present",
+                "expected_graduation_year": "2027",
+            },
+            {
+                "school": "Example Community College",
+                "city_state": "Sample City, NV",
+                "degree": "Associate of General Studies",
+                "major": "General Studies",
+                "degree_received": True,
+                "start_year": "2023",
+                "end_year": "2024",
+            },
+            {
+                "school": "Prior Regional University",
+                "city_state": "Sample City, NV",
+                "degree": "Bachelor of Science",
+                "major": "Community Health Sciences",
+                "degree_received": False,
+                "status": "transferred",
+                "start_year": "2019",
+                "end_year": "2022",
+            },
+        ],
+    }
+
+    text = assemble_resume_text(data, profile)
+
+    assert (
+        "Example State University | Bachelor of Science in Public Health "
+        "(in progress; expected 2027)" in text
+    )
+    assert (
+        "Example Community College | Associate of General Studies "
+        "(conferred 2024)" in text
+    )
+    assert (
+        "Prior Regional University | Community Health Sciences coursework (transferred)"
+        in text
+    )
+    assert "Example Community College | Bachelor's Degree (in progress)" not in text
+
+
+def test_assemble_resume_injects_only_earned_certifications_without_private_ids() -> None:
+    data = {
+        "title": "Help Desk Technician",
+        "summary": "Factual summary.",
+        "skills": {},
+        "experience": [],
+        "projects": [],
+    }
+    profile = {
+        "personal": {"full_name": "Jane Doe"},
+        "certifications": [
+            {
+                "name": "Information Technology Certificate Program",
+                "issuer": "Example Technical College",
+                "status": "In progress",
+            },
+            {
+                "name": "CompTIA A+",
+                "issuer": "CompTIA",
+                "status": "Active",
+                "issued": "2026-08-11",
+                "expires": "2029-08-11",
+                "number": "PRIVATE-ID",
+                "exam_series": "220-1201 / 220-1202",
+            },
+        ],
+        "education_schools": [],
+    }
+
+    text = assemble_resume_text(data, profile)
+    judge_prompt = tailor._build_judge_prompt(profile)
+
+    assert "CERTIFICATIONS\nCompTIA A+ | CompTIA | Earned 2026 | Expires 2029" in text
+    assert text.index("CERTIFICATIONS") < text.index("EDUCATION")
+    assert "Information Technology Certificate Program" not in text
+    assert "PRIVATE-ID" not in text
+    assert "220-1201" not in text
+    assert "CompTIA A+ | CompTIA | Earned 2026 | Expires 2029" in judge_prompt
+    assert "Information Technology Certificate Program" not in judge_prompt
+    assert "PRIVATE-ID" not in judge_prompt
 
 
 def test_v119_education_renders_structured_coursework_and_expected_status() -> None:
@@ -188,6 +296,42 @@ def test_tailor_prompt_allows_coursework_skills_without_paid_work_claims() -> No
     assert "Coursework may support the skills section" in prompt
     assert "do not present coursework exposure as job experience" in prompt
     assert "Active Directory" in prompt
+
+
+def test_tailor_prompt_reserves_space_for_injected_certifications_and_education() -> None:
+    base_prompt = _build_tailor_prompt({})
+    fixed_sections_prompt = _build_tailor_prompt(
+        {
+            "certifications": [
+                {
+                    "name": "CompTIA A+",
+                    "issuer": "CompTIA",
+                    "status": "Active",
+                    "issued": "2026-08-11",
+                    "expires": "2029-08-11",
+                }
+            ],
+            "education_schools": [
+                {
+                    "school": "Example University",
+                    "city_state": "Exampletown, ZZ",
+                    "degree": "Bachelor of Science",
+                    "major": "Information Technology",
+                    "status": "in progress",
+                    "start_year": "2024",
+                    "end_year": "present",
+                    "expected_graduation_year": "2027",
+                }
+            ],
+        }
+    )
+
+    base_match = re.search(r"Target about (\d+)-(\d+) words", base_prompt)
+    fixed_match = re.search(r"Target about (\d+)-(\d+) words", fixed_sections_prompt)
+
+    assert base_match and fixed_match
+    assert int(fixed_match.group(2)) < int(base_match.group(2))
+    assert "code-injected CERTIFICATIONS and EDUCATION" in fixed_sections_prompt
 
 
 def test_v127_destination_summary_replaces_conflicting_part_time_availability() -> None:
@@ -254,6 +398,8 @@ def test_tailor_prompt_requires_target_positioning_without_assumed_role_or_metri
     assert "do not force operating-system/network/cloud categories" in prompt
     assert "Provisioned and administer" in prompt
     assert "prefer a verified PC-building/hardware project" in prompt
+    assert "smart, articulate college student and early-career professional" in prompt
+    assert "Skill categories must read like useful professional groupings" in prompt
 
 
 def test_assemble_resume_preserves_allowlisted_core_qualifications_heading() -> None:
@@ -321,6 +467,29 @@ def test_judge_prompt_does_not_refute_allowed_targeting_or_canonical_education()
     assert "Major: Public Health" in prompt
     assert "GPA: 3.6" in prompt
     assert "explicit allowed transformations above take precedence" in prompt
+
+
+def test_judge_prompt_uses_transcript_status_instead_of_stale_profile_status() -> None:
+    prompt = tailor._build_judge_prompt(
+        {
+            "education_schools": [
+                {
+                    "school": "Example Community College",
+                    "degree": "Associate of General Studies",
+                    "status": "in progress",
+                    "degree_received": False,
+                    "education_record_degree_status": "conferred",
+                    "end_year": "2024",
+                }
+            ]
+        }
+    )
+
+    education_line = next(
+        line for line in prompt.splitlines() if "School: Example Community College" in line
+    )
+    assert "Status: received" in education_line
+    assert "Status: in progress" not in education_line
 
 
 def test_resume_validator_rejects_malformed_fragments() -> None:

@@ -24,25 +24,28 @@ def job_artifact_stem(job: Mapping[str, object]) -> str:
     url = str(job.get("url") or "").strip()
     if not url:
         raise ValueError("Generated job artifacts require a non-empty job URL")
-    site = _safe_component(job.get("site"), limit=20, fallback="Unknown")
+    company = _safe_component(job.get("company") or job.get("site"), limit=28, fallback="Company")
     title = _safe_component(job.get("title"), limit=50, fallback="Job")
-    identity = hashlib.sha256(url.encode("utf-8")).hexdigest()
-    return f"{site}_{title}--{identity}"
+    identity = hashlib.sha256(url.encode("utf-8")).hexdigest()[:12]
+    return f"{title}-{company}--{identity}"
 
 
 def tailored_artifact_paths(root: Path, job: Mapping[str, object]) -> tuple[Path, Path, Path]:
     """Return text, job-trace, and validation-report paths for one job."""
     stem = job_artifact_stem(job)
+    name, identity = stem.rsplit("--", 1)
+    folder = root / identity
     return (
-        root / f"{stem}.txt",
-        root / f"{stem}_JOB.txt",
-        root / f"{stem}_REPORT.json",
+        folder / f"{name}.txt",
+        folder / f"{name}_JOB.txt",
+        folder / f"{name}_REPORT.json",
     )
 
 
 def cover_letter_artifact_path(root: Path, job: Mapping[str, object]) -> Path:
     """Return the text cover-letter path for one job."""
-    return root / f"{job_artifact_stem(job)}_CL.txt"
+    name, identity = job_artifact_stem(job).rsplit("--", 1)
+    return root / identity / f"{name}_CL.txt"
 
 
 def artifact_family_key(path: Path | str) -> str:

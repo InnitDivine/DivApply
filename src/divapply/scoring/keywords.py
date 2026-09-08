@@ -28,15 +28,6 @@ _STOPWORDS = {
     "then", "this", "through", "time", "using", "will", "with", "work",
     "years", "your", "note", "a.m", "p.m", "am", "pm",
 }
-_REQUIRED_MARKERS = {
-    "must", "required", "requirement", "requirements", "minimum",
-    "mandatory", "qualification", "qualifications", "responsibilities",
-    "experience", "skill", "skills",
-}
-_PREFERRED_MARKERS = {
-    "preferred", "nice to have", "nice-to-have", "bonus", "plus",
-    "desired", "optional", "advantage",
-}
 _REQUIRED_LINE_RE = re.compile(
     r"^(?:job\s+)?(?:special\s+requirements?|required(?:\s+(?:skills|qualifications|experience))?|requirements?|"
     r"minimum(?:\s+qualifications)?|mandatory|qualifications?|responsibilities|duties)\b|"
@@ -158,7 +149,7 @@ _SKILL_HINTS = {
     "greenhouse", "lever", "customer", "support", "accounting", "finance",
     "data", "analysis", "analytics", "documentation", "communication", "network",
     "troubleshoot", "troubleshooting", "networking", "security", "compliance", "inventory",
-    "scheduling", "reporting", "reconciliation", "billing", "crm",
+    "scheduling", "reporting", "reconciliation", "crm",
 }
 _SKILL_PHRASES = {
     "active directory",

@@ -239,15 +239,16 @@ def search_employer(
                 "employer_name": employer["name"],
             })
 
+        if max_results and len(all_jobs) >= max_results:
+            del all_jobs[max_results:]
+            break
+
         offset += page_size
         page_num = offset // page_size
         if offset >= total:
             break
         if page_num >= max_pages:
             log.info("%s: capped at %d pages (%d results scanned)", employer["name"], max_pages, offset)
-            break
-        if max_results and len(all_jobs) >= max_results:
-            all_jobs = all_jobs[:max_results]
             break
 
     log.info("%s: %d jobs found%s", employer["name"], len(all_jobs),
@@ -402,6 +403,7 @@ def _process_one(
     include_titles: list[str] | None = None,
     market_label: str = "",
     application_mode: str = "manual_review",
+    max_results: int = 0,
 ) -> dict:
     """Search one employer, fetch details, store results."""
     emp = employers[employer_key]
@@ -413,6 +415,7 @@ def _process_one(
             location_filter=employer_location_filter,
             accept_locs=accept_locs,
             reject_locs=reject_locs,
+            max_results=max_results,
         )
     except Exception as e:
         log.error("%s: ERROR searching '%s': %s", emp["name"], search_text, e)
@@ -510,7 +513,7 @@ def scrape_employers(
                 pool.submit(
                     _process_one, key, employers, search_text,
                     location_filter, accept_locs, reject_locs, title_excludes, include_titles,
-                    market_label, application_mode,
+                    market_label, application_mode, max_results=max_results,
                 ): key
                 for key in valid_keys
             }
@@ -545,7 +548,7 @@ def scrape_employers(
             result = _process_one(
                 key, employers, search_text,
                 location_filter, accept_locs, reject_locs, title_excludes, include_titles,
-                market_label, application_mode,
+                market_label, application_mode, max_results=max_results,
             )
             completed += 1
             total_new += result["new"]
@@ -594,6 +597,8 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
     accept_locs, reject_locs = _load_location_filter(search_cfg)
     title_excludes = _load_title_excludes(search_cfg)
     include_titles = [str(value).lower() for value in search_cfg.get("include_titles", []) or [] if str(value).strip()]
+    defaults = search_cfg.get("defaults") or {}
+    max_results = max(1, int(defaults.get("results_per_site", 50)))
 
     # Default to tier 1-2 queries for Workday scraping. Scoped queries run
     # only against employers explicitly assigned to the same market labels.
@@ -651,6 +656,7 @@ def run_workday_discovery(employers: dict | None = None, workers: int = 1) -> di
             title_excludes=title_excludes,
             include_titles=include_titles,
             workers=workers,
+            max_results=max_results,
             market_label=(next(iter(query_labels)) if len(query_labels) == 1 else ""),
             application_mode=str(
                 (search_cfg.get("market_policies") or {})

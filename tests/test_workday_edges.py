@@ -40,6 +40,36 @@ def test_search_employer_paginates_and_filters_locations(monkeypatch) -> None:
     assert [job["title"] for job in jobs] == ["IT Technician", "Help Desk"]
 
 
+def test_search_employer_enforces_max_results_on_single_final_page(monkeypatch) -> None:
+    postings = [
+        {
+            "title": f"IT Technician {index}",
+            "locationsText": "Exampletown, UT",
+            "externalPath": f"/job/{index}",
+        }
+        for index in range(10)
+    ]
+    monkeypatch.setattr(
+        workday,
+        "workday_search",
+        lambda *_args, **_kwargs: {"total": len(postings), "jobPostings": postings},
+    )
+
+    jobs = workday.search_employer(
+        "cache",
+        {"name": "Cache Employer"},
+        "it",
+        location_filter=False,
+        max_results=3,
+    )
+
+    assert [job["title"] for job in jobs] == [
+        "IT Technician 0",
+        "IT Technician 1",
+        "IT Technician 2",
+    ]
+
+
 def test_fetch_one_detail_records_error_without_leaking_prior_fields(monkeypatch) -> None:
     def fail_detail(employer: dict, external_path: str) -> dict:
         raise RuntimeError("HTTP 500")
@@ -208,6 +238,69 @@ def test_process_one_allows_relocation_employer_to_bypass_location_filter(monkey
 
     assert captured["location_filter"] is False
     assert result["new"] == 1
+
+
+def test_scrape_employers_threads_max_results_sequentially(monkeypatch) -> None:
+    employers = {"one": {"name": "Employer One"}}
+    captured: dict[str, int] = {}
+
+    monkeypatch.setattr(workday, "init_db", lambda: None)
+    monkeypatch.setattr(workday, "get_connection", lambda: object())
+
+    def fake_search(key, _employer, _search_text, **kwargs):
+        captured[key] = kwargs["max_results"]
+        return [{"title": "IT Support", "location": "Exampletown", "external_path": "/job"}]
+
+    monkeypatch.setattr(workday, "search_employer", fake_search)
+    monkeypatch.setattr(workday, "fetch_details", lambda _employer, jobs: jobs)
+    monkeypatch.setattr(
+        workday,
+        "store_results",
+        lambda _conn, jobs, _employers, **_kwargs: (len(jobs), 0),
+    )
+
+    result = workday.scrape_employers(
+        "support",
+        employers,
+        workers=1,
+        max_results=7,
+    )
+
+    assert captured == {"one": 7}
+    assert result == {"found": 1, "new": 1, "existing": 0}
+
+
+def test_scrape_employers_threads_max_results_to_parallel_workers(monkeypatch) -> None:
+    employers = {
+        "one": {"name": "Employer One"},
+        "two": {"name": "Employer Two"},
+    }
+    captured: dict[str, int] = {}
+
+    monkeypatch.setattr(workday, "init_db", lambda: None)
+    monkeypatch.setattr(workday, "get_connection", lambda: object())
+
+    def fake_search(key, _employer, _search_text, **kwargs):
+        captured[key] = kwargs["max_results"]
+        return [{"title": "IT Support", "location": "Exampletown", "external_path": f"/{key}"}]
+
+    monkeypatch.setattr(workday, "search_employer", fake_search)
+    monkeypatch.setattr(workday, "fetch_details", lambda _employer, jobs: jobs)
+    monkeypatch.setattr(
+        workday,
+        "store_results",
+        lambda _conn, jobs, _employers, **_kwargs: (len(jobs), 0),
+    )
+
+    result = workday.scrape_employers(
+        "support",
+        employers,
+        workers=2,
+        max_results=11,
+    )
+
+    assert captured == {"one": 11, "two": 11}
+    assert result == {"found": 2, "new": 2, "existing": 0}
 
 
 def test_scrape_employers_continues_when_parallel_worker_crashes(monkeypatch) -> None:

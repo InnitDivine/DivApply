@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply.database import close_connection, init_db
+from divapply.scoring.requirements import SCORING_VERSION
 
 
 LONG_DESCRIPTION = "Full job description with responsibilities and minimum qualifications. " * 5
@@ -46,6 +47,7 @@ def _insert_job(conn, url: str, **overrides) -> None:
             values["cover_letter_path"],
         ),
     )
+    conn.execute("UPDATE jobs SET scoring_version=? WHERE url=?", (SCORING_VERSION, url))
 
 
 def test_dashboard_snapshot_excludes_archived_rows_from_all_active_metrics(tmp_path) -> None:
@@ -116,7 +118,7 @@ def test_dashboard_snapshot_counts_generated_docs_and_apply_states(tmp_path) -> 
     close_connection(db_path)
 
 
-def test_dashboard_snapshot_counts_score_boundaries_without_displaying_low_fit_jobs(tmp_path) -> None:
+def test_dashboard_snapshot_keeps_low_fit_jobs_visible_for_review(tmp_path) -> None:
     db_path = tmp_path / "divapply.db"
     conn = init_db(db_path)
     _insert_job(conn, "https://example.com/six", title="Six", fit_score=6)
@@ -129,7 +131,7 @@ def test_dashboard_snapshot_counts_score_boundaries_without_displaying_low_fit_j
     assert snapshot.scored == 3
     assert snapshot.high_fit == 1
     assert snapshot.score_dist == {7: 1, 6: 1, 4: 1}
-    assert [row["title"] for row in snapshot.jobs] == ["Seven", "Six"]
+    assert [row["title"] for row in snapshot.jobs] == ["Seven", "Six", "Four"]
     site = snapshot.site_stats[0]
     assert site["high_fit"] == 1
     assert site["mid_fit"] == 1
@@ -205,7 +207,7 @@ def test_dashboard_snapshot_handles_unscored_and_unknown_site_rows(tmp_path) -> 
     assert snapshot.scored == 0
     assert snapshot.high_fit == 0
     assert snapshot.score_dist == {}
-    assert snapshot.jobs == []
+    assert [job["title"] for job in snapshot.jobs] == ["Unscored"]
     assert len(snapshot.site_stats) == 1
     assert snapshot.site_stats[0]["site"] is None
     assert snapshot.site_stats[0]["unscored"] == 1

@@ -216,12 +216,15 @@ def _strip_application_boilerplate(value: object) -> str:
     return text[: min(positions)].rstrip() if positions else text
 
 
-def format_job_context(job: dict, *, description_limit: int = 3000, extra: str = "") -> str:
+def format_job_context(
+    job: dict, *, description_limit: int = 3000, extra: str = "", preserve_sections: bool = False,
+) -> str:
     """Return neutral job context with employer separate from source board."""
+    raw_description = str(job.get("full_description") or job.get("description") or "")
+    if job.get("requirements_description"):
+        raw_description += "\n\nLINKED MINIMUM QUALIFICATIONS:\n" + str(job["requirements_description"])
     description = _bounded_description(
-        _strip_application_boilerplate(
-            job.get("full_description") or job.get("description") or ""
-        ),
+        raw_description if preserve_sections else _strip_application_boilerplate(raw_description),
         description_limit,
     )
     safe_extra_context = _format_safe_extra_context(job)
@@ -229,7 +232,9 @@ def format_job_context(job: dict, *, description_limit: int = 3000, extra: str =
         f"TITLE: {job.get('title') or 'N/A'}\n"
         f"COMPANY: {job.get('company') or 'N/A'}\n"
         f"SOURCE: {job.get('site') or 'N/A'}\n"
+        f"POSTING READ FROM: {job.get('detail_source_url') or job.get('url') or 'N/A'}\n"
         f"LOCATION: {job.get('location') or 'N/A'}\n\n"
+        f"EMPLOYMENT TYPE: {job.get('employment_type') or 'Not stated'}\n"
         f"DESCRIPTION:\n{description}"
         f"{safe_extra_context}"
         f"{extra}"

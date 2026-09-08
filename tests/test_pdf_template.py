@@ -20,17 +20,24 @@ from divapply.scoring.pdf import (
 
 def test_batch_convert_propagates_item_failures(monkeypatch, tmp_path) -> None:
     from divapply.scoring import pdf
+    from divapply import database
 
     (tmp_path / "resume.txt").write_text("resume", encoding="utf-8")
+    conn = database.init_db(tmp_path / "test.db")
+    conn.execute("INSERT INTO jobs (url, title, tailored_resume_path) VALUES (?, ?, ?)",
+                 ("https://example.com/job", "Assistant", str(tmp_path / "resume.txt")))
+    conn.commit()
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
     monkeypatch.setattr(pdf, "TAILORED_DIR", tmp_path)
     monkeypatch.setattr(
         pdf,
         "convert_to_pdf",
-        lambda _path: (_ for _ in ()).throw(RuntimeError("browser missing")),
+        lambda _path, **_kwargs: (_ for _ in ()).throw(RuntimeError("browser missing")),
     )
 
     with pytest.raises(RuntimeError, match="1 PDF conversion"):
         pdf.batch_convert()
+    database.close_connection(tmp_path / "test.db")
 
 
 def test_resume_html_uses_orange_cream_one_page_template() -> None:
@@ -64,6 +71,8 @@ Example College | 2024
     assert "#e8dcc8" in html
     assert "font-family: Arial, 'Segoe UI', sans-serif" in html
     assert "font-family: Georgia, 'Times New Roman', serif" in html
+    assert "letter-spacing: 0.14em" not in html
+    assert "letter-spacing: normal" in html
     assert "Technical Skills" in html
     assert "fonts.googleapis.com" not in html
     assert "grid-template-columns: 1fr 1fr" not in html

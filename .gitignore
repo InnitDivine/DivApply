@@ -59,6 +59,7 @@ __pycache__/
 .coverage
 coverage.xml
 .mypy_cache/
+.ruff_cache/
 .pytest_cache/
 node_modules/
 dist/

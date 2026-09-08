@@ -233,5 +233,7 @@ def test_streaming_pending_counts_match_worker_eligibility(tmp_path, monkeypatch
     assert pipeline._count_pending("score") == 0
     assert pipeline._count_pending("cover", min_score=7) == 1
     assert pipeline._count_pending("enrich") == 1
-    assert pipeline._count_pending("pdf") == 1
+    # Both text pointers still need conversion/validation and a database PDF link,
+    # even when a same-name PDF happens to be present on disk.
+    assert pipeline._count_pending("pdf") == 2
     close_connection(db_path)

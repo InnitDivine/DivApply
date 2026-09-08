@@ -4,9 +4,9 @@
   "private": true,
   "description": "Integrity-locked MCP dependencies for DivApply",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
-    "@playwright/mcp": "0.0.78"
+    "@playwright/mcp": "0.0.80"
   }
 }

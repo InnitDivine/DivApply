@@ -175,8 +175,8 @@ def _run_pdf() -> dict:
     try:
         from divapply.scoring.pdf import batch_convert
 
-        batch_convert()
-        return {"status": "ok"}
+        converted = batch_convert(limit=0)
+        return {"status": "ok", "converted": converted}
     except Exception as e:
         log.exception("PDF conversion failed")
         return {"status": f"error: {e}"}
@@ -245,7 +245,7 @@ STAGE_SPECS: dict[str, StageSpec] = {
     ),
     "score": StageSpec(
         name="score",
-        desc="Hybrid scoring (keyword + embedding + LLM)",
+        desc="Requirements-first qualification audit",
         runner=_run_score,
         upstream="enrich",
         accepts_prune_below=True,
@@ -349,9 +349,13 @@ def _count_pending(stage: str, min_score: int = 7) -> int:
         )
     if stage == "pdf":
         rows = conn.execute(
-            "SELECT tailored_resume_path FROM jobs WHERE tailored_resume_path LIKE '%.txt' AND archived_at IS NULL"
+            "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE "
+            "(tailored_resume_path LIKE '%.txt' OR cover_letter_path LIKE '%.txt') AND archived_at IS NULL"
         ).fetchall()
-        return sum(1 for row in rows if not Path(str(row[0])).with_suffix(".pdf").exists())
+        return sum(1 for row in rows if any(
+            raw and Path(str(raw)).suffix.casefold() == ".txt" and Path(str(raw)).is_file()
+            for raw in row
+        ))
     database_stage = {
         "score": "pending_score",
         "tailor": "pending_tailor",
@@ -501,7 +505,7 @@ def _run_sequential(
             console.print(f"\n  [red]STAGE FAILED:[/red] {e}")
 
         results.append({"stage": name, "status": status, "elapsed": elapsed})
-        if status not in ("ok", "partial"):
+        if status not in ("ok", "skipped"):
             errors[name] = status
 
         console.print(f"\n  Stage '{name}' completed in {elapsed:.1f}s - {status}")
@@ -567,7 +571,7 @@ def _run_streaming(
         status = r.get("status", "ok")
 
         results.append({"stage": name, "status": status, "elapsed": elapsed})
-        if status not in ("ok", "partial", "skipped"):
+        if status not in ("ok", "skipped"):
             errors[name] = status
 
     return {"stages": results, "errors": errors, "elapsed": total_elapsed}
@@ -677,3 +681,57 @@ def run_pipeline(
     console.print(f"{'=' * 70}\n")
 
     return result
+
+
+def run_preparation(
+    *, saved: bool = False, limit: int = 0, min_score: int = 7, refresh: bool = False,
+    workers: int = 1, validation_mode: str = "normal", dry_run: bool = False,
+) -> dict:
+    """The everyday workflow: search, then finish one complete packet at a time.
+
+    Limit counts jobs, not independent stage batches. Existing PDFs are never
+    regenerated. A fresh/obsolete grade requires reading the live job first.
+    """
+    from divapply.config import TAILORED_DIR, COVER_LETTER_DIR
+    from divapply.job_health import audit_jobs, repair_jobs
+
+    console.print(Panel.fit("[bold]DivApply - prepare application PDFs[/bold]", border_style="blue"))
+    console.print(f"Minimum score: {min_score}; job limit: {limit or 'all pending'}; existing PDFs kept.")
+    console.print("No applications will be submitted.")
+    errors: dict[str, str] = {}
+    if not saved:
+        if dry_run:
+            console.print("Would search configured sources, then select pending jobs (new results are not yet known).")
+        else:
+            discovery = _run_discover(workers=workers)
+            if STAGE_SPECS["discover"].status_from(discovery) != "ok":
+                errors["discovery"] = "Some searches failed; continuing with saved jobs."
+                console.print(f"[yellow]{errors['discovery']}[/yellow]")
+    report = repair_jobs(
+        limit=limit, min_score=min_score, refresh=refresh, rescore=False,
+        only_pending=True, validation_mode=validation_mode, dry_run=dry_run,
+    )
+    table = Table(title="Preparation preview" if dry_run else "Preparation results")
+    table.add_column("Job")
+    table.add_column("Score", justify="right")
+    table.add_column("Result")
+    for job in report["jobs"]:
+        score = job.get("score")
+        table.add_row(job["title"], "" if score is None else str(score), job.get("error") or job.get("after") or job["before"])
+    console.print(table)
+    if report["errors"]:
+        errors["preparation"] = f"{report['errors']} job(s) could not finish."
+    health = audit_jobs(min_score=min_score)
+    ready = health["counts"].get("Packet ready", 0)
+    console.print(f"{health['active']} saved jobs; {ready} complete PDF packets at score {min_score}+.")
+    for reason, count in health["counts"].items():
+        if reason != "Packet ready":
+            console.print(f"  {count}: {reason}")
+    if not report["selected"]:
+        console.print("No pending packets eligible for this run. See the reasons above or use divapply status --details.")
+    console.print(f"Resumes: {TAILORED_DIR}\nCover letters: {COVER_LETTER_DIR}")
+    if dry_run:
+        console.print("Preview only: no job pages, AI calls, or document generation.")
+    else:
+        console.print("Use divapply dashboard to review your jobs and documents.")
+    return {"errors": errors, "selected": report["selected"], "ready": ready, "jobs": report["jobs"]}

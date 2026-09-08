@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import re
 import os
+import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -13,12 +14,48 @@ from typer.testing import CliRunner
 import divapply.config as config
 import divapply.database as database
 import divapply.pipeline as pipeline
-from divapply import cli
+from divapply import cli, mcp_runtime
 from divapply.cli import app
 
 
 runner = CliRunner()
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_doctor_marks_present_but_incompatible_node_as_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(config, "load_env", lambda: None)
+    monkeypatch.setattr(config, "ensure_dirs", lambda: None)
+    for name in (
+        "PROFILE_PATH",
+        "RESUME_PATH",
+        "RESUME_PDF_PATH",
+        "SEARCH_CONFIG_PATH",
+        "TAILORED_DIR",
+        "COVER_LETTER_DIR",
+    ):
+        monkeypatch.setattr(config, name, tmp_path / name.lower())
+    monkeypatch.setattr(config, "get_available_apply_backends", lambda: {})
+    monkeypatch.setattr(config, "get_apply_backend", lambda preferred=None: None)
+    monkeypatch.setattr(config, "get_apply_browser", lambda preferred=None: "firefox")
+    monkeypatch.setattr(config, "get_apply_browser_label", lambda browser: browser)
+    monkeypatch.setattr(config, "get_tier", lambda: 2)
+    monkeypatch.setattr(database, "init_db", lambda: None)
+    monkeypatch.setattr(database, "get_active_db_path", lambda: tmp_path / "jobs.db")
+    monkeypatch.setattr(database, "get_coursework_summary", lambda: {"row_count": 0})
+    monkeypatch.setattr(cli, "validate_installed_jobspy", lambda: [])
+    monkeypatch.setattr(
+        shutil,
+        "which",
+        lambda name: {"node": "C:/node/node.exe", "npm": "C:/node/npm.cmd"}.get(name),
+    )
+    monkeypatch.setattr(mcp_runtime, "compatible_node_executable", lambda: None)
+
+    result = runner.invoke(app, ["doctor"])
+
+    assert result.exit_code == 0
+    assert "Node.js / npm" in result.output
+    assert "MISSING" in result.output
+    assert "Install Node.js 20+" in result.output
 
 
 def test_console_script_and_module_entrypoint_report_same_version() -> None:
@@ -135,18 +172,7 @@ def test_readme_common_commands_match_registered_cli_commands() -> None:
     registered.update(group.name for group in cli.app.registered_groups)
 
     assert documented <= registered
-    assert {
-        "add-url",
-        "credentials",
-        "browser-login",
-        "track",
-        "followups",
-        "analytics",
-        "rescore",
-        "answers",
-        "prune",
-        "sync",
-    } <= documented
+    assert {"run", "add", "status", "dashboard", "apply", "settings", "jobs", "system"} <= documented
 
 
 def test_install_docs_use_full_editable_and_entrypoint_parity_checks() -> None:
@@ -202,7 +228,7 @@ def test_short_help_flag_works_for_run_command() -> None:
     result = runner.invoke(app, ["run", "-h"])
 
     assert result.exit_code == 0
-    assert "Run pipeline stages" in result.output
+    assert "finish resume/cover-letter" in result.output
 
 
 def test_run_prune_score_requires_confirmation(monkeypatch) -> None:
@@ -317,7 +343,7 @@ def test_apply_model_does_not_inherit_general_llm_model(monkeypatch) -> None:
     monkeypatch.setenv("LLM_MODEL", "gpt-5.4-nano")
     monkeypatch.delenv("LLM_MODEL_APPLY", raising=False)
 
-    assert cli._resolve_apply_model("codex") == "gpt-5.4-mini"
+    assert cli._resolve_apply_model("codex") == "gpt-5.6-luna"
 
 
 def test_apply_model_prefers_apply_specific_env(monkeypatch) -> None:
@@ -752,6 +778,82 @@ def test_v97_add_url_accepts_configured_official_jobposting_evidence(tmp_path, m
     assert row["availability_checked_at"]
     assert row["last_seen_at"]
     assert "configured official source" in result.output
+    database.close_connection(db_path)
+
+
+def test_add_url_explicit_official_selection_bypasses_discovery_filters(tmp_path, monkeypatch) -> None:
+    db_path = tmp_path / "divapply.db"
+    conn = database.init_db(db_path)
+    monkeypatch.setattr(cli, "_bootstrap", lambda: None)
+    monkeypatch.setattr(database, "get_connection", lambda: conn)
+    monkeypatch.setattr(
+        config,
+        "load_search_config",
+        lambda: {
+            "include_titles": ["information technology"],
+            "excluded_keywords": ["diagnostic imaging"],
+            "locations": [
+                {
+                    "label": "California target",
+                    "location": "Sacramento, CA",
+                    "match_patterns": ["Elk Grove, California"],
+                }
+            ],
+            "market_policies": {"California target": {"application_mode": "active"}},
+        },
+    )
+    monkeypatch.setattr(
+        config,
+        "load_sites_config",
+        lambda: {
+            "default_source_verification": "official",
+            "sites": [
+                {
+                    "name": "Sutter Health",
+                    "url": "https://jobs.sutterhealth.org/us/en/search-results",
+                    "type": "static",
+                }
+            ],
+        },
+    )
+    description = (
+        "Regulates and maintains patient appointment schedules for interventional radiology, "
+        "diagnostic imaging, and special procedures."
+    )
+    monkeypatch.setattr(
+        cli,
+        "_extract_manual_job_metadata",
+        lambda _url: {
+            "title": "Procedure Scheduler, Diagnostic Imaging",
+            "company": "Sutter Health",
+            "site": "jobs.sutterhealth.org",
+            "location": "Elk Grove, California, United States of America",
+            "description": description,
+            "employment_type": "FULL_TIME",
+            "job_posting_schema": True,
+            "inactive": False,
+        },
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "add-url",
+            "https://jobs.sutterhealth.org/us/en/job/R-137163/Procedure-Scheduler-Diagnostic-Imaging",
+        ],
+    )
+
+    assert result.exit_code == 0
+    row = conn.execute(
+        "SELECT description, full_description, source_verification, application_mode FROM jobs"
+    ).fetchone()
+    assert dict(row) == {
+        "description": description,
+        "full_description": description,
+        "source_verification": "official",
+        "application_mode": "active",
+    }
+    assert "Added: Procedure Scheduler, Diagnostic Imaging @ Sutter Health" in result.output
     database.close_connection(db_path)
 
 

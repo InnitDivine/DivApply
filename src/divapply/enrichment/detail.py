@@ -23,7 +23,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 
-from divapply.database import init_db, record_reliability_event
+from divapply.database import ensure_columns, init_db, record_reliability_event
 from divapply.llm import get_client
 from divapply.security import sanitize_external_url, validate_external_url, validate_navigation_url
 
@@ -352,10 +352,13 @@ _CALCAREERS_DETAIL_HOSTS = {"calcareers.ca.gov", "www.calcareers.ca.gov"}
 _CALCAREERS_DETAIL_SECTIONS = (
     "#pnlPositionDetails",
     "#pnlJobDescription",
+    "#pnlMinimumRequirements",
+    "#pnlMinimumQualifications",
     "#pnlWorkingConditions",
     "#pnlSpecialRequirements",
     "#pnlApplicationInstructions",
     "#pnlDesirableQualifications",
+    "#pnlBenefits",
 )
 
 
@@ -380,11 +383,14 @@ def extract_official_government_detail(page_html: str, page_url: str) -> dict[st
             return None
         sections: list[str] = []
         for selector in _CALCAREERS_DETAIL_SECTIONS:
-            node = soup.select_one(selector)
+            node = soup.select_one(selector + f", [id$='_{selector[1:]}']")
             text = clean_description(node.get_text("\n", strip=True)) if node else ""
             if text and text not in sections:
                 sections.append(text)
         description = "\n\n".join(sections)
+    elif host in {"jobapscloud.com", "www.jobapscloud.com"} and path.endswith("/bulpreview.asp"):
+        node = soup.select_one("#JobBulletin")
+        description = clean_description(node.get_text("\n", strip=True)) if node else ""
     else:
         return None
 
@@ -635,7 +641,6 @@ SITE_DELAYS = {
     "BuiltIn Remote": 2.0,
 }
 
-RETRYABLE_STATUSES = {408, 429, 500, 502, 503, 504}
 PERMANENT_FAILURES = {404, 410, 451}
 
 
@@ -679,7 +684,9 @@ def scrape_detail_page(page, url: str) -> dict:
     except Exception:
         official_detail = None
     if official_detail is not None:
+        from divapply.enrichment.requirements import linked_qualification_evidence
         result.update(official_detail)
+        result.update(linked_qualification_evidence(page.content(), page.url))
         result["tier_used"] = 2
         result["status"] = "ok"
         result["elapsed"] = time.time() - t0
@@ -757,6 +764,7 @@ def scrape_site_batch(
     if conn is None:
         raise RuntimeError("Database connection initialization failed")
     db_conn = conn
+    ensure_columns(db_conn)
 
     now = datetime.now(timezone.utc).isoformat()
 
@@ -797,6 +805,12 @@ def scrape_site_batch(
                         "detail_scraped_at = ?, detail_error = NULL "
                         "WHERE url = ? AND archived_at IS NULL",
                         (result.get("full_description"), result.get("application_url"), now, url),
+                    )
+                    db_conn.execute(
+                        "UPDATE jobs SET requirements_description=?, requirements_sources=?, "
+                        "requirements_error=?, requirements_checked_at=? WHERE url=? AND archived_at IS NULL",
+                        (result.get("requirements_description"), result.get("requirements_sources"),
+                         result.get("requirements_error"), result.get("requirements_checked_at"), url),
                     )
                 else:
                     stats["error"] += 1

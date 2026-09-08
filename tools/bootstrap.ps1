@@ -52,33 +52,110 @@ function Write-SoftWarning {
     Write-Host "WARN: $Message" -ForegroundColor Yellow
 }
 
+function Test-PythonCommand {
+    param(
+        [Parameter(Mandatory = $true)][pscustomobject]$Spec,
+        [switch]$RequireJobSpyCompatible
+    )
+
+    $probe = if ($RequireJobSpyCompatible) {
+        "import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 13) else 1)"
+    } else {
+        "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
+    }
+    $allArgs = @()
+    $allArgs += $Spec.Args
+    $allArgs += @("-c", $probe)
+
+    try {
+        & $Spec.Command @allArgs *> $null
+        return $LASTEXITCODE -eq 0
+    } catch {
+        return $false
+    }
+}
+
 function Resolve-PythonCommand {
-    param([string]$Preferred)
+    param(
+        [string]$Preferred,
+        [switch]$RequireJobSpyCompatible
+    )
 
     if ($Preferred) {
-        return [pscustomobject]@{
+        $preferredSpec = [pscustomobject]@{
             Command = $Preferred
+            Args    = @()
+        }
+        if (Test-PythonCommand -Spec $preferredSpec -RequireJobSpyCompatible:$RequireJobSpyCompatible) {
+            return $preferredSpec
+        }
+        throw "Requested Python interpreter is missing or incompatible: $Preferred"
+    }
+
+    $candidates = @()
+    $localPython312 = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Programs\Python\Python312\python.exe"
+    if (Test-Path -LiteralPath $localPython312 -PathType Leaf) {
+        $candidates += [pscustomobject]@{
+            Command = $localPython312
             Args    = @()
         }
     }
 
-    $python = Get-Command python -ErrorAction SilentlyContinue
-    if ($python) {
-        return [pscustomobject]@{
-            Command = "python"
+    $python312 = Get-Command python3.12 -ErrorAction SilentlyContinue
+    if ($python312) {
+        $candidates += [pscustomobject]@{
+            Command = $python312.Source
             Args    = @()
         }
     }
 
     $py = Get-Command py -ErrorAction SilentlyContinue
     if ($py) {
-        return [pscustomobject]@{
-            Command = "py"
-            Args    = @("-3")
+        $candidates += [pscustomobject]@{
+            Command = $py.Source
+            Args    = @("-3.12")
         }
     }
 
-    throw "No Python interpreter found. Install Python 3.11+ or set DIVAPPLY_PYTHON to a full interpreter path."
+    $python = Get-Command python -ErrorAction SilentlyContinue
+    if ($python) {
+        $candidates += [pscustomobject]@{
+            Command = $python.Source
+            Args    = @()
+        }
+    }
+
+    foreach ($candidate in $candidates) {
+        if (Test-PythonCommand -Spec $candidate -RequireJobSpyCompatible:$RequireJobSpyCompatible) {
+            return $candidate
+        }
+    }
+
+    $requiredVersion = if ($RequireJobSpyCompatible) { "Python 3.11 or 3.12" } else { "Python 3.11+" }
+    throw "No usable $requiredVersion interpreter found. Install Python 3.12 or set DIVAPPLY_PYTHON to a full interpreter path."
+}
+
+function Install-UserLauncher {
+    param([Parameter(Mandatory = $true)][string]$VenvPython)
+
+    if (-not $IsWindows -and $env:OS -ne "Windows_NT") {
+        return $null
+    }
+
+    $launcherDir = Join-Path ([Environment]::GetFolderPath("LocalApplicationData")) "Microsoft\WindowsApps"
+    New-Item -ItemType Directory -Force -Path $launcherDir | Out-Null
+    $launcherPath = Join-Path $launcherDir "divapply.cmd"
+    $launcherText = @"
+@echo off
+if not exist "$VenvPython" (
+  echo DivApply environment not found at $VenvPython 1>&2
+  echo Re-run the DivApply installer to repair it. 1>&2
+  exit /b 1
+)
+"$VenvPython" -m divapply %*
+"@
+    [IO.File]::WriteAllText($launcherPath, $launcherText, [Text.Encoding]::ASCII)
+    return $launcherPath
 }
 
 function Invoke-Python {
@@ -192,7 +269,10 @@ function Assert-SafeVenvPath {
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 Set-Location $repoRoot
 
-$pythonCmd = Resolve-PythonCommand -Preferred $PythonCommand
+$requireJobSpyCompatible = -not $SkipJobSpy
+$pythonCmd = Resolve-PythonCommand `
+    -Preferred $PythonCommand `
+    -RequireJobSpyCompatible:$requireJobSpyCompatible
 $venvPath = Assert-SafeVenvPath -RepoRoot $repoRoot -Candidate $VenvDir
 $script:VenvPython = Join-Path $venvPath "Scripts\python.exe"
 
@@ -202,6 +282,15 @@ Write-Host "Repository: $repoRoot"
 if ($Recreate -and (Test-Path $venvPath)) {
     Write-Step "Recreating virtual environment"
     Remove-Item -Recurse -Force -LiteralPath $venvPath
+} elseif (Test-Path $venvPath) {
+    $venvSpec = [pscustomobject]@{
+        Command = $script:VenvPython
+        Args    = @()
+    }
+    if (-not (Test-PythonCommand -Spec $venvSpec -RequireJobSpyCompatible:$requireJobSpyCompatible)) {
+        Write-Step "Rebuilding unusable virtual environment at $venvPath"
+        Remove-Item -Recurse -Force -LiteralPath $venvPath
+    }
 }
 
 if (-not (Test-Path $script:VenvPython)) {
@@ -261,11 +350,18 @@ if (-not $SkipBrowsers) {
 Write-Step "Preparing ~/.divapply"
 Invoke-VenvPython -Args @("-c", "from divapply.config import ensure_dirs; ensure_dirs()")
 
-$appDir = Join-Path $HOME ".divapply"
+$userProfile = [Environment]::GetFolderPath("UserProfile")
+$appDir = Join-Path $userProfile ".divapply"
 New-Item -ItemType Directory -Force -Path $appDir | Out-Null
 Copy-IfMissing -Source (Join-Path $repoRoot ".env.example") -Target (Join-Path $appDir ".env")
 Copy-IfMissing -Source (Join-Path $repoRoot "profile.example.json") -Target (Join-Path $appDir "profile.example.json")
 Copy-IfMissing -Source (Join-Path $repoRoot "src\divapply\config\searches.example.yaml") -Target (Join-Path $appDir "searches.yaml")
+
+Write-Step "Installing the per-user divapply command"
+$launcherPath = Install-UserLauncher -VenvPython $script:VenvPython
+if ($launcherPath) {
+    Write-Host "Installed $launcherPath"
+}
 
 if ($Init) {
     Write-Step "Running first-time setup wizard"
@@ -280,12 +376,11 @@ if (-not $SkipDoctor) {
 Write-Host ""
 Write-Host "DivApply install complete." -ForegroundColor Green
 Write-Host ""
-Write-Host "Use it from this terminal with:"
-Write-Host "  .\.venv\Scripts\Activate.ps1"
+Write-Host "Use it from any new terminal with:"
 Write-Host "  divapply doctor"
 Write-Host ""
 Write-Host "First-time setup:"
 Write-Host "  divapply init"
 Write-Host ""
-Write-Host "For auto-apply, install Node.js 18+ plus Codex CLI or Claude Code, then rerun:"
+Write-Host "For auto-apply, install Node.js 20+ plus Codex CLI or Claude Code, then rerun:"
 Write-Host "  divapply doctor"

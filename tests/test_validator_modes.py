@@ -333,6 +333,68 @@ def test_validate_tailored_resume_rejects_coursework_skill_in_experience() -> No
     assert any("Coursework-only skill used as paid work" in error for error in report["errors"])
 
 
+def test_global_skill_overlap_does_not_turn_coursework_into_paid_work_evidence() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "skills_boundary": {"tools": ["hardware troubleshooting"]},
+        "coursework_skills": ["Example Technical College: hardware troubleshooting"],
+        "coursework": [
+            {
+                "school": "Example Technical College",
+                "course_title": "A+ Core I",
+                "status": None,
+                "credits": None,
+                "skills": ["hardware troubleshooting"],
+            }
+        ],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "- Built reports",
+        "- Performed hardware troubleshooting",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Example Employer work included reports and customer support.",
+        mode="normal",
+    )
+
+    assert any("Coursework-only skill used as paid work" in error for error in report["errors"])
+
+
+def test_validate_tailored_resume_does_not_treat_certifications_as_paid_experience() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "skills_boundary": {"tools": ["Excel"]},
+        "coursework_skills": ["Example College: service desk"],
+        "certifications": [
+            {
+                "name": "Service Desk Certificate",
+                "issuer": "Example College",
+                "status": "Active",
+            }
+        ],
+        "experience": {"years_of_professional_it_experience": "0"},
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "EDUCATION",
+        "CERTIFICATIONS\nService Desk Certificate | Example College\n\nEDUCATION",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Example Employer work included reports and customer support.",
+        mode="normal",
+    )
+
+    assert all("Coursework-only skill used as paid work" not in error for error in report["errors"])
+    assert all("service-desk evidence boundary" not in error for error in report["errors"])
+
+
 def test_validate_tailored_resume_rejects_unsupported_license_claim() -> None:
     tailored = _RESUME_NO_PROJECTS.replace(
         "Built reports for Example Employer.",
@@ -350,6 +412,93 @@ def test_validate_tailored_resume_rejects_unsupported_license_claim() -> None:
     )
 
     assert not report["passed"]
+    assert any("Unsupported credential or degree claim" in error for error in report["errors"])
+
+
+def test_neutral_a_plus_coursework_does_not_authorize_a_plus_certification_claim() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "coursework": [
+            {
+                "school": "Example Technical College",
+                "course_title": "A+ Core I",
+                "status": None,
+                "credits": None,
+                "skills": ["hardware"],
+            }
+        ],
+        "coursework_summary": [
+            "Coursework (completion not asserted) - Example Technical College: A+ Core I"
+        ],
+        "coursework_skills": [
+            "Coursework exposure (completion not asserted; academic only; not paid work or an earned "
+            "certification) - Example Technical College: hardware"
+        ],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "Built reports for Example Employer. CompTIA A+ certification.",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Example Employer work included reporting.",
+        mode="normal",
+    )
+
+    assert any("Unsupported credential or degree claim" in error for error in report["errors"])
+
+
+def test_earned_a_plus_certification_authorizes_a_plus_certification_claim() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "certifications": [
+            {"name": "CompTIA A+", "issuer": "CompTIA", "status": "Active"}
+        ],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "Built reports for Example Employer. CompTIA A+ certification.",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Example Employer work included reporting.",
+        mode="normal",
+    )
+
+    assert all("Unsupported credential or degree claim" not in error for error in report["errors"])
+
+
+def test_in_progress_certificate_program_does_not_authorize_degree_claim() -> None:
+    profile = {
+        "personal": {"full_name": "Jane Doe", "email": "jane@example.com", "phone": "555-555-5555"},
+        "education_schools": [
+            {
+                "school": "Example Technical College",
+                "degree": "Information Technology Certificate Program",
+                "status": "in progress",
+                "end_year": "present",
+            }
+        ],
+        "resume_facts": {"preserved_companies": ["Example Employer"]},
+    }
+    tailored = _RESUME_NO_PROJECTS.replace(
+        "Built reports for Example Employer.",
+        "Built reports for Example Employer while completing a degree.",
+    )
+
+    report = validate_tailored_resume(
+        tailored,
+        profile,
+        original_text="Example Employer work included reporting.",
+        mode="normal",
+    )
+
     assert any("Unsupported credential or degree claim" in error for error in report["errors"])
 
 

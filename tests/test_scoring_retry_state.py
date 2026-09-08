@@ -139,6 +139,7 @@ def test_run_scoring_leaves_provider_failure_retryable_then_clears_state_on_succ
     monkeypatch.setattr(scorer, "load_search_config", lambda: {})
     monkeypatch.setattr(scorer, "get_connection", lambda: conn)
     monkeypatch.setattr(scorer, "get_jobs_by_stage", lambda **_kwargs: [dict(job)])
+    monkeypatch.setattr("divapply.job_health.refresh_job", lambda row, _conn: row)
     monkeypatch.setattr(
         scorer,
         "score_job",

@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 from bs4 import BeautifulSoup
 
-from divapply.manual_url import extract_job_posting_schema, extract_manual_job_metadata, job_location_text
+from divapply.manual_url import (
+    application_link_url,
+    extract_job_posting_schema,
+    extract_manual_job_metadata,
+    job_location_text,
+)
 from divapply.security import UnsafeUrlError
 
 
@@ -64,6 +69,22 @@ def test_job_location_text_accepts_strings_and_address_objects() -> None:
         "Remote",
         {"address": {"addressLocality": "Salt Lake City", "addressRegion": "UT", "addressCountry": "USA"}},
     ]) == "Remote; Salt Lake City, UT, USA"
+
+
+def test_application_link_url_prefers_explicit_apply_control() -> None:
+    soup = BeautifulSoup(
+        """
+        <main>
+          <a href="/help/how-to-apply">How to apply</a>
+          <a data-automation-id="jobPostingApplyButton" href="https://ats.example.com/apply/123">Apply now</a>
+        </main>
+        """,
+        "html.parser",
+    )
+
+    assert application_link_url(soup, "https://jobs.example.com/jobs/123") == (
+        "https://ats.example.com/apply/123"
+    )
 
 
 def test_extract_manual_metadata_prefers_visible_body_over_meta_summary(monkeypatch) -> None:
@@ -246,6 +267,7 @@ def test_v131_terminal_gone_response_is_inactive_metadata(monkeypatch) -> None:
     assert metadata["inactive"] is True
     assert metadata["job_posting_schema"] is False
     assert metadata["title"] == "R 100"
+    assert metadata["final_url"] == "https://jobs.example.com/job/R-100/"
 
 
 def test_extract_manual_metadata_rejects_redirect_to_private_address(monkeypatch) -> None:

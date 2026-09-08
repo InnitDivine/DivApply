@@ -40,12 +40,14 @@ def test_cleanup_artifacts_previews_generated_dashboard_and_backup_files(tmp_pat
         app_dir / "dashboard-bench-repeat.html",
         app_dir / "profile.json.bak-simplify-20260610T233316",
         app_dir / "config" / "sites.yaml.bak-20260608T220818",
+    }
+    protected_drafts = {
         tailored_dir / "Indeed_Support.txt",
         tailored_dir / "Indeed_Support_JOB.txt",
         tailored_dir / "Indeed_Support_REPORT.json",
         cover_dir / "Indeed_Support_CL.txt",
     }
-    for path in stale_files:
+    for path in stale_files | protected_drafts:
         path.write_text("stale", encoding="utf-8")
     keep_pdf = tailored_dir / "Indeed_Support.pdf"
     keep_pdf.write_text("pdf", encoding="utf-8")
@@ -61,6 +63,7 @@ def test_cleanup_artifacts_previews_generated_dashboard_and_backup_files(tmp_pat
     assert all(path.exists() for path in result.candidates)
     assert (app_dir / "dashboard.html").exists()
     assert keep_pdf.exists()
+    assert all(path.exists() for path in protected_drafts)
 
 
 def test_cleanup_artifacts_deletes_only_selected_files_and_requires_backup_flag(tmp_path, monkeypatch) -> None:

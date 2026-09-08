@@ -75,12 +75,13 @@ def test_workday_discovery_scopes_queries_to_labeled_employers(monkeypatch) -> N
                 {"label": "Current market", "location": "Exampletown, YY"},
                 {"label": "Future market", "location": "Sample City, ZZ"},
             ],
+            "defaults": {"results_per_site": 37},
         },
     )
-    calls: list[tuple[str, list[str]]] = []
+    calls: list[tuple[str, list[str], int]] = []
 
-    def fake_scrape(*, search_text, employers, **_kwargs):
-        calls.append((search_text, list(employers)))
+    def fake_scrape(*, search_text, employers, max_results, **_kwargs):
+        calls.append((search_text, list(employers), max_results))
         return {"new": 0, "existing": 0, "found": 0}
 
     monkeypatch.setattr(workday, "scrape_employers", fake_scrape)
@@ -88,7 +89,7 @@ def test_workday_discovery_scopes_queries_to_labeled_employers(monkeypatch) -> N
     result = workday.run_workday_discovery(employers=employers)
 
     assert calls == [
-        ("part time help desk", ["current_org"]),
-        ("IT technician", ["future_org"]),
+        ("part time help desk", ["current_org"], 37),
+        ("IT technician", ["future_org"], 37),
     ]
     assert result["queries"] == 2

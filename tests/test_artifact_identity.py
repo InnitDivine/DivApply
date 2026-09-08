@@ -174,8 +174,8 @@ def test_job_artifact_stem_is_stable_and_job_unique() -> None:
 
     assert first_stem == job_artifact_stem(dict(first))
     assert first_stem != job_artifact_stem(second)
-    assert first_stem.endswith(hashlib.sha256(str(first["url"]).encode()).hexdigest())
-    assert first_stem.startswith("Indeed_Support_Analyst--")
+    assert first_stem.endswith(hashlib.sha256(str(first["url"]).encode()).hexdigest()[:12])
+    assert first_stem.startswith("Support_Analyst-Example_Co--")
 
 
 def test_same_title_jobs_generate_distinct_resume_and_cover_files(tmp_path, monkeypatch) -> None:
@@ -217,7 +217,7 @@ def test_same_title_jobs_generate_distinct_resume_and_cover_files(tmp_path, monk
 
     from divapply.scoring import pdf
 
-    def fake_convert_to_pdf(source: Path) -> Path:
+    def fake_convert_to_pdf(source: Path, **_kwargs) -> Path:
         destination = source.with_suffix(".pdf")
         destination.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
         return destination
@@ -238,6 +238,8 @@ def test_same_title_jobs_generate_distinct_resume_and_cover_files(tmp_path, monk
     assert len(set(resume_paths)) == 2
     assert len(set(cover_paths)) == 2
     for row, resume_path, cover_path in zip(rows, resume_paths, cover_paths, strict=True):
+        assert resume_path.suffix == ".pdf"
+        assert cover_path.suffix == ".pdf"
         assert row["url"] in resume_path.read_text(encoding="utf-8")
         assert row["url"] in cover_path.read_text(encoding="utf-8")
 
@@ -308,8 +310,8 @@ def test_strict_judge_failure_keeps_review_files_without_db_pointer(
     assert result["approved"] == 0
     assert result["failed"] == 1
     assert row["tailored_resume_path"] is None
-    assert len(list(tailored_dir.glob("*.txt"))) == 2
-    assert len(list(tailored_dir.glob("*_REPORT.json"))) == 1
+    assert len(list(tailored_dir.rglob("*.txt"))) == 2
+    assert len(list(tailored_dir.rglob("*_REPORT.json"))) == 1
 
 
 def test_valid_cover_persists_text_fallback_when_inline_pdf_fails(tmp_path, monkeypatch) -> None:

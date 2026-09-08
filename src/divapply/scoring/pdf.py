@@ -558,7 +558,9 @@ body {{
     font-weight: 700;
     color: #c17f3e;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
+    /* Letter spacing makes Chromium expose headings as separate characters
+       (for example, "S U M M A R Y") to ATS text extractors. */
+    letter-spacing: normal;
     border-bottom: 1px solid #e8dcc8;
     padding-bottom: 2px;
     margin-bottom: 4px;
@@ -1008,7 +1010,9 @@ def validate_ats_pdf(
     sections_in_order = _sections_appear_in_order(extracted_tokens, sections)
     if "\ufffd" in extracted_text or coverage < ATS_MIN_TOKEN_COVERAGE or not sections_in_order:
         raise RuntimeError(
-            "Generated PDF is not ATS-readable: text coverage or section order validation failed"
+            "Generated PDF is not ATS-readable: "
+            f"token coverage={coverage:.1%}, sections in order={sections_in_order}, "
+            f"replacement characters={'yes' if chr(0xFFFD) in extracted_text else 'no'}"
         )
     return {
         "pages": len(reader.pages),
@@ -1101,52 +1105,47 @@ def convert_to_pdf(
     return out
 
 
-def batch_convert(limit: int = 50) -> int:
-    """Convert .txt files in TAILORED_DIR that don't have corresponding PDFs.
+def batch_convert(limit: int = 50, *, target_url: str | None = None) -> int:
+    """Convert only validated, database-owned drafts and persist PDF links."""
+    from divapply.config import COVER_LETTER_DIR, load_profile, profile_for_job_resume_location
+    from divapply.database import get_connection
+    from divapply.security import _is_link_or_reparse
 
-    Scans for .txt files (excluding _JOB.txt and _REPORT.json), checks if a
-    .pdf with the same stem already exists, and converts any that are missing.
-
-    Args:
-        limit: Maximum number of files to convert.
-
-    Returns:
-        Number of PDFs generated.
-    """
-    if not TAILORED_DIR.exists():
-        log.warning("Tailored directory does not exist: %s", TAILORED_DIR)
-        return 0
-
-    txt_files = sorted(TAILORED_DIR.glob("*.txt"))
-    # Exclude _JOB.txt and _CL.txt files from resume conversion
-    # (they get their own conversion calls)
-    candidates = [f for f in txt_files if not f.name.endswith("_JOB.txt")]
-
-    # Filter to those without a corresponding PDF
-    to_convert: list[Path] = []
-    for f in candidates:
-        pdf_path = f.with_suffix(".pdf")
-        if not pdf_path.exists():
-            to_convert.append(f)
-        if len(to_convert) >= limit:
-            break
-
-    if not to_convert:
-        log.info("All text files already have PDFs.")
-        return 0
-
-    log.info("Converting %d files to PDF...", len(to_convert))
+    conn = get_connection()
+    query = (
+        "SELECT * FROM jobs WHERE archived_at IS NULL AND "
+        "(tailored_resume_path LIKE '%.txt' OR cover_letter_path LIKE '%.txt')"
+    )
+    if target_url:
+        query += " AND url=?"
+    rows = conn.execute(query + " ORDER BY url", (target_url,) if target_url else ()).fetchall()
     converted = 0
     failures: list[str] = []
-    for f in to_convert:
-        try:
-            convert_to_pdf(f)
-            converted += 1
-        except Exception as e:
-            log.error("Failed to convert %s: %s", f.name, e)
-            failures.append(f.name)
-
-    log.info("Done: %d/%d PDFs generated in %s", converted, len(to_convert), TAILORED_DIR)
+    attempted = 0
+    for row in rows:
+        job = dict(row)
+        for column, root in (("tailored_resume_path", TAILORED_DIR), ("cover_letter_path", COVER_LETTER_DIR)):
+            raw = job.get(column) or ""
+            if not str(raw).lower().endswith(".txt") or (limit > 0 and attempted >= limit):
+                continue
+            attempted += 1
+            path = Path(raw)
+            try:
+                path.resolve().relative_to(root.resolve())
+                if _is_link_or_reparse(path):
+                    raise ValueError("Document is a linked path")
+                profile = profile_for_job_resume_location(load_profile(), job) if column == "cover_letter_path" else None
+                output = convert_to_pdf(path, profile=profile)
+                conn.execute(
+                    f"UPDATE jobs SET {column}=? WHERE url=? AND {column}=? AND archived_at IS NULL",
+                    (str(output), job["url"], raw),
+                )
+                conn.commit()
+                converted += 1
+            except Exception as exc:
+                log.error("Failed to convert %s: %s", path.name, exc)
+                failures.append(path.name)
+    log.info("Converted %d of %d database-owned drafts to PDF", converted, attempted)
     if failures:
         raise RuntimeError(f"{len(failures)} PDF conversion(s) failed: {', '.join(failures[:5])}")
     return converted

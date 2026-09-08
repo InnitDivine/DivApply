@@ -11,6 +11,7 @@ Generates a self-contained HTML dashboard with:
 from __future__ import annotations
 
 import logging
+import json
 import secrets
 import threading
 import urllib.parse
@@ -24,6 +25,7 @@ from rich.console import Console
 
 from divapply.config import APP_DIR
 from divapply.dashboard_data import fetch_dashboard_snapshot
+from divapply.job_health import document_issue
 from divapply.database import MIN_FULL_DESCRIPTION_CHARS, archive_job, get_connection, record_reliability_event
 from divapply.local_server import bind_local_server
 from divapply.security import local_request_is_same_origin, parse_local_form_length, sanitize_external_url
@@ -54,6 +56,17 @@ SCORE_LABELS = {
     7: "Good Fit",
     6: "Moderate+",
     5: "Moderate",
+}
+
+READINESS_FLAG_LABELS = {
+    "outside_primary_target": "Fallback target",
+    "schedule_needs_review": "Check schedule",
+    "benefits_not_confirmed": "Verify benefits",
+    "source_needs_verification": "Verify source",
+    "relocation_needed": "Relocation needed",
+    "market_not_active": "Market not active",
+    "manual_review_required": "Manual review",
+    "scoring_error": "Scoring error",
 }
 
 
@@ -127,6 +140,21 @@ def _score_reasoning_parts(value: str) -> tuple[str, str]:
     keywords = _truncate(lines[0], 120)
     reasoning = _truncate(" ".join(lines[1:]), 220) if len(lines) > 1 else ""
     return keywords, reasoning
+
+
+def _readiness_labels(value: Any) -> list[str]:
+    """Return safe, concise dashboard labels from persisted readiness JSON."""
+    try:
+        flags = json.loads(str(value or "[]"))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return []
+    if not isinstance(flags, list):
+        return []
+    return [
+        READINESS_FLAG_LABELS.get(str(flag), str(flag).replace("_", " ").title())
+        for flag in flags
+        if str(flag).strip()
+    ]
 
 
 def _lazy_description_script(*, enabled: bool) -> str:
@@ -232,18 +260,20 @@ def generate_dashboard(
     # Job cards grouped by score
     job_section_parts: list[str] = []
     current_score = None
+    unscored_count = sum(1 for job in jobs if job["fit_score"] is None)
     for j in jobs:
         score = j["fit_score"] or 0
+        score_display = str(score) if j["fit_score"] is not None else "Needs regrade" if j["prior_fit_score"] is not None else "Not graded"
         if score != current_score:
             if current_score is not None:
                 job_section_parts.append("</div></section>")
             score_color = _score_color(score)
-            score_label = _score_label(score)
-            count_at_score = score_dist.get(score, 0)
+            score_label = _score_label(score) if score else "Awaiting qualification audit"
+            count_at_score = score_dist.get(score, 0) if score else unscored_count
             job_section_parts.append(f"""
             <section class="score-group" aria-labelledby="score-group-{score}">
             <h2 id="score-group-{score}" class="score-header" style="border-color:{score_color}">
-              <span class="score-badge" style="background:{score_color}">{score}</span>
+              <span class="score-badge" style="background:{score_color}">{score if score else '?'}</span>
               {score_label} ({count_at_score} jobs)
             </h2>
             <div class="job-grid" role="list">""")
@@ -256,15 +286,17 @@ def generate_dashboard(
         site = escape(j["site"] or "")
         site_color = _site_color(j["site"] or "")
         apply_url = _safe_href(j["application_url"], field="dashboard apply url")
-        keywords, reasoning = _score_reasoning_parts(j["score_reasoning"] or "")
+        keywords, reasoning = _score_reasoning_parts(j["score_reasoning"] or "") if j["fit_score"] is not None else ("", "")
 
         desc_raw = j["full_description"] or ""
         desc_preview = escape(_truncate(desc_raw, 300))
         desc_len = len(desc_raw)
         state_class, state_label, state_help = _apply_state(j)
-        has_resume = _has_value(j["tailored_resume_path"])
-        has_cover = _has_value(j["cover_letter_path"])
+        has_resume = bool(j["tailored_resume_path"] and Path(j["tailored_resume_path"]).is_file())
+        has_cover = bool(j["cover_letter_path"] and Path(j["cover_letter_path"]).is_file())
         confidence = str(j["verification_confidence"] or "").strip()
+        readiness_status = str(j["application_readiness"] or "legacy").strip().casefold()
+        readiness_labels = _readiness_labels(j["readiness_flags"])
         meta_parts = []
         meta_parts.append(
             f'<span class="meta-tag site-tag" style="border-color:{site_color}">{site}</span>'
@@ -281,6 +313,41 @@ def generate_dashboard(
         if confidence:
             doc_chips.append(f'<span class="status-chip is-neutral">Verify {escape(_truncate(confidence, 28))}</span>')
         docs_html = "".join(doc_chips)
+        packet_status = document_issue(dict(j))
+        docs_html += f'<span class="status-chip is-neutral">{escape(packet_status)}</span>'
+        requirements_html = ""
+        try:
+            requirements = json.loads(j["requirements_assessment"] or "[]")
+        except (TypeError, ValueError):
+            requirements = []
+        if j["fit_score"] is not None and isinstance(requirements, list) and requirements:
+            rows = []
+            for requirement in requirements:
+                if not isinstance(requirement, dict):
+                    continue
+                rows.append(
+                    '<li><strong>' + escape(str(requirement.get("status", "uncertain")).title()) + '</strong> '
+                    + escape(str(requirement.get("kind", ""))) + ': '
+                    + escape(str(requirement.get("requirement", "")))
+                    + '<p>' + escape(str(requirement.get("reason", ""))) + '</p>'
+                    + '<blockquote>' + escape(str(requirement.get("quote", ""))) + '</blockquote>'
+                    + '<p>Candidate evidence: ' + escape(str(requirement.get("evidence") or "Not established in this audit.")) + '</p></li>'
+                )
+            requirements_html = '<details><summary>Qualification evidence</summary><ul>' + ''.join(rows) + '</ul></details>'
+        evidence_url = _safe_href(j["scoring_source_url"] if j["fit_score"] is not None else j["detail_source_url"], field="employer evidence URL")
+        if evidence_url:
+            requirements_html += f'<p><a href="{evidence_url}" target="_blank" rel="noopener noreferrer">Employer posting read for assessment</a> &middot; {escape(str(j["detail_scraped_at"] or ""))}</p>'
+        if j["requirements_error"]:
+            requirements_html += '<p class="desc-warning">Minimum qualifications need review: ' + escape(str(j["requirements_error"])) + '</p>'
+        readiness_chips = [
+            f'<span class="status-chip {"is-done" if readiness_status == "ready" else "is-pending"}">'
+            f'Readiness {escape(readiness_status.replace("_", " ").title())}</span>'
+        ]
+        readiness_chips.extend(
+            f'<span class="status-chip is-neutral">{escape(label)}</span>'
+            for label in readiness_labels
+        )
+        readiness_html = "".join(readiness_chips)
 
         apply_html = ""
         if apply_url:
@@ -335,6 +402,8 @@ def generate_dashboard(
                 state_label,
                 keywords,
                 reasoning,
+                readiness_status,
+                " ".join(readiness_labels),
                 _truncate(desc_raw, 300),
             )
             if part
@@ -343,7 +412,7 @@ def generate_dashboard(
         job_section_parts.append(f"""
         <article class="job-card" data-score="{score}" data-site="{escape(j['site'] or '')}" data-location="{location.lower()}" data-state="{state_class.replace('state-', '')}" data-search="{escape(search_text, quote=True)}" role="listitem">
           <div class="card-header">
-            <span class="score-pill" style="background:{_score_color(score)}" aria-label="Fit score {score}">{score}</span>
+            <span class="score-pill" style="background:{_score_color(score)}" aria-label="Qualification score {score_display}">{score_display}</span>
             {title_html}
           </div>
           <div class="meta-row">{meta_html}</div>
@@ -351,7 +420,9 @@ def generate_dashboard(
             <span class="state-pill {state_class}">{state_label}</span>
             <span class="state-help">{escape(state_help)}</span>
           </div>
+          <div class="doc-row" aria-label="Application readiness">{readiness_html}</div>
           <div class="doc-row" aria-label="Generated documents">{docs_html}</div>
+          {requirements_html}
           {f'<div class="score-reason"><span class="score-reason-label">Signals</span><span>{escape(keywords)}</span></div>' if keywords else '<div class="score-reason muted-reason">No score signals saved yet.</div>'}
           {f'<div class="score-reason"><span class="score-reason-label">Why</span><span>{escape(reasoning)}</span></div>' if reasoning else ''}
           {f'<p class="desc-preview">{desc_preview}</p>' if desc_preview else ''}
@@ -546,8 +617,8 @@ def generate_dashboard(
 </section>
 
 <section class="filters" aria-label="Job filters">
-  <span class="filter-label" id="score-filter-label">Score:</span>
-  <button type="button" class="filter-btn active" data-min-score="0" aria-pressed="true" aria-describedby="score-filter-label">All 5+</button>
+  <span class="filter-label" id="score-filter-label">Qualification score:</span>
+  <button type="button" class="filter-btn active" data-min-score="0" aria-pressed="true" aria-describedby="score-filter-label">All jobs</button>
   <button type="button" class="filter-btn" data-min-score="3" aria-pressed="false" aria-describedby="score-filter-label">3+ Review</button>
   <button type="button" class="filter-btn" data-min-score="7" aria-pressed="false" aria-describedby="score-filter-label">7+ Strong</button>
   <button type="button" class="filter-btn" data-min-score="8" aria-pressed="false" aria-describedby="score-filter-label">8+ Excellent</button>
@@ -558,7 +629,7 @@ def generate_dashboard(
 
 <section class="score-section" aria-label="Job analytics">
   <div class="score-dist" aria-labelledby="score-dist-heading">
-    <h2 id="score-dist-heading">Score Distribution</h2>
+    <h2 id="score-dist-heading">Qualification Score Distribution</h2>
     {score_bars}
   </div>
   <div class="sites-section" aria-labelledby="source-heading">
@@ -609,7 +680,7 @@ function applyFilters() {{
     total++;
     const score = parseInt(card.dataset.score) || 0;
     const text = item.searchText;
-    const scoreMatch = score >= (minScore || 5);
+    const scoreMatch = score >= minScore;
     const textMatch = !searchText || text.includes(searchText);
     if (scoreMatch && textMatch) {{
       card.classList.remove('hidden');

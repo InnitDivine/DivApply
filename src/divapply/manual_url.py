@@ -14,6 +14,12 @@ from divapply.security import UnsafeUrlError, validate_external_url, validate_na
 
 
 MAX_MANUAL_REDIRECTS = 5
+AGGREGATOR_DOMAINS = ("indeed.com", "linkedin.com", "glassdoor.com", "ziprecruiter.com", "talent.com")
+
+
+def is_aggregator_url(url: str) -> bool:
+    host = (urlparse(str(url or "")).hostname or "").casefold()
+    return any(host == domain or host.endswith("." + domain) for domain in AGGREGATOR_DOMAINS)
 
 _EMPLOYMENT_TYPE_ALIASES = {
     "fulltime": "full_time",
@@ -177,6 +183,7 @@ def extract_job_posting_schema(soup: BeautifulSoup) -> dict[str, str]:
 def visible_body_description(soup: BeautifulSoup) -> str:
     """Return the best visible job-description block from a pasted URL page."""
     selectors = [
+        "#JobBulletin",
         "#job-description",
         "#job_description",
         "#jobDescriptionText",
@@ -194,6 +201,8 @@ def visible_body_description(soup: BeautifulSoup) -> str:
         "article[class*='job']",
         "main",
         "[role='main']",
+        "#main-content",
+        "#content",
     ]
     best = ""
     for selector in selectors:
@@ -203,14 +212,58 @@ def visible_body_description(soup: BeautifulSoup) -> str:
                 best = text
     if best:
         return best
-    return "\n".join(line for line in soup.get_text("\n", strip=True).splitlines() if line)[:6000]
+    # Never silently cut the minimum qualifications off the end of a bulletin.
+    # The scoring context applies its own explicit, detectable size limit.
+    return "\n".join(line for line in soup.get_text("\n", strip=True).splitlines() if line)
 
 
-def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
-    """Fetch lightweight metadata for a manually pasted job URL."""
+def application_link_url(soup: BeautifulSoup, base_url: str) -> str:
+    """Return the strongest validated Apply link exposed by the fetched job page."""
+    ranked: list[tuple[int, int, str]] = []
+    for index, anchor in enumerate(soup.select("a[href]")):
+        href = str(anchor.get("href") or "").strip()
+        if not href:
+            continue
+        label = " ".join(
+            str(value or "").strip()
+            for value in (
+                anchor.get_text(" ", strip=True),
+                anchor.get("aria-label"),
+                anchor.get("title"),
+            )
+            if str(value or "").strip()
+        ).casefold()
+        marker = " ".join(
+            str(value or "").strip().casefold()
+            for value in (
+                anchor.get("id"),
+                " ".join(anchor.get("class") or []),
+                anchor.get("data-automation-id"),
+                anchor.get("data-testid"),
+            )
+            if str(value or "").strip()
+        )
+        score = 0
+        if label in {"apply", "apply now", "apply for this job", "start application"}:
+            score += 100
+        elif re.search(r"\bapply(?: now| for this job| today)?\b", label):
+            score += 60
+        if "apply" in marker or "jobpostingapplybutton" in marker:
+            score += 80
+        if re.search(r"(?:^|[/_-])apply(?:[/?#_-]|$)", href, flags=re.IGNORECASE):
+            score += 20
+        if score:
+            try:
+                candidate = validate_navigation_url(urljoin(base_url, href), field="application URL")
+            except UnsafeUrlError:
+                continue
+            ranked.append((score, -index, candidate))
+    return max(ranked)[2] if ranked else ""
+
+
+def extract_manual_job_metadata(url: str, *, require_full: bool = False) -> dict[str, str | bool]:
+    """Read the posting; optionally render a JavaScript-only public page."""
     safe_url = validate_external_url(url, field="job URL")
-    host = urlparse(safe_url).hostname or "manual"
-    title_fallback = safe_url.rstrip("/").split("/")[-1].replace("-", " ").strip().title() or "Manual Job"
 
     with httpx.Client(follow_redirects=False, timeout=20) as client:
         response = _fetch_job_page(
@@ -223,17 +276,71 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
                 )
             },
         )
+    final_url = validate_navigation_url(
+        str(getattr(response, "url", safe_url) or safe_url),
+        field="job URL",
+    )
+    result = parse_job_page(response.text, final_url, status_code=getattr(response, "status_code", 200))
+    if require_full and not result["inactive"] and not result["description_complete"]:
+        result = _render_job_page(final_url)
+    return result
 
-    soup = BeautifulSoup(response.text, "html.parser")
+
+def _render_job_page(url: str) -> dict[str, str | bool]:
+    """Render public HTML without an LLM, login session, or application actions."""
+    page_html, final_url = render_public_page(url)
+    return parse_job_page(page_html, final_url)
+
+
+def render_public_page(url: str, *, wait_text: str | None = None) -> tuple[str, str]:
+    """Read JavaScript-rendered public content in an isolated browser context."""
+    from playwright.sync_api import sync_playwright
+
+    def public_requests_only(route):
+        try:
+            validate_external_url(route.request.url, field="page resource")
+        except UnsafeUrlError:
+            route.abort()
+        else:
+            route.continue_()
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        try:
+            context = browser.new_context(service_workers="block")
+            context.route("**/*", public_requests_only)
+            page = context.new_page()
+            response = page.goto(validate_external_url(url), wait_until="domcontentloaded", timeout=30000)
+            if response and response.status >= 400:
+                raise ValueError(f"Employer page returned HTTP {response.status}")
+            if wait_text:
+                page.get_by_text(re.compile(wait_text, re.I)).first.wait_for(timeout=12000)
+            else:
+                try:
+                    page.wait_for_load_state("networkidle", timeout=8000)
+                except Exception:
+                    pass
+            return page.content(), validate_navigation_url(page.url)
+        finally:
+            browser.close()
+
+
+def parse_job_page(page_html: str, final_url: str, *, status_code: int = 200) -> dict[str, str | bool]:
+    """Extract the whole public posting and retain its actual source URL."""
+    host = urlparse(final_url).hostname or "manual"
+    title_fallback = final_url.rstrip("/").split("/")[-1].replace("-", " ").strip().title() or "Manual Job"
+
+    soup = BeautifulSoup(page_html, "html.parser")
     schema_job = extract_job_posting_schema(soup)
-    terminal_inactive_status = getattr(response, "status_code", None) in {404, 410}
+    application_url = application_link_url(soup, final_url) or final_url
+    terminal_inactive_status = status_code in {404, 410}
     for hidden in soup.select(
         "[class*='d-none'], [class*='hidden'], [class*='sr-only'], "
         "[hidden], [aria-hidden='true'], [style*='display:none'], [style*='display: none'], "
         "[style*='visibility:hidden'], [style*='visibility: hidden']"
     ):
         hidden.decompose()
-    for tag in soup(["script", "style", "noscript"]):
+    for tag in soup.select("script, style, noscript, nav, footer, aside"):
         tag.decompose()
 
     def meta_value(*names: str) -> str:
@@ -257,7 +364,22 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
     meta_description = meta_value("description", "og:description", "twitter:description")
     text = soup.get_text("\n", strip=True)
     visible_description = visible_body_description(soup)
-    description = schema_job.get("description") or visible_description or meta_description
+    description = visible_description or schema_job.get("description") or meta_description
+    structured = schema_job.get("description", "")
+    # Some sites expose additional requirements only in JSON-LD. Keep both
+    # sources when neither contains the other, rather than prefer the teaser.
+    def normal(text: str) -> str:
+        return " ".join(text.casefold().split())
+    if structured and normal(structured) not in normal(description):
+        if normal(description) in normal(structured):
+            description = structured
+        else:
+            description += "\n\nADDITIONAL STRUCTURED POSTING TEXT:\n" + structured
+    from divapply.enrichment.detail import extract_official_government_detail
+    from divapply.enrichment.requirements import linked_qualification_evidence
+    official_detail = extract_official_government_detail(page_html, final_url)
+    if official_detail:
+        description = official_detail["full_description"]
 
     lower_text = text.lower()
     inactive_text_present = any(
@@ -268,11 +390,26 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
             "job is no longer available",
             "posting has expired",
             "position has been filled",
+            "job posting is no longer available",
+            "job posting was not found",
+            "job posting cannot be found",
         )
     )
     inactive = terminal_inactive_status or inactive_text_present
+    job_sections = bool(re.search(
+        r"\b(qualifications|requirements|responsibilities|position overview|essential duties|job description)\b",
+        description, re.I,
+    ))
+    blocked = any(phrase in lower_text for phrase in (
+        "verify you are human", "access denied", "enable javascript and cookies to continue",
+    ))
+    complete = bool(not blocked and len(description.strip()) >= 200 and (schema_job or official_detail or job_sections))
+    if host.casefold() in {"calcareers.ca.gov", "www.calcareers.ca.gov"} and not official_detail:
+        complete = False  # Do not grade CalCareers' empty template/site notices.
+    requirements = linked_qualification_evidence(page_html, final_url) if complete and not inactive else {}
 
     return {
+        **requirements,
         "title": title[:180],
         "company": schema_job.get("company") or host,
         "site": host,
@@ -281,4 +418,7 @@ def extract_manual_job_metadata(url: str) -> dict[str, str | bool]:
         "employment_type": schema_job.get("employment_type", ""),
         "job_posting_schema": bool(schema_job),
         "inactive": inactive,
+        "final_url": final_url,
+        "application_url": application_url,
+        "description_complete": complete,
     }

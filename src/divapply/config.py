@@ -1,12 +1,15 @@
 """DivApply configuration: paths, platform detection, user data."""
 
 import copy
+import logging
 import math
 import os
 import re
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+log = logging.getLogger(__name__)
 
 # User data directory - all user-specific files live here.
 #
@@ -224,8 +227,8 @@ def load_profile() -> dict:
         from divapply.database import get_education_records
 
         profile = _overlay_transcript_education(profile, get_education_records())
-    except Exception:
-        pass
+    except Exception as exc:
+        log.warning("Could not overlay canonical education records; using profile education: %s", exc)
 
     # Hidden coursework knowledge is stored in SQLite so it can inform
     # scoring/tailoring without being exposed in the generated resume text.
@@ -235,13 +238,15 @@ def load_profile() -> dict:
         from divapply.database import get_coursework
 
         coursework = get_coursework()
-    except Exception:
+    except Exception as exc:
+        log.warning("Could not load coursework records; continuing without coursework context: %s", exc)
         coursework = []
 
     profile["coursework"] = coursework
     try:
         search_config = load_search_config()
-    except Exception:
+    except Exception as exc:
+        log.warning("Could not load search configuration for coursework context; using defaults: %s", exc)
         search_config = {}
     profile["coursework_summary"] = _summarize_coursework(coursework, search_config=search_config)
     profile["coursework_skills"] = _summarize_coursework_skills(coursework, search_config=search_config)
@@ -371,6 +376,23 @@ def profile_skills(profile: dict) -> dict[str, list[str]]:
 
 
 _ACADEMIC_TERM_ORDER = {"winter": 1, "spring": 2, "summer": 3, "fall": 4, "autumn": 4}
+_COMPLETED_COURSEWORK_STATUSES = frozenset(
+    {"completed", "complete", "passed", "accepted", "transfer credit", "transferred"}
+)
+_CURRENT_COURSEWORK_STATUSES = frozenset(
+    {
+        "active",
+        "course in progress",
+        "current",
+        "current enrollment",
+        "currently enrolled",
+        "enrolled",
+        "in progress",
+        "not yet completed",
+        "ongoing",
+        "registered",
+    }
+)
 _SEARCH_TERM_STOPWORDS = {
     "and",
     "assistant",
@@ -417,6 +439,29 @@ def _coursework_item(row: dict) -> str:
     if title and subject:
         return f"{title} [{subject}]"
     return title or subject
+
+
+def _coursework_evidence_state(row: dict) -> str | None:
+    """Classify completed, active, or deliberately status-neutral course evidence."""
+    status = re.sub(r"[-_]+", " ", str(row.get("status") or "").strip().casefold())
+    status = " ".join(status.split())
+    if not status:
+        # Curated class-name-only imports intentionally omit completion facts.
+        # They are useful academic context, but prove neither completion nor
+        # current enrollment.
+        return "unspecified"
+    if status in _COMPLETED_COURSEWORK_STATUSES:
+        return "completed"
+    if status in _CURRENT_COURSEWORK_STATUSES:
+        return "current"
+    return None
+
+
+def _coursework_is_non_course_placeholder(row: dict) -> bool:
+    """Exclude known advising shells that are not instructional courses."""
+    label = " ".join(str(row.get(key) or "") for key in ("course_code", "course_title"))
+    normalized = re.sub(r"[^a-z0-9]+", "", label.casefold())
+    return "advisingemploymentskills" in normalized
 
 
 def _coursework_relevance_score(row: dict, terms: set[str]) -> int:
@@ -475,17 +520,21 @@ def _coursework_context_policy(search_config: dict | None) -> dict[str, Any]:
 def _coursework_row_is_eligible(row: dict, policy: dict[str, Any]) -> bool:
     if not policy.get("valid", False):
         return False
-    status = str(row.get("status") or "").strip().casefold()
-    if status not in {"completed", "complete", "passed", "accepted", "transfer credit", "transferred"}:
+    evidence_state = _coursework_evidence_state(row)
+    if evidence_state is None or _coursework_is_non_course_placeholder(row):
         return False
 
-    credits = row.get("credits")
-    try:
-        numeric_credits = float(str(credits).strip())
-    except (TypeError, ValueError):
-        return False
-    if isinstance(credits, bool) or not math.isfinite(numeric_credits) or numeric_credits <= 0:
-        return False
+    # Earned-credit validation proves completed-course evidence. Current
+    # courses often have no earned credits yet, so their explicit enrollment
+    # status is the evidence boundary instead.
+    if evidence_state == "completed":
+        credits = row.get("credits")
+        try:
+            numeric_credits = float(str(credits).strip())
+        except (TypeError, ValueError):
+            return False
+        if isinstance(credits, bool) or not math.isfinite(numeric_credits) or numeric_credits <= 0:
+            return False
 
     haystack = " ".join(
         str(row.get(key) or "") for key in ("course_title", "course_code", "subject_area", "notes")
@@ -514,15 +563,24 @@ def _select_coursework_rows(
     relevance_terms = _coursework_relevance_terms(search_config)
     selected_by_school: dict[str, list[dict]] = {}
     for school, rows in grouped.items():
-        newest = sorted(rows, key=_academic_term_key, reverse=True)
-        relevant = sorted(
-            (row for row in rows if _coursework_relevance_score(row, relevance_terms) > 0),
-            key=lambda row: (_coursework_relevance_score(row, relevance_terms), _academic_term_key(row)),
-            reverse=True,
-        )
+        current_rows = [row for row in rows if _coursework_evidence_state(row) == "current"]
+        completed_rows = [row for row in rows if _coursework_evidence_state(row) == "completed"]
+        unspecified_rows = [row for row in rows if _coursework_evidence_state(row) == "unspecified"]
+
+        def _ranked(candidates: list[dict]) -> list[dict]:
+            relevant = sorted(
+                (row for row in candidates if _coursework_relevance_score(row, relevance_terms) > 0),
+                key=lambda row: (_coursework_relevance_score(row, relevance_terms), _academic_term_key(row)),
+                reverse=True,
+            )
+            newest = sorted(candidates, key=_academic_term_key, reverse=True)
+            return [*relevant, *newest]
+
         selected: list[dict] = []
         seen: set[tuple[str, str, str]] = set()
-        for row in [*relevant, *newest]:
+        # Current enrollment is time-sensitive evidence and must not be
+        # crowded out by a long completed-course history.
+        for row in [*_ranked(current_rows), *_ranked(completed_rows), *_ranked(unspecified_rows)]:
             identity = (
                 str(row.get("course_code") or "").strip().casefold(),
                 str(row.get("course_title") or "").strip().casefold(),
@@ -555,7 +613,21 @@ def _summarize_coursework(
     grouped = _select_coursework_rows(coursework, search_config=search_config, max_per_school=limit)
     summary: list[str] = []
     for school, rows in grouped.items():
-        summary.append(f"{school}: {', '.join(_coursework_item(row) for row in rows)}")
+        completed = [_coursework_item(row) for row in rows if _coursework_evidence_state(row) == "completed"]
+        current = [_coursework_item(row) for row in rows if _coursework_evidence_state(row) == "current"]
+        unspecified = [
+            _coursework_item(row) for row in rows if _coursework_evidence_state(row) == "unspecified"
+        ]
+        if completed:
+            summary.append(f"{school}: {', '.join(completed)}")
+        if current:
+            summary.append(
+                f"Current coursework (in progress; not completed) - {school}: {', '.join(current)}"
+            )
+        if unspecified:
+            summary.append(
+                f"Coursework (completion not asserted) - {school}: {', '.join(unspecified)}"
+            )
     return summary
 
 
@@ -570,9 +642,12 @@ def _summarize_coursework_skills(
 
     policy = _coursework_context_policy(search_config)
     selected = _select_coursework_rows(coursework, search_config=search_config)
-    grouped: dict[str, set[str]] = {}
+    grouped: dict[tuple[str, str], set[str]] = {}
     for school, rows in selected.items():
         for row in rows:
+            evidence_state = _coursework_evidence_state(row)
+            if evidence_state is None:
+                continue
             raw_skills = row.get("skills") or []
             if isinstance(raw_skills, str):
                 try:
@@ -590,11 +665,23 @@ def _summarize_coursework_skills(
                 lowered = skill_text.casefold()
                 if any(pattern in lowered for pattern in policy["skill_exclude_patterns"]):
                     continue
-                grouped.setdefault(school, set()).add(skill_text)
+                grouped.setdefault((school, evidence_state), set()).add(skill_text)
 
     summary: list[str] = []
-    for school, skills in grouped.items():
-        summary.append(f"{school}: {', '.join(sorted(skills))}")
+    for (school, evidence_state), skills in grouped.items():
+        skill_list = ", ".join(sorted(skills))
+        if evidence_state == "current":
+            summary.append(
+                "Current coursework exposure (in progress; not completed; "
+                f"not paid work or an earned certification) - {school}: {skill_list}"
+            )
+        elif evidence_state == "unspecified":
+            summary.append(
+                "Coursework exposure (completion not asserted; academic only; "
+                f"not paid work or an earned certification) - {school}: {skill_list}"
+            )
+        else:
+            summary.append(f"{school}: {skill_list}")
     return summary
 
 
