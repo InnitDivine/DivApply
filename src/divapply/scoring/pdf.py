@@ -223,6 +223,10 @@ def parse_skills(text: str) -> list[tuple[str, str]]:
             value = ", ".join(current_bullets).strip()
             if value:
                 skills.append((current_cat, value))
+            else:
+                # Plain skill lists are valid input too; never discard them
+                # just because they lack a category and following bullets.
+                skills.append(("", current_cat))
             current_cat = ""
             current_bullets = []
 
@@ -241,6 +245,8 @@ def parse_skills(text: str) -> list[tuple[str, str]]:
             cat, val = stripped.split(":", 1)
             if cat.strip() and val.strip():
                 skills.append((cat.strip(), val.strip()))
+            elif cat.strip():
+                current_cat = cat.strip()
         elif is_bullet:
             # Format B bullet: collect under current category
             if current_cat:
@@ -249,6 +255,10 @@ def parse_skills(text: str) -> list[tuple[str, str]]:
                 cat, val = stripped[2:].split(":", 1)
                 if cat.strip() and val.strip():
                     skills.append((cat.strip(), val.strip()))
+                else:
+                    skills.append(("", stripped[2:].strip()))
+            else:
+                skills.append(("", stripped[2:].strip()))
         else:
             # Format B category header
             _flush()
@@ -360,7 +370,8 @@ def build_html(resume: dict) -> str:
         skills = parse_skills(sections[skills_key])
         rows = ""
         for cat, val in skills:
-            rows += f'<div class="skill-row"><span class="skill-cat">{_esc(cat)}:</span> {_esc(val)}</div>\n'
+            label = f'<span class="skill-cat">{_esc(cat)}:</span> ' if cat else ""
+            rows += f'<div class="skill-row">{label}{_esc(val)}</div>\n'
         skills_label = "Core Qualifications" if "QUALIFICATION" in skills_key else "Technical Skills"
         skills_html = f'<div class="section"><div class="section-title">{skills_label}</div><div class="skills-grid">{rows}</div></div>'
 

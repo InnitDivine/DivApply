@@ -40,6 +40,22 @@ def test_batch_convert_propagates_item_failures(monkeypatch, tmp_path) -> None:
     database.close_connection(tmp_path / "test.db")
 
 
+@pytest.mark.parametrize("skills", [
+    "Windows troubleshooting, Microsoft 365, data entry, and user support.",
+    "- Windows troubleshooting\n- Microsoft 365",
+    "Operating Systems:\n- Windows\n- Linux",
+])
+def test_skill_content_survives_uncategorized_and_multiline_formats(skills: str) -> None:
+    from bs4 import BeautifulSoup
+
+    resume = parse_resume(f"Example Person\nIT Support\n\nTECHNICAL SKILLS\n{skills}\n")
+    rendered = BeautifulSoup(build_html(resume), "html.parser").get_text(" ")
+    assert "Windows" in rendered
+    for word in ("Microsoft", "Linux", "troubleshooting"):
+        if word in skills:
+            assert word in rendered
+
+
 def test_resume_html_uses_orange_cream_one_page_template() -> None:
     resume = parse_resume("""Example Person
 IT Support Specialist
