@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from rich.text import Text
 from typer.testing import CliRunner
 
 from divapply import cli, database
@@ -148,13 +149,16 @@ def test_apply_assist_requires_one_explicit_url(monkeypatch) -> None:
     assert "--assist requires --url" in result.output
 
 
-def test_apply_links_help_documents_one_url_per_line() -> None:
-    result = runner.invoke(app, ["apply-links", "--help"])
+@pytest.mark.parametrize("width", [80, 120])
+def test_apply_links_help_documents_one_url_per_line(width: int) -> None:
+    result = runner.invoke(app, ["apply-links", "--help"], env={"COLUMNS": str(width), "FORCE_COLOR": "1"})
 
     assert result.exit_code == 0
-    assert "one direct job URL" in result.output
-    assert "per line" in result.output
-    assert "--prepare-only" in result.output
+    # Rich may color or wrap words across panel lines on CI terminals.
+    plain = Text.from_ansi(result.output).plain.replace("│", " ")
+    normalized = " ".join(plain.split())
+    assert "one direct job URL per line" in normalized
+    assert "--prepare-only" in normalized
 
 
 def test_prepare_manual_url_promotes_resume_text_fallback_to_pdf(tmp_path, monkeypatch) -> None:
