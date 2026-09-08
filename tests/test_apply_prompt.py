@@ -20,6 +20,8 @@ def _build_minimal_prompt(
     *,
     full_name: str = "Example Person",
     job_overrides: dict | None = None,
+    search_config: dict | None = None,
+    authorization: prompt_mod.ApplicationAuthorization | None = None,
     **kwargs,
 ) -> str:
     resume_txt = tmp_path / "tailored.txt"
@@ -36,7 +38,7 @@ def _build_minimal_prompt(
     }
     monkeypatch.setattr(prompt_mod.config, "APPLY_WORKER_DIR", tmp_path / "workers")
     monkeypatch.setattr(prompt_mod.config, "load_profile", lambda: profile)
-    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: {})
+    monkeypatch.setattr(prompt_mod.config, "load_search_config", lambda: search_config or {})
     monkeypatch.setattr(prompt_mod.config, "load_blocked_sso", lambda: [])
     monkeypatch.setattr(prompt_mod.config, "load_credentials", lambda: {})
     monkeypatch.setattr(prompt_mod, "_build_profile_summary", lambda profile: "profile summary")
@@ -73,7 +75,7 @@ def _build_minimal_prompt(
     return prompt_mod.build_prompt(
         job=job,
         tailored_resume="resume text",
-        authorization=_authorization(dry_run=dry_run),
+        authorization=authorization or _authorization(dry_run=dry_run),
         **kwargs,
     )
 
@@ -157,8 +159,8 @@ def test_apply_prompt_uploads_cover_pdf_when_text_intermediate_was_removed(tmp_p
 
     prompt = prompt_mod.build_prompt(
         job={
-            "url": "https://example.com/job",
-            "application_url": "https://example.com/apply",
+            "url": "https://www.governmentjobs.com/careers/example/jobs/123/support-analyst",
+            "application_url": "https://www.governmentjobs.com/careers/example/jobs/123/apply",
             "title": "Support Analyst",
             "company": "Real Employer",
             "site": "Indeed",
@@ -811,6 +813,143 @@ def test_apply_prompt_dry_run_does_not_request_applied_result(tmp_path, monkeypa
     assert "then output RESULT:APPLIED with a note that this was a dry run" not in prompt
 
 
+def test_assisted_review_allows_confirmed_direct_manual_job_without_submit(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    authorization = prompt_mod.ApplicationAuthorization(
+        profile_fields=True,
+        final_submit=False,
+        source="assisted_review",
+    )
+
+    prompt = _build_minimal_prompt(
+        tmp_path,
+        monkeypatch,
+        dry_run=True,
+        authorization=authorization,
+        search_config={"application_mode": "manual_review"},
+        job_overrides={
+            "application_mode": "manual_review",
+            "source_verification": "user_confirmed_direct",
+        },
+    )
+
+    assert "supervised fill-and-review session" in prompt
+    assert "Final submission is not authorized" in prompt
+    assert "Never close the browser" in prompt
+    assert "never click the final Submit/Apply control" in prompt
+    assert "standalone line RESULT:READY_FOR_REVIEW" in prompt
+    assert "RESULT:READY_FOR_REVIEW -- all safely supported fields are complete" in prompt
+    assert "RESULT:CAPTCHA -- a human-only CAPTCHA is visible" in prompt
+    assert "RESULT:LOGIN_ISSUE -- a password, SSO, 2FA, or account step requires the user" in prompt
+    assert "RESULT:FAILED:missing_required_answer" in prompt
+    assert "RESULT:APPLIED -- submitted successfully" not in prompt
+    assert "RESULT:FAILED:dry_run_complete" not in prompt
+    assert 'Then click it.' not in prompt
+    assert 'Click "Accept & Submit"' not in prompt
+
+
+def test_assisted_resume_preserves_current_page_without_navigation(tmp_path, monkeypatch) -> None:
+    prompt = _build_minimal_prompt(
+        tmp_path,
+        monkeypatch,
+        dry_run=True,
+        authorization=prompt_mod.ApplicationAuthorization(True, False, "assisted_review"),
+        resume_current_page=True,
+    )
+
+    assert "Resume from the current active page with browser_snapshot" in prompt
+    assert "Preserve all existing field values" in prompt
+    assert "Do not reload, go back, or call browser_navigate during this resumed turn" in prompt
+    assert "browser_navigate to the supplied job URL" not in prompt
+
+
+def test_current_page_resume_is_rejected_outside_assisted_review(tmp_path, monkeypatch) -> None:
+    with pytest.raises(ValueError, match="only for assisted review"):
+        _build_minimal_prompt(
+            tmp_path,
+            monkeypatch,
+            resume_current_page=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("authorization", "job_overrides", "search_config", "error"),
+    [
+        (
+            _authorization(dry_run=True),
+            {"source_verification": "user_confirmed_direct"},
+            {},
+            "verified official source",
+        ),
+        (
+            _authorization(dry_run=True),
+            {"application_mode": "manual_review"},
+            {"application_mode": "manual_review"},
+            "market policy requires manual review",
+        ),
+        (
+            prompt_mod.ApplicationAuthorization(True, False, "assisted_review"),
+            {"application_mode": "manual_review", "source_verification": "unknown"},
+            {"application_mode": "manual_review"},
+            "verified official source",
+        ),
+        (
+            prompt_mod.ApplicationAuthorization(True, False, "assisted_review"),
+            {"application_mode": "manual_review", "source_verification": "user_confirmed_direct"},
+            {"application_mode": "discovery_only"},
+            "discovery-only",
+        ),
+    ],
+)
+def test_manual_or_user_confirmed_source_exceptions_are_assisted_only(
+    tmp_path,
+    monkeypatch,
+    authorization,
+    job_overrides,
+    search_config,
+    error,
+) -> None:
+    with pytest.raises(ValueError, match=error):
+        _build_minimal_prompt(
+            tmp_path,
+            monkeypatch,
+            dry_run=True,
+            authorization=authorization,
+            job_overrides=job_overrides,
+            search_config=search_config,
+        )
+
+
+def test_assisted_review_authorization_is_strictly_no_submit() -> None:
+    authorization = prompt_mod.ApplicationAuthorization(True, False, "assisted_review")
+
+    assert prompt_mod.validate_application_authorization(authorization, dry_run=True) is authorization
+    with pytest.raises(ValueError, match="No-submit authorization source"):
+        prompt_mod.validate_application_authorization(authorization, dry_run=False)
+    with pytest.raises(ValueError, match="Dry-run mode cannot carry final-submit authorization"):
+        prompt_mod.validate_application_authorization(
+            prompt_mod.ApplicationAuthorization(True, True, "assisted_review"),
+            dry_run=True,
+        )
+
+
+def test_apply_prompt_includes_neogov_playbook_only_for_neogov_jobs(tmp_path, monkeypatch) -> None:
+    generic_prompt = _build_minimal_prompt(tmp_path, monkeypatch)
+    neogov_prompt = _build_minimal_prompt(
+        tmp_path,
+        monkeypatch,
+        job_overrides={
+            "url": "https://www.governmentjobs.com/careers/example/jobs/123/support-technician",
+            "application_url": "https://www.governmentjobs.com/careers/example/jobs/123/apply",
+        },
+    )
+
+    assert "NEOGOV OPTIMAL FLOW" not in generic_prompt
+    assert "NEOGOV OPTIMAL FLOW" in neogov_prompt
+
+
 def test_captcha_instructions_fail_closed_without_secret_or_host_commands(monkeypatch) -> None:
     monkeypatch.setenv("CAPSOLVER_API_KEY", "never-embed-this-secret")
 
@@ -939,7 +1078,14 @@ def test_v149_prompt_reserves_approval_required_for_auto_review(tmp_path, monkey
 
 
 def test_v150_governmentjobs_prefills_require_bounded_verification(tmp_path, monkeypatch) -> None:
-    prompt = _build_minimal_prompt(tmp_path, monkeypatch)
+    prompt = _build_minimal_prompt(
+        tmp_path,
+        monkeypatch,
+        job_overrides={
+            "url": "https://www.governmentjobs.com/careers/example/jobs/123/support-technician",
+            "application_url": "https://www.governmentjobs.com/careers/example/jobs/123/apply",
+        },
+    )
 
     assert "Never trust those remote prefills blindly" in prompt
     assert "employer names, job titles, employment dates" in prompt

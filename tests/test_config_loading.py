@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 
 import yaml
 import pytest
@@ -40,6 +41,7 @@ def test_load_profile_overlays_canonical_transcript_school_facts(tmp_path, monke
                         "gpa": "3.99",
                         "units": "101",
                         "notes": "Editable narrative remains.",
+                        "expected_graduation_month": 12,
                     }
                 ]
             }
@@ -63,7 +65,7 @@ def test_load_profile_overlays_canonical_transcript_school_facts(tmp_path, monke
                 "degree": "Bachelor of Science",
                 "major": "Public Health",
                 "minor": "General Business",
-                "expected_graduation_year": 2027,
+                "expected_graduation_year": 2026,
                 "degree_status": "in progress",
             }
         ],
@@ -76,7 +78,8 @@ def test_load_profile_overlays_canonical_transcript_school_facts(tmp_path, monke
     assert school["units"] == "113"
     assert school["gpa_as_of"] == "2026-07-12"
     assert school["units_scope"] == "total"
-    assert school["expected_graduation_year"] == "2027"
+    assert school["expected_graduation_year"] == "2026"
+    assert school["expected_graduation_month"] == 12
     assert school["minor"] == "General Business"
     assert school["education_record_source"] == "structured transcript"
     assert school["education_record_degree_status"] == "in progress"
@@ -90,6 +93,41 @@ def test_load_profile_overlays_canonical_transcript_school_facts(tmp_path, monke
         "units",
     ]
     assert school["notes"] == "Editable narrative remains."
+
+
+def test_load_profile_warns_when_academic_enrichment_falls_back(tmp_path, monkeypatch, caplog) -> None:
+    from divapply import database
+
+    def fail_education_records() -> list[dict]:
+        raise RuntimeError("education database unavailable")
+
+    def fail_coursework() -> list[dict]:
+        raise RuntimeError("coursework database unavailable")
+
+    def fail_search_config() -> dict:
+        raise RuntimeError("search config unavailable")
+
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text(
+        json.dumps({"education_schools": [{"school": "Profile University"}]}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(config, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(config, "LEGACY_PROFILE_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(database, "get_education_records", fail_education_records)
+    monkeypatch.setattr(database, "get_coursework", fail_coursework)
+    monkeypatch.setattr(config, "load_search_config", fail_search_config)
+
+    with caplog.at_level(logging.WARNING, logger="divapply.config"):
+        loaded = config.load_profile()
+
+    assert loaded["education_schools"] == [{"school": "Profile University"}]
+    assert loaded["coursework"] == []
+    assert loaded["coursework_summary"] == []
+    assert loaded["coursework_skills"] == []
+    assert "Could not overlay canonical education records" in caplog.text
+    assert "Could not load coursework records" in caplog.text
+    assert "Could not load search configuration" in caplog.text
 
 
 def test_load_search_config_empty_file_returns_empty_dict(tmp_path, monkeypatch) -> None:
@@ -348,22 +386,148 @@ def test_coursework_summary_keeps_recent_and_search_relevant_courses_without_raw
     assert len(summary[0].split(": ", 1)[1].split(", ")) <= 12
 
 
-def test_coursework_context_requires_verified_completion_and_finite_positive_credits() -> None:
+def test_coursework_context_separates_completed_and_current_evidence() -> None:
     base = {
         "school": "Example University",
         "subject_area": "Information Systems",
     }
     coursework = [
         base | {"course_title": "Verified Course", "status": "Completed", "credits": 3},
-        base | {"course_title": "Unknown Status", "credits": 3},
+        base | {"course_title": "Unmarked Course", "credits": 3},
         base | {"course_title": "Unknown Credits", "status": "Completed"},
         base | {"course_title": "Infinite Credits", "status": "Completed", "credits": "inf"},
-        base | {"course_title": "In Progress", "status": "In progress", "credits": 3},
+        base | {"course_title": "In Progress", "status": "In progress"},
+        base | {"course_title": "Not Enrolled", "status": "Not currently enrolled", "credits": 3},
     ]
 
     summary = config._summarize_coursework(coursework)
 
-    assert summary == ["Example University: Verified Course [Information Systems]"]
+    assert summary == [
+        "Example University: Verified Course [Information Systems]",
+        "Current coursework (in progress; not completed) - Example University: "
+        "In Progress [Information Systems]",
+        "Coursework (completion not asserted) - Example University: Unmarked Course [Information Systems]",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("Enrolled", "current"),
+        ("In-Progress", "current"),
+        ("Current", "current"),
+        ("Not Yet Completed", "current"),
+        ("Not currently enrolled", None),
+        ("Withdrawn", None),
+        ("Dropped", None),
+        ("Failed", None),
+        ("Not completed", None),
+        ("Unknown", None),
+        (None, "unspecified"),
+        ("", "unspecified"),
+    ],
+)
+def test_coursework_evidence_state_requires_explicit_current_status(status, expected) -> None:
+    assert config._coursework_evidence_state({"status": status}) == expected
+
+
+def test_load_profile_labels_current_coursework_skills_and_excludes_advising_shell(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from divapply import database
+
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text("{}", encoding="utf-8")
+    current_course = {
+        "school": "Example Technical College",
+        "course_code": "TEIT1800",
+        "course_title": "Certification Test Prep I",
+        "subject_area": "Information Technology",
+        "status": "Enrolled",
+        "credits": None,
+        "skills": ["technical troubleshooting", "test preparation"],
+    }
+    advising_shell = {
+        "school": "Example Technical College",
+        "course_title": "Advising/Employment Skills",
+        "status": "In Progress",
+        "skills": ["employment advising"],
+    }
+    monkeypatch.setattr(config, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(config, "LEGACY_PROFILE_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(config, "load_search_config", lambda: {})
+    monkeypatch.setattr(database, "get_education_records", lambda: [])
+    monkeypatch.setattr(database, "get_coursework", lambda: [current_course, advising_shell])
+
+    loaded = config.load_profile()
+
+    assert loaded["coursework_summary"] == [
+        "Current coursework (in progress; not completed) - Example Technical College: "
+        "Certification Test Prep I [Information Technology]"
+    ]
+    assert loaded["coursework_skills"] == [
+        "Current coursework exposure (in progress; not completed; not paid work or an earned certification) - "
+        "Example Technical College: technical troubleshooting, test preparation"
+    ]
+    assert "Advising/Employment Skills" not in "\n".join(loaded["coursework_summary"])
+    assert "employment advising" not in "\n".join(loaded["coursework_skills"])
+
+
+def test_load_profile_includes_curated_class_name_only_coursework_as_neutral_evidence(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    from divapply import database
+
+    profile_path = tmp_path / "profile.json"
+    profile_path.write_text("{}", encoding="utf-8")
+    curated_rows = [
+        {
+            "school": "Example Technical College",
+            "course_code": "TEIT1200",
+            "course_title": "A+ Core I",
+            "subject_area": "Information Technology",
+            "status": None,
+            "credits": None,
+            "skills": ["hardware troubleshooting", "operating systems"],
+        },
+        {
+            "school": "Example Technical College",
+            "course_title": "Advising/Employment Skills",
+            "status": None,
+            "credits": None,
+            "skills": ["employment advising"],
+        },
+        {
+            "school": "Example University",
+            "course_title": "Withdrawn Networking Lab",
+            "status": "Withdrawn",
+            "credits": None,
+            "skills": ["networking"],
+        },
+    ]
+    monkeypatch.setattr(config, "PROFILE_PATH", profile_path)
+    monkeypatch.setattr(config, "LEGACY_PROFILE_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(config, "load_search_config", lambda: {})
+    monkeypatch.setattr(database, "get_education_records", lambda: [])
+    monkeypatch.setattr(database, "get_coursework", lambda: curated_rows)
+
+    loaded = config.load_profile()
+
+    assert loaded["coursework_summary"] == [
+        "Coursework (completion not asserted) - Example Technical College: "
+        "A+ Core I [Information Technology]"
+    ]
+    assert loaded["coursework_skills"] == [
+        "Coursework exposure (completion not asserted; academic only; not paid work or an earned certification) - "
+        "Example Technical College: hardware troubleshooting, operating systems"
+    ]
+    context = "\n".join([*loaded["coursework_summary"], *loaded["coursework_skills"]])
+    assert "Advising/Employment Skills" not in context
+    assert "employment advising" not in context
+    assert "Withdrawn Networking Lab" not in context
+    assert "networking" not in context
 
 
 def test_coursework_context_validation_fails_closed_for_malformed_policy() -> None:

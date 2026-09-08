@@ -137,14 +137,8 @@ def _cleanup_candidates(*, include_backups: bool) -> list[Path]:
         for pattern in patterns:
                 candidates.update(path for path in root.glob(pattern) if path.is_file() or path.is_symlink())
 
-    for output_dir in (config.TAILORED_DIR, config.COVER_LETTER_DIR):
-        if not output_dir.exists():
-            continue
-        candidates.update(
-            path
-            for path in output_dir.iterdir()
-            if path.is_file() and path.suffix.lower() in {".txt", ".json", ".html"}
-        )
+    # A .txt may be the only approved document after a PDF failure. Extension
+    # alone is not evidence that a generated draft or review report is disposable.
 
     if include_backups:
         backups_dir = config.APP_DIR / "backups"

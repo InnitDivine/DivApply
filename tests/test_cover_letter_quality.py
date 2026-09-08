@@ -4,6 +4,7 @@ from divapply.scoring.context import format_job_context
 from divapply.scoring.cover_letter import (
     _build_cover_letter_prompt,
     _ensure_exact_target_title_once,
+    _ensure_professional_signoff,
     _read_tailored_resume_text,
     _strip_preamble,
 )
@@ -36,7 +37,7 @@ def _valid_letter(body: str = "I built Python reporting workflows that match thi
             "Dear Hiring Manager,",
             "The Reporting Analyst role matches my verified reporting background.",
             body,
-            "Example Health needs clear reporting for patient support workflows. Let's discuss.",
+            "Example Health needs clear reporting for patient support workflows. Thank you for considering my application.",
             "Jane",
         ]
     )
@@ -46,6 +47,14 @@ def test_strip_preamble_removes_leaked_intro() -> None:
     text = "Here is the cover letter:\n\nDear Hiring Manager,\nI built reports.\nJane"
 
     assert _strip_preamble(text).startswith("Dear Hiring Manager,")
+
+
+def test_cover_letter_normalizes_name_only_signoff() -> None:
+    letter = _valid_letter()
+
+    revised = _ensure_professional_signoff(letter, {"personal": {"preferred_name": "Jane"}})
+
+    assert revised.endswith("Sincerely,\nJane")
 
 
 def test_cover_reads_exact_owned_tailored_text(tmp_path, monkeypatch) -> None:
@@ -83,6 +92,24 @@ def test_validate_cover_letter_blocks_generic_ai_phrase() -> None:
 
     assert not report["passed"]
     assert any("Generic cover-letter phrase" in error for error in report["errors"])
+
+
+def test_validate_cover_letter_blocks_forced_template_language_and_unrequested_gpa() -> None:
+    canned = validate_cover_letter(
+        _valid_letter("My public-service work maps directly to this role."),
+        mode="normal",
+        profile=_profile(),
+        job=_job(),
+    )
+    academic = validate_cover_letter(
+        _valid_letter("I have a 3.67 GPA and 119 earned credits."),
+        mode="normal",
+        profile=_profile(),
+        job=_job(),
+    )
+
+    assert any("Generic cover-letter phrase" in error for error in canned["errors"])
+    assert "Academic statistics are not requested by the target job." in academic["errors"]
 
 
 def test_validate_cover_letter_blocks_job_only_tool_claim() -> None:
@@ -250,7 +277,7 @@ def test_zero_it_anchor_check_ignores_device_support_inside_exact_job_title() ->
             "Dear Hiring Manager,",
             "For the Device Support Technician I role, my home-lab work provides hands-on practice with Windows PCs.",
             "At Example Employer, I maintained accurate records and followed documented procedures.",
-            "Sutter Health emphasizes accurate device records. Let's discuss.",
+            "Sutter Health emphasizes accurate device records. Thank you for considering my application.",
             "Jane",
         )
     )
@@ -306,6 +333,10 @@ def test_cover_prompt_keeps_transferable_work_and_availability_truthful() -> Non
     assert "name the lab, project, coursework, or training before the first hands-on IT skill" in prompt
     assert 'Never use "those settings"' in prompt
     assert "exactly three body paragraphs separated by blank lines" in prompt
+    assert "smart, articulate college student and early-career professional" in prompt
+    assert "Do not mention GPA, earned credits" in prompt
+    assert "Sincerely," in prompt
+    assert "Happy to walk through any of this" not in prompt
     assert "Known projects to reference" not in prompt
 
 
@@ -524,7 +555,7 @@ def test_cover_sanitizer_drops_only_mixed_paid_setting_sentence() -> None:
         "I handled technical questions in municipal and county settings. "
         "At the City front desk, I routed technical issues. "
         "At the County office, I maintained accurate records.\n\n"
-        "Let's discuss.\n\nJane"
+        "Thank you for considering my application.\n\nJane"
     )
 
     cleaned = cover_letter._drop_mixed_paid_setting_sentences(draft)

@@ -27,8 +27,9 @@ logging.basicConfig(
 
 app = typer.Typer(
     name="divapply",
-    help="DivApply, an AI-powered end-to-end job application pipeline.",
-    no_args_is_help=True,
+    help="Local job application assistant. Use divapply run to find jobs and prepare resume/cover-letter PDFs.",
+    no_args_is_help=False,
+    invoke_without_command=True,
     context_settings={"help_option_names": ["--help", "-h"]},
 )
 export_app = typer.Typer(
@@ -39,8 +40,18 @@ answers_app = typer.Typer(
     help="Manage saved application question answers.",
     context_settings={"help_option_names": ["--help", "-h"]},
 )
-app.add_typer(export_app, name="export")
-app.add_typer(answers_app, name="answers")
+settings_app = typer.Typer(help="Edit your profile, searches, coursework, and application logins.", no_args_is_help=True)
+jobs_app = typer.Typer(help="Inspect, repair, export, and track saved jobs.", no_args_is_help=True)
+system_app = typer.Typer(help="Check setup, back up data, and preview safe cleanup.", no_args_is_help=True)
+coursework_app = typer.Typer(help="Import and inspect your private coursework knowledge.", no_args_is_help=True)
+app.add_typer(settings_app, name="settings")
+app.add_typer(jobs_app, name="jobs")
+app.add_typer(system_app, name="system")
+settings_app.add_typer(coursework_app, name="coursework")
+settings_app.add_typer(answers_app, name="answers")
+# Existing scripts keep working, but the main help advertises one path per task.
+app.add_typer(export_app, name="export", hidden=True)
+app.add_typer(answers_app, name="answers", hidden=True)
 console = Console()
 log = logging.getLogger(__name__)
 
@@ -97,9 +108,144 @@ def _apply_queue_window(
     )
 
 
+def _run_assisted_cli(
+    target_url: str,
+    *,
+    min_score: int,
+    max_score: int | None,
+    model: str,
+    backend: str,
+) -> str:
+    """Run one visible no-submit autofill session and wait for the user's decision."""
+    from divapply.apply.launcher import (
+        abort_assisted_apply,
+        finish_assisted_apply,
+        resume_assisted_apply,
+        start_assisted_apply,
+    )
+    from divapply.apply.prompt import ApplicationAuthorization
+
+    authorization = ApplicationAuthorization(
+        profile_fields=True,
+        final_submit=False,
+        source="assisted_review",
+    )
+    try:
+        session = start_assisted_apply(
+            target_url,
+            min_score=min_score,
+            max_score=max_score,
+            model=model,
+            backend=backend,
+            authorization=authorization,
+        )
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Assisted startup was interrupted; the job claim and Chrome were cleaned up.[/yellow]")
+        return "interrupted"
+    except Exception as exc:
+        safe_error = redact_error_snippet(str(exc), max_length=180)
+        console.print(f"[red]Could not start assisted apply:[/red] {safe_error}")
+        return "failed"
+    if session is None:
+        console.print(
+            "[red]This link is not ready for assisted apply.[/red] "
+            "Prepare it first or confirm the exact direct URL in the link workflow."
+        )
+        return "not_ready"
+
+    def finish_or_report(decision: str, action: str, *, reason: str | None = None) -> str | None:
+        """Finish the handoff, leaving Chrome open when persistence fails."""
+        try:
+            return finish_assisted_apply(session, decision, reason=reason)
+        except Exception as exc:
+            console.print(
+                f"[red]Could not {action}; Chrome remains open.[/red] "
+                f"{redact_error_snippet(str(exc), max_length=160)}"
+            )
+            return None
+
+    console.print(f"\n[bold cyan]Chrome is ready for your review.[/bold cyan] Agent result: {session.result}")
+    console.print(
+        "[dim]The DivApply Chrome window will stay open. Fix or answer anything uncertain there, "
+        "then return to this terminal.[/dim]"
+    )
+    try:
+        while True:
+            choice = typer.prompt(
+                "Choose: R retry autofill, A I submitted it, L save for later, F failed, Q skip",
+                default="L",
+            ).strip().casefold()
+            if choice in {"r", "retry"}:
+                console.print("[cyan]Resuming the agent in the same Chrome window...[/cyan]")
+                try:
+                    result = resume_assisted_apply(session)
+                except (KeyboardInterrupt, EOFError):
+                    raise
+                except Exception as exc:
+                    safe_error = redact_error_snippet(str(exc), max_length=180)
+                    console.print(
+                        f"[yellow]Could not resume autofill:[/yellow] {safe_error}\n"
+                        "The handoff is still open. Choose L to save it for later or retry after fixing Chrome."
+                    )
+                    continue
+                console.print(f"[cyan]Agent result:[/cyan] {result}")
+                continue
+            if choice in {"a", "applied", "submitted"}:
+                outcome = finish_or_report("submitted", "record the submission")
+                if outcome is None:
+                    continue
+                console.print("[green]Recorded as submitted by you.[/green]")
+                return outcome
+            if choice in {"l", "later", "save"}:
+                outcome = finish_or_report("later", "save the handoff")
+                if outcome is None:
+                    continue
+                console.print("[yellow]Saved for later; no application was marked submitted.[/yellow]")
+                return outcome
+            if choice in {"f", "failed"}:
+                reason = typer.prompt("Short failure reason", default="Could not complete assisted application")
+                outcome = finish_or_report("failed", "record the failure", reason=reason)
+                if outcome is None:
+                    continue
+                console.print("[yellow]Recorded as failed.[/yellow]")
+                return outcome
+            if choice in {"q", "quit", "skip"}:
+                outcome = finish_or_report("skip", "release the handoff")
+                if outcome is None:
+                    continue
+                console.print("[dim]Skipped without marking it submitted.[/dim]")
+                return outcome
+            console.print("[yellow]Enter R, A, L, F, or Q.[/yellow]")
+    except (KeyboardInterrupt, EOFError):
+        saved = False
+        cleaned = session.closed
+        if not session.closed:
+            try:
+                finish_assisted_apply(session, "later", reason="Assisted session interrupted; review later")
+                saved = True
+                cleaned = True
+            except Exception:
+                try:
+                    abort_assisted_apply(session)
+                    cleaned = True
+                except Exception:
+                    log.exception("Could not fully clean up an interrupted assisted session")
+        if saved:
+            console.print("\n[yellow]Saved for later and closed DivApply's Chrome window.[/yellow]")
+            return "saved_for_later"
+        if cleaned:
+            console.print("\n[yellow]Interrupted; released the handoff and closed DivApply's Chrome window.[/yellow]")
+            return "aborted"
+        console.print(
+            "\n[red]Interrupted, but DivApply could not confirm cleanup.[/red] "
+            "Close any DivApply Chrome window and do not retry this link until a later run reports the stale claim recovered."
+        )
+        return "cleanup_failed"
+
+
 def _resolve_apply_model(backend: str | None, model: str | None = None) -> str:
     """Resolve the browser-agent model without inheriting scorer/tailor LLM settings."""
-    default_model = "sonnet" if backend == "claude" else "gpt-5.4-mini"
+    default_model = "sonnet" if backend == "claude" else "gpt-5.6-luna"
     return model or os.environ.get("LLM_MODEL_APPLY") or default_model
 
 
@@ -126,6 +272,23 @@ def _safe_apply_error(value: str | None) -> str:
     return redact_error_snippet(value)
 
 
+def _invoke_root_command(ctx: typer.Context, name: str, **values) -> None:
+    """Invoke the registered Click command so Typer option defaults are resolved."""
+    from typer.core import TyperGroup
+
+    root = ctx.find_root()
+    if not isinstance(root.command, TyperGroup):
+        raise RuntimeError("DivApply command group is unavailable")
+    command = root.command.get_command(root, name)
+    if command is None:
+        raise RuntimeError(f"DivApply command is unavailable: {name}")
+    # Typer's bundled Context.invoke accepts callbacks, not command objects.
+    # Parse defaults in a child context, then supply the already-validated values.
+    with command.make_context(name, [], parent=root, resilient_parsing=True) as child:
+        child.params.update(values)
+        command.invoke(child)
+
+
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
@@ -133,6 +296,7 @@ def _safe_apply_error(value: str | None) -> str:
 
 @app.callback()
 def main(
+    ctx: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -142,10 +306,12 @@ def main(
         is_eager=True,
     ),
 ) -> None:
-    """DivApply - AI-powered end-to-end job application pipeline."""
+    """Show the command menu unless an explicit command was selected."""
+    if ctx.invoked_subcommand is None:
+        typer.echo(ctx.get_help())
 
 
-@app.command()
+@settings_app.command("init")
 def init() -> None:
     """Run the first-time setup wizard (profile, resume, search config)."""
     from divapply.wizard.init import run_wizard
@@ -153,7 +319,7 @@ def init() -> None:
     run_wizard()
 
 
-@app.command()
+@settings_app.command("edit")
 def edit(
     port: int = typer.Option(8765, "--port", help="Preferred localhost port for the editor."),
     no_open: bool = typer.Option(False, "--no-open", help="Print the URL without opening a browser."),
@@ -169,7 +335,7 @@ def edit(
         console.print("\n[green]Editor stopped.[/green]")
 
 
-@app.command()
+@system_app.command("migrate")
 def migrate(
     overwrite: bool = typer.Option(
         False, "--overwrite", help="Replace current files with legacy copies when both exist."
@@ -204,7 +370,7 @@ def migrate(
         console.print("[dim]No legacy files were found to migrate.[/dim]")
 
 
-@app.command()
+@system_app.command("backup")
 def backup(
     out: Optional[Path] = typer.Option(None, "--out", "-o", help="Backup zip path. Defaults to ~/.divapply/backups/."),
     include_secrets: bool = typer.Option(
@@ -234,7 +400,67 @@ def backup(
     )
 
 
-@app.command()
+@app.command("audit", hidden=True)
+def audit_command(
+    min_score: int = typer.Option(7, "--min-score", min=1, max=10),
+    details: bool = typer.Option(False, "--details", help="Show the reason and saved error for every active job."),
+) -> None:
+    """Explain missing documents, stale grades, and blocked jobs without AI calls."""
+    _bootstrap()
+    from divapply.job_health import audit_jobs
+    report = audit_jobs(min_score=min_score)
+    table = Table(title=f"DivApply job health: {report['active']} active jobs")
+    table.add_column("Status")
+    table.add_column("Jobs", justify="right")
+    for reason, count in report["counts"].items():
+        table.add_row(reason, str(count))
+    console.print(table)
+    if details:
+        jobs = Table(title="Job details")
+        jobs.add_column("Job")
+        jobs.add_column("Score")
+        jobs.add_column("Status")
+        jobs.add_column("Error")
+        for job in report["jobs"]:
+            jobs.add_row(job["title"], str(job["score"] if job["score"] is not None else "Not graded"),
+                         job["documents"], redact_error_snippet(job["error"], max_length=180))
+        console.print(jobs)
+    console.print("Use `divapply run --saved --limit 3` to complete a small batch, or add --refresh to regrade.")
+
+
+@jobs_app.command("repair")
+def repair_command(
+    limit: int = typer.Option(3, "--limit", "-l", min=0, help="Maximum jobs; 0 processes all saved jobs."),
+    min_score: int = typer.Option(7, "--min-score", min=1, max=10),
+    urls: Optional[list[str]] = typer.Option(None, "--url", help="Repair this saved URL; repeat to select more."),
+    refresh: bool = typer.Option(True, "--refresh/--no-refresh", help="Read the live posting and linked qualifications."),
+    rescore_jobs: bool = typer.Option(True, "--rescore/--no-rescore", help="Regrade with the configured AI provider."),
+    prepare: bool = typer.Option(True, "--prepare/--no-prepare", help="Generate missing resumes and cover letters."),
+    retry_failed: bool = typer.Option(False, "--retry-failed", help="Reset exhausted document attempts for selected jobs."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show selected jobs without changing them."),
+) -> None:
+    """Refresh, audit qualifications, and complete packets for a bounded job batch."""
+    _bootstrap()
+    from divapply.job_health import repair_jobs
+    if not dry_run and (rescore_jobs or prepare):
+        from divapply.config import check_tier
+        check_tier(2, "AI qualification audit and application documents")
+    report = repair_jobs(
+        limit=limit, min_score=min_score, urls=urls, refresh=refresh,
+        rescore=rescore_jobs, prepare=prepare, retry_failed=retry_failed, dry_run=dry_run,
+    )
+    table = Table(title="DivApply repair preview" if dry_run else "DivApply repair results")
+    table.add_column("Job")
+    table.add_column("Score")
+    table.add_column("Result")
+    for item in report["jobs"]:
+        table.add_row(item["title"], str(item.get("score", "")), item.get("error") or item.get("after") or item["before"])
+    console.print(table)
+    if report["errors"]:
+        raise typer.Exit(code=1)
+
+
+@system_app.command("cleanup")
 def cleanup(
     yes: bool = typer.Option(False, "--yes", "-y", help="Delete cleanup candidates instead of only previewing them."),
     include_backups: bool = typer.Option(
@@ -276,7 +502,7 @@ def cleanup(
         console.print(f"[yellow]Skipped {len(result.skipped)} file(s) that could not be removed safely.[/yellow]")
 
 
-@app.command("import-coursework")
+@coursework_app.command("import")
 def import_coursework(
     path: Path = typer.Argument(
         ..., exists=True, readable=True, resolve_path=True, help="Transcript or coursework file to import."
@@ -374,7 +600,7 @@ def import_coursework(
         )
 
 
-@app.command("coursework-summary")
+@coursework_app.command("summary")
 def coursework_summary() -> None:
     """Show safe metadata about hidden coursework knowledge."""
     _bootstrap()
@@ -424,17 +650,19 @@ def _persist_manual_url(
     search_config: dict,
     official_source: str | None,
     closed_official_source: str | None,
-) -> None:
+    user_confirmed: bool = False,
+) -> bool:
     """Persist one fetched manual URL without mixing storage into the CLI flow."""
+    application_url_value = str(metadata.get("application_url") or metadata.get("final_url") or safe_url)
     if official_source:
         from divapply.discovery.smartextract import _store_jobs_filtered
 
-        _store_jobs_filtered(
+        new, existing = _store_jobs_filtered(
             conn,
             [
                 {
                     "url": safe_url,
-                    "application_url": safe_url,
+                    "application_url": application_url_value,
                     "title": title_value,
                     "company": company_value,
                     "location": location_value,
@@ -454,10 +682,20 @@ def _persist_manual_url(
             search_query="manual_url",
             application_mode=str(market_policy.get("application_mode") or "manual_review"),
             source_verification="official",
-            search_config=search_config,
+            # A pasted URL is an explicit user selection, not a discovery
+            # candidate. Preserve the market policy resolved above without
+            # reapplying broad title, keyword, company, or remote filters.
+            search_config=None,
         )
-        return
+        if new or existing:
+            _persist_requirement_metadata(conn, safe_url, metadata)
+        return bool(new or existing)
 
+    # Metadata refreshes must never reset an application lifecycle.  In
+    # particular, leave apply_status/error/attempts and the other apply-owned
+    # columns (applied_at, agent_id, timestamps, duration, and task id) out of
+    # the conflict update so applied, in-progress, and terminal rows retain
+    # their exact state.
     conn.execute(
         """
         INSERT INTO jobs (
@@ -479,9 +717,6 @@ def _persist_manual_url(
             application_url=excluded.application_url,
             detail_scraped_at=excluded.detail_scraped_at,
             detail_error=excluded.detail_error,
-            apply_status=excluded.apply_status,
-            apply_error=excluded.apply_error,
-            apply_attempts=excluded.apply_attempts,
             verification_confidence=excluded.verification_confidence,
             market_label=excluded.market_label,
             search_query=excluded.search_query,
@@ -505,29 +740,218 @@ def _persist_manual_url(
             "manual_url",
             now,
             description_value,
-            safe_url,
+            application_url_value,
             now,
             "Posting appears inactive." if inactive else None,
             "failed" if inactive else None,
             "expired: posting appears inactive" if inactive else None,
             99 if inactive else 0,
-            "manual_url_inactive" if inactive else "manual_url",
+            "manual_url_inactive" if inactive else (
+                "user_confirmed_direct" if user_confirmed else "manual_url"
+            ),
             market_label or None,
             "manual_url",
             "manual_review",
             str(metadata.get("employment_type") or "") or None,
             None,
-            "official" if closed_official_source else "unknown",
+            "official" if closed_official_source else (
+                "user_confirmed_direct" if user_confirmed else "unknown"
+            ),
             now if closed_official_source else None,
             "closed" if inactive else "unknown",
             now if inactive else None,
         ),
     )
     conn.commit()
+    _persist_requirement_metadata(conn, safe_url, metadata)
     if inactive:
         from divapply.database import archive_job
 
         archive_job(safe_url, conn=conn, reason="source_closed")
+    return True
+
+
+def _persist_requirement_metadata(conn: sqlite3.Connection, url: str, metadata: dict) -> None:
+    fields = ("requirements_description", "requirements_sources", "requirements_error", "requirements_checked_at")
+    if any(field in metadata for field in fields):
+        conn.execute(
+            "UPDATE jobs SET " + ", ".join(field + "=?" for field in fields) + " WHERE url=?",
+            (*(metadata.get(field) for field in fields), url),
+        )
+        conn.commit()
+
+
+def _resolve_owned_resume_artifact(path: Path, root: Path, suffix: str) -> Path | None:
+    """Resolve one regular generated artifact without following it outside its owned root."""
+    from divapply.security import _is_link_or_reparse
+
+    if path.suffix.casefold() != suffix or not path.is_file() or _is_link_or_reparse(path):
+        return None
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError:
+        return None
+    return resolved if resolved.is_relative_to(root) else None
+
+
+def _manual_resume_pdf_is_usable(pdf_path: Path, source_path: Path | None) -> bool:
+    """Validate a recovered PDF against its text source, or at least its text layer."""
+    try:
+        if source_path is not None:
+            from divapply.scoring.pdf import parse_resume, validate_ats_pdf
+
+            source_text = source_path.read_text(encoding="utf-8")
+            required_sections = list(parse_resume(source_text)["sections"])
+            validate_ats_pdf(
+                source_text,
+                pdf_path,
+                required_sections=required_sections,
+            )
+            return True
+
+        from pypdf import PdfReader
+
+        reader = PdfReader(str(pdf_path))
+        if reader.is_encrypted or not reader.pages:
+            return False
+        return bool("\n".join((page.extract_text() or "") for page in reader.pages).strip())
+    except Exception as exc:
+        log.warning(
+            "Existing resume PDF is unreadable for %s: %s",
+            pdf_path.name,
+            redact_error_snippet(str(exc)),
+        )
+        return False
+
+
+def _ensure_manual_resume_pdf(
+    conn: sqlite3.Connection,
+    *,
+    safe_url: str,
+    resume_path: str | None,
+) -> str | None:
+    """Promote a retained text fallback to the PDF promised by link preparation."""
+    from divapply.config import TAILORED_DIR
+    from divapply.security import _is_link_or_reparse
+
+    if not resume_path:
+        return None
+
+    try:
+        if _is_link_or_reparse(TAILORED_DIR):
+            raise OSError("tailored-resume directory is a link or reparse point")
+        tailored_root = TAILORED_DIR.resolve(strict=True)
+    except OSError:
+        console.print("[red]DivApply's tailored-resume directory could not be resolved safely.[/red]")
+        return None
+
+    original_pointer = str(resume_path)
+    artifact_path = Path(original_pointer)
+    source_path: Path | None = None
+    existing_pdf: Path | None = None
+
+    if artifact_path.suffix.casefold() == ".pdf":
+        existing_pdf = _resolve_owned_resume_artifact(artifact_path, tailored_root, ".pdf")
+        source_path = _resolve_owned_resume_artifact(
+            artifact_path.with_suffix(".txt"),
+            tailored_root,
+            ".txt",
+        )
+        if existing_pdf and _manual_resume_pdf_is_usable(existing_pdf, source_path):
+            current = conn.execute(
+                "SELECT 1 FROM jobs WHERE url = ? AND tailored_resume_path = ? AND archived_at IS NULL",
+                (safe_url, original_pointer),
+            ).fetchone()
+            return str(existing_pdf) if current else None
+        if source_path is None:
+            console.print("[red]The saved resume PDF is unreadable and no text source is available to repair it.[/red]")
+            return None
+    elif artifact_path.suffix.casefold() == ".txt":
+        source_path = _resolve_owned_resume_artifact(artifact_path, tailored_root, ".txt")
+    else:
+        console.print(f"[red]Resume source has an unsupported type:[/red] {artifact_path}")
+        return None
+
+    if source_path is None:
+        console.print("[red]Refusing to convert a resume outside DivApply's owned tailored-resume directory.[/red]")
+        return None
+
+    final_pdf_path = source_path.with_suffix(".pdf")
+    resolved_existing = _resolve_owned_resume_artifact(final_pdf_path, tailored_root, ".pdf")
+    if resolved_existing and _manual_resume_pdf_is_usable(resolved_existing, source_path):
+        generated_pdf = resolved_existing
+        temporary_pdf: Path | None = None
+    else:
+        if final_pdf_path.exists() and resolved_existing is None:
+            console.print("[red]Refusing to replace an unsafe resume PDF path.[/red]")
+            return None
+
+        import tempfile
+
+        from divapply.scoring.pdf import convert_to_pdf
+
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{source_path.stem}.manual-",
+            suffix=".pdf",
+            dir=tailored_root,
+            delete=False,
+        ) as temporary:
+            temporary_pdf = Path(temporary.name)
+        try:
+            generated_pdf = Path(convert_to_pdf(source_path, output_path=temporary_pdf))
+        except Exception as exc:
+            temporary_pdf.unlink(missing_ok=True)
+            detail = redact_error_snippet(str(exc))
+            log.warning("Resume PDF finalization failed for %s: %s", source_path.name, detail)
+            console.print(f"[red]Resume PDF generation failed:[/red] {detail}")
+            return None
+
+        resolved_generated = _resolve_owned_resume_artifact(generated_pdf, tailored_root, ".pdf")
+        if resolved_generated is None or resolved_generated != temporary_pdf.resolve():
+            temporary_pdf.unlink(missing_ok=True)
+            console.print("[red]Resume PDF generation returned an unsafe output path.[/red]")
+            return None
+        generated_pdf = resolved_generated
+
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT tailored_resume_path FROM jobs WHERE url = ? AND archived_at IS NULL",
+            (safe_url,),
+        ).fetchone()
+        if current is None or current["tailored_resume_path"] != original_pointer:
+            conn.rollback()
+            if temporary_pdf is not None:
+                temporary_pdf.unlink(missing_ok=True)
+            console.print("[yellow]Resume changed during PDF generation; the stale result was discarded.[/yellow]")
+            return None
+
+        if temporary_pdf is not None:
+            if final_pdf_path.exists() and _is_link_or_reparse(final_pdf_path):
+                raise OSError("resume PDF destination became a link or reparse point")
+            temporary_pdf.replace(final_pdf_path)
+            generated_pdf = final_pdf_path.resolve(strict=True)
+
+        cursor = conn.execute(
+            """
+            UPDATE jobs SET tailored_resume_path = ?
+            WHERE url = ? AND tailored_resume_path = ? AND archived_at IS NULL
+            """,
+            (str(generated_pdf), safe_url, original_pointer),
+        )
+        if cursor.rowcount != 1:
+            raise sqlite3.OperationalError("active resume pointer changed before promotion")
+        conn.commit()
+    except (OSError, sqlite3.Error) as exc:
+        conn.rollback()
+        if temporary_pdf is not None:
+            temporary_pdf.unlink(missing_ok=True)
+        detail = redact_error_snippet(str(exc))
+        log.warning("Could not promote resume PDF for %s: %s", source_path.name, detail)
+        console.print(f"[red]Resume PDF could not be saved safely:[/red] {detail}")
+        return None
+
+    return str(generated_pdf)
 
 
 def _prepare_manual_url(
@@ -536,7 +960,9 @@ def _prepare_manual_url(
     safe_url: str,
     min_score: int,
     validation: str,
-) -> None:
+    allow_user_confirmed: bool = False,
+    raise_on_score_error: bool = True,
+) -> dict[str, object]:
     """Score and prepare one verified manual URL after provenance gates pass."""
     from divapply.config import check_tier
     from divapply.scoring.cover_letter import run_cover_letters
@@ -547,7 +973,9 @@ def _prepare_manual_url(
     score_result = run_scoring(target_url=safe_url)
     if not score_result.get("scored"):
         console.print("[red]Could not score this URL. Check that the page has a readable job description.[/red]")
-        raise typer.Exit(code=1)
+        if raise_on_score_error:
+            raise typer.Exit(code=1)
+        return {"status": "score_failed", "score": None}
 
     row = conn.execute(
         "SELECT fit_score, tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
@@ -557,33 +985,203 @@ def _prepare_manual_url(
     console.print(f"[green]Score:[/green] {score}")
     if score < min_score:
         console.print(f"[yellow]Score is below --min-score {min_score}; not generating documents.[/yellow]")
-        return
+        return {"status": "below_threshold", "score": score}
 
     provenance = conn.execute(
         "SELECT application_mode, source_verification FROM jobs WHERE url = ?",
         (safe_url,),
     ).fetchone()
-    if provenance["application_mode"] != "active" or provenance["source_verification"] != "official":
+    verified_for_documents = (
+        provenance["application_mode"] == "active" and provenance["source_verification"] == "official"
+    )
+    assisted_for_documents = allow_user_confirmed and (
+        provenance["application_mode"] in {"active", "manual_review"}
+        and provenance["source_verification"] in {"official", "user_confirmed_direct"}
+    )
+    if not (verified_for_documents or assisted_for_documents):
         console.print(
             "[yellow]Score saved, but documents were withheld.[/yellow] "
             "Refresh this posting from a configured official employer source before tailoring or applying."
         )
-        return
+        return {"status": "unverified_source", "score": score}
 
-    tailor_result = run_tailoring(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
-    cover_result = run_cover_letters(min_score=min_score, limit=1, validation_mode=validation, target_url=safe_url)
+    tailor_result = run_tailoring(
+        min_score=min_score,
+        limit=1,
+        validation_mode=validation,
+        target_url=safe_url,
+        allow_user_confirmed=allow_user_confirmed,
+    )
+    cover_result = run_cover_letters(
+        min_score=min_score,
+        limit=1,
+        validation_mode=validation,
+        target_url=safe_url,
+        allow_user_confirmed=allow_user_confirmed,
+    )
     row = conn.execute(
         "SELECT tailored_resume_path, cover_letter_path FROM jobs WHERE url = ?",
         (safe_url,),
     ).fetchone()
+    resume_pdf_path = _ensure_manual_resume_pdf(
+        conn,
+        safe_url=safe_url,
+        resume_path=row["tailored_resume_path"],
+    )
+    cover_path = row["cover_letter_path"]
+    if cover_path and Path(cover_path).suffix.casefold() == ".txt":
+        from divapply.scoring.pdf import batch_convert
+        try:
+            batch_convert(limit=2, target_url=safe_url)
+            cover_path = conn.execute("SELECT cover_letter_path FROM jobs WHERE url=?", (safe_url,)).fetchone()[0]
+        except Exception as exc:
+            console.print(f"[red]Cover PDF conversion failed:[/red] {redact_error_snippet(str(exc))}")
+    packet_ready = bool(resume_pdf_path and cover_path and Path(cover_path).suffix.casefold() == ".pdf" and Path(cover_path).is_file())
+    preparation_label = "[green]Prepared:[/green]" if packet_ready else "[red]Preparation incomplete:[/red]"
     console.print(
-        f"[green]Prepared:[/green] resume={row['tailored_resume_path'] or 'not generated'}; "
-        f"cover={row['cover_letter_path'] or 'not generated'}"
+        f"{preparation_label} resume={resume_pdf_path or 'PDF not generated'}; "
+        f"cover={cover_path or 'PDF not generated'}"
     )
     console.print(f"[dim]Tailor result: {tailor_result}; cover result: {cover_result}[/dim]")
+    return {
+        "status": "prepared" if packet_ready else "document_generation_failed",
+        "score": score,
+        "tailored_resume_path": resume_pdf_path,
+        "cover_letter_path": cover_path,
+    }
 
 
-@app.command("add-url")
+def _ingest_manual_url(
+    job_url: str,
+    *,
+    title: str | None = None,
+    company: str | None = None,
+    location: str | None = None,
+    site: str | None = None,
+    no_fetch: bool = False,
+    user_confirmed: bool = False,
+    emit: bool = True,
+) -> dict[str, object]:
+    """Fetch and persist one pasted URL, returning its resolved identity and provenance."""
+    from datetime import datetime, timezone
+
+    from divapply.config import configured_official_source_name, load_search_config
+    from divapply.database import get_connection
+    from divapply.search_policy import market_policy_for_job
+    from divapply.security import validate_external_url
+
+    safe_url = validate_external_url(job_url, field="job URL")
+    metadata: dict[str, str | bool] = {
+        "title": safe_url.rstrip("/").split("/")[-1].replace("-", " ").strip().title() or "Manual Job",
+        "company": "Manual",
+        "site": "Manual URL",
+        "location": "",
+        "description": f"Manual job URL: {safe_url}",
+        "employment_type": "",
+        "job_posting_schema": False,
+        "inactive": False,
+        "final_url": safe_url,
+        "application_url": safe_url,
+    }
+    fetch_error: str | None = None
+    if not no_fetch:
+        try:
+            metadata.update(_extract_manual_job_metadata(safe_url))
+        except Exception as exc:
+            fetch_error = _safe_apply_error(str(exc))
+            if emit:
+                console.print(f"[yellow]Could not fetch page metadata:[/yellow] {fetch_error}")
+
+    title_value = title or str(metadata["title"])
+    company_value = company or str(metadata["company"])
+    location_value = location or str(metadata["location"])
+    description_value = str(metadata["description"])
+    inactive = bool(metadata["inactive"])
+    search_config = load_search_config()
+    market_label, market_policy = market_policy_for_job(
+        search_config,
+        {"company": company_value, "location": location_value},
+    )
+    final_url = str(metadata.get("final_url") or safe_url)
+    application_url = str(metadata.get("application_url") or final_url)
+    configured_source = None
+    if not no_fetch:
+        configured_source = configured_official_source_name(final_url) or configured_official_source_name(safe_url)
+    official_source = (
+        configured_source if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch else None
+    )
+    closed_official_source = configured_source if inactive and not no_fetch else None
+    if closed_official_source and company is None:
+        company_value = closed_official_source
+    site_value = site or closed_official_source or str(metadata["site"])
+
+    conn = get_connection()
+    persisted = _persist_manual_url(
+        conn,
+        safe_url=safe_url,
+        metadata=metadata,
+        title_value=title_value,
+        company_value=company_value,
+        site_value=site_value,
+        location_value=location_value,
+        description_value=description_value,
+        inactive=inactive,
+        now=datetime.now(timezone.utc).isoformat(),
+        market_label=market_label,
+        market_policy=market_policy,
+        search_config=search_config,
+        official_source=official_source,
+        closed_official_source=closed_official_source,
+        user_confirmed=user_confirmed and official_source is None,
+    )
+    if not persisted:
+        raise RuntimeError("Validated manual job URL was not saved.")
+    verification = "official" if (official_source or closed_official_source) else (
+        "user_confirmed_direct" if user_confirmed else "unknown"
+    )
+    result: dict[str, object] = {
+        "url": safe_url,
+        "application_url": application_url,
+        "title": title_value,
+        "company": company_value,
+        "location": location_value,
+        "site": site_value,
+        "inactive": inactive,
+        "verification": verification,
+        "official_source": official_source or closed_official_source,
+        "fetch_error": fetch_error,
+    }
+    if emit:
+        console.print(f"[green]Added:[/green] {title_value} @ {company_value}")
+        if official_source:
+            console.print(f"[green]Verified from configured official source:[/green] {official_source}")
+        elif closed_official_source:
+            console.print(f"[yellow]Verified closed from configured official source:[/yellow] {closed_official_source}")
+        elif user_confirmed:
+            console.print("[cyan]Accepted for this assisted, no-submit workflow by your confirmation.[/cyan]")
+    return result
+
+
+def _confirm_manual_url_for_assist(conn: sqlite3.Connection, url: str) -> bool:
+    """Mark one exact, open pasted URL as user-confirmed for no-submit assistance."""
+    cursor = conn.execute(
+        """
+        UPDATE jobs
+        SET source_verification = 'user_confirmed_direct',
+            verification_confidence = 'user_confirmed_direct',
+            application_mode = 'manual_review'
+        WHERE url = ?
+          AND source_verification != 'official'
+          AND COALESCE(availability_state, 'unknown') != 'closed'
+          AND archived_at IS NULL
+        """,
+        (url,),
+    )
+    conn.commit()
+    return cursor.rowcount == 1
+
+
+@app.command("add-url", hidden=True)
 def add_url(
     job_url: str = typer.Argument(..., help="Job posting URL to add or update."),
     title: Optional[str] = typer.Option(None, "--title", help="Override the detected job title."),
@@ -598,95 +1196,43 @@ def add_url(
     ),
     min_score: int = typer.Option(7, "--min-score", help="Minimum score required before tailoring/cover generation."),
     validation: str = typer.Option("normal", "--validation", help="Validation mode for generated documents."),
+    confirm_source: bool = typer.Option(
+        False,
+        "--confirm-source",
+        help="Confirm this direct job URL for assisted preparation only; unattended auto-submit remains blocked.",
+    ),
 ) -> None:
     """Add one pasted job URL, optionally preparing its application packet."""
     _bootstrap()
 
-    from datetime import datetime, timezone
-
-    from divapply.config import load_search_config
     from divapply.database import get_connection
-    from divapply.search_policy import market_policy_for_job
-    from divapply.security import validate_external_url
 
     valid_modes = ("strict", "normal", "lenient", "none")
     if validation not in valid_modes:
         console.print(f"[red]Invalid --validation value:[/red] {validation}")
         raise typer.Exit(code=1)
 
-    safe_url = validate_external_url(job_url, field="job URL")
-    metadata: dict[str, str | bool] = {
-        "title": safe_url.rstrip("/").split("/")[-1].replace("-", " ").strip().title() or "Manual Job",
-        "company": "Manual",
-        "site": "Manual URL",
-        "location": "",
-        "description": f"Manual job URL: {safe_url}",
-        "employment_type": "",
-        "job_posting_schema": False,
-        "inactive": False,
-    }
-    if not no_fetch:
-        try:
-            metadata.update(_extract_manual_job_metadata(safe_url))
-        except Exception as exc:
-            console.print(f"[yellow]Could not fetch page metadata:[/yellow] {_safe_apply_error(str(exc))}")
-
-    title_value = title or str(metadata["title"])
-    company_value = company or str(metadata["company"])
-    location_value = location or str(metadata["location"])
-    description_value = str(metadata["description"])
-    inactive = bool(metadata["inactive"])
-    now = datetime.now(timezone.utc).isoformat()
-
-    search_config = load_search_config()
-    market_label, market_policy = market_policy_for_job(
-        search_config,
-        {"company": company_value, "location": location_value},
+    ingest = _ingest_manual_url(
+        job_url,
+        title=title,
+        company=company,
+        location=location,
+        site=site,
+        no_fetch=no_fetch,
+        user_confirmed=confirm_source,
     )
-    from divapply.config import configured_official_source_name
-
-    configured_source = configured_official_source_name(safe_url) if not no_fetch else None
-    official_source = (
-        configured_source if bool(metadata.get("job_posting_schema")) and not inactive and not no_fetch else None
-    )
-    closed_official_source = configured_source if inactive and not no_fetch else None
-    if closed_official_source and company is None:
-        company_value = closed_official_source
-    site_value = site or closed_official_source or str(metadata["site"])
-
-    conn = get_connection()
-    _persist_manual_url(
-        conn,
-        safe_url=safe_url,
-        metadata=metadata,
-        title_value=title_value,
-        company_value=company_value,
-        site_value=site_value,
-        location_value=location_value,
-        description_value=description_value,
-        inactive=inactive,
-        now=now,
-        market_label=market_label,
-        market_policy=market_policy,
-        search_config=search_config,
-        official_source=official_source,
-        closed_official_source=closed_official_source,
-    )
-
-    console.print(f"[green]Added:[/green] {title_value} @ {company_value}")
-    if official_source:
-        console.print(f"[green]Verified from configured official source:[/green] {official_source}")
-    elif closed_official_source:
-        console.print(f"[yellow]Verified closed from configured official source:[/yellow] {closed_official_source}")
-    if inactive:
+    safe_url = str(ingest["url"])
+    if bool(ingest["inactive"]):
         console.print("[yellow]Posting appears inactive/expired, so it will not be queued for auto-apply.[/yellow]")
         return
 
     if not prepare:
-        if official_source:
+        if ingest["verification"] == "official":
             console.print(
                 "[dim]Run again with --prepare to score this verified URL and create eligible documents.[/dim]"
             )
+        elif confirm_source:
+            console.print("[dim]Run again with --prepare to create an assisted-review packet.[/dim]")
         else:
             console.print(
                 "[dim]Run again with --prepare to score this URL. "
@@ -694,26 +1240,270 @@ def add_url(
             )
         return
 
-    _prepare_manual_url(conn, safe_url=safe_url, min_score=min_score, validation=validation)
+    result = _prepare_manual_url(
+        get_connection(),
+        safe_url=safe_url,
+        min_score=min_score,
+        validation=validation,
+        allow_user_confirmed=confirm_source,
+    )
+    if result["status"] in {"score_failed", "document_generation_failed"}:
+        raise typer.Exit(code=1)
+
+
+@app.command("apply-links", hidden=True)
+def apply_links(
+    links_file: Path = typer.Argument(
+        ...,
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+        resolve_path=True,
+        help="UTF-8 text file containing one direct job URL per line.",
+    ),
+    min_score: int = typer.Option(5, "--min-score", help="Minimum score required before preparing a packet."),
+    validation: str = typer.Option("normal", "--validation", help="Document validation mode."),
+    prepare_only: bool = typer.Option(
+        False,
+        "--prepare-only",
+        help="Ingest, score, and create documents without opening application forms.",
+    ),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Apply agent model name."),
+    backend: Optional[str] = typer.Option(None, "--backend", "-b", help="Apply agent backend: codex or claude."),
+    yes: bool = typer.Option(
+        False,
+        "--yes",
+        "-y",
+        help="Confirm processing and assisted use of every valid direct URL in this file.",
+    ),
+) -> None:
+    """Prepare pasted links and hand each application to you in visible Chrome."""
+    _bootstrap()
+
+    from datetime import datetime, timezone
+
+    from divapply import config as app_config
+    from divapply.database import get_connection
+    from divapply.link_batch import parse_link_batch_file
+    from divapply.security import write_private_text
+
+    if validation not in {"strict", "normal", "lenient", "none"}:
+        console.print(f"[red]Invalid --validation value:[/red] {validation}")
+        raise typer.Exit(code=1)
+    if not 0 <= min_score <= 10:
+        console.print("[red]--min-score must be between 0 and 10.[/red]")
+        raise typer.Exit(code=1)
+
+    parsed = parse_link_batch_file(links_file)
+    if parsed.invalid:
+        for record in parsed.invalid:
+            console.print(f"[yellow]Line {record.line_number} ignored:[/yellow] {record.error}")
+    if parsed.duplicates:
+        for record in parsed.duplicates:
+            console.print(
+                f"[dim]Line {record.line_number} duplicates line {record.duplicate_of_line}; ignored.[/dim]"
+            )
+    if not parsed.entries:
+        console.print("[red]No valid job URLs were found in the file.[/red]")
+        raise typer.Exit(code=1)
+
+    action = "prepare" if prepare_only else "prepare and open for assisted review"
+    if not yes and not typer.confirm(f"{action.title()} {len(parsed.entries)} valid job link(s)?"):
+        console.print("[dim]Cancelled; no links were processed.[/dim]")
+        return
+
+    resolved_backend: str | None = None
+    resolved_model = ""
+    if not prepare_only:
+        from divapply.config import check_tier, get_apply_backend, get_chrome_path
+
+        resolved_backend = get_apply_backend(backend)
+        if resolved_backend is None:
+            console.print("[red]No supported browser-agent backend is installed.[/red]")
+            raise typer.Exit(code=1)
+        check_tier(3, "assisted apply", preferred_backend=backend, preferred_browser="chrome")
+        try:
+            get_chrome_path()
+        except FileNotFoundError:
+            console.print("[red]Google Chrome was not found. Install Chrome or set CHROME_PATH.[/red]")
+            raise typer.Exit(code=1)
+        if not app_config.PROFILE_PATH.exists():
+            console.print("[red]Profile not found. Run divapply init first.[/red]")
+            raise typer.Exit(code=1)
+        resolved_model = _resolve_apply_model(resolved_backend, model)
+
+    conn = get_connection()
+    reports: list[dict[str, object]] = []
+    for record in parsed.entries:
+        assert record.url is not None
+        item: dict[str, object] = {
+            "line": record.line_number,
+            "input_url": record.url,
+            "status": "started",
+        }
+        console.print(f"\n[bold]Line {record.line_number}[/bold] {record.url}")
+        try:
+            ingest = _ingest_manual_url(record.url, emit=False)
+            item.update(ingest)
+            console.print(f"  Job:      {ingest['title']} @ {ingest['company']}")
+            console.print(f"  Location: {ingest['location'] or 'not detected'}")
+            console.print(f"  Opens:    {ingest['application_url']}")
+            console.print(f"  Source:   {ingest['verification']}")
+
+            if bool(ingest["inactive"]):
+                item["status"] = "closed"
+                console.print("[yellow]Posting is closed; skipped.[/yellow]")
+                reports.append(item)
+                continue
+
+            if ingest["verification"] != "official":
+                confirmed = yes or typer.confirm(
+                    "Use this exact link for assisted, no-submit form filling?",
+                    default=False,
+                )
+                if not confirmed:
+                    item["status"] = "source_not_confirmed"
+                    reports.append(item)
+                    continue
+                if not _confirm_manual_url_for_assist(conn, str(ingest["url"])):
+                    item["status"] = "source_confirmation_failed"
+                    reports.append(item)
+                    continue
+                item["verification"] = "user_confirmed_direct"
+
+            prepared = _prepare_manual_url(
+                conn,
+                safe_url=str(ingest["url"]),
+                min_score=min_score,
+                validation=validation,
+                allow_user_confirmed=True,
+                raise_on_score_error=False,
+            )
+            item.update(prepared)
+            if prepared["status"] != "prepared":
+                reports.append(item)
+                continue
+            if prepare_only:
+                item["status"] = "prepared"
+                reports.append(item)
+                continue
+
+            assert resolved_backend is not None
+            item["status"] = _run_assisted_cli(
+                str(ingest["url"]),
+                min_score=min_score,
+                max_score=None,
+                model=resolved_model,
+                backend=resolved_backend,
+            )
+        except Exception as exc:
+            item["status"] = "failed"
+            item["error"] = _safe_apply_error(str(exc))
+            console.print(f"[red]Could not process this link:[/red] {item['error']}")
+        reports.append(item)
+
+    for record in parsed.invalid:
+        reports.append(
+            {
+                "line": record.line_number,
+                "input_url": record.input_value,
+                "status": "invalid_url",
+                "error": record.error,
+            }
+        )
+    for record in parsed.duplicates:
+        reports.append(
+            {
+                "line": record.line_number,
+                "input_url": record.input_value,
+                "status": "duplicate_input",
+                "duplicate_of_line": record.duplicate_of_line,
+            }
+        )
+
+    report_path = app_config.LOG_DIR / (
+        f"apply_links_{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}.json"
+    )
+    write_private_text(
+        report_path,
+        json.dumps(
+            {
+                "source_file": str(links_file),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "prepare_only": prepare_only,
+                "min_score": min_score,
+                "results": sorted(reports, key=lambda item: int(str(item["line"]))),
+            },
+            indent=2,
+        ),
+        strict=True,
+    )
+
+    table = Table(title="Link Batch Results", show_header=True, header_style="bold cyan")
+    table.add_column("Line", justify="right")
+    table.add_column("Job")
+    table.add_column("Score", justify="right")
+    table.add_column("Result")
+    for item in sorted(reports, key=lambda value: int(str(value["line"]))):
+        job_label = str(item.get("title") or item.get("input_url") or "")
+        if item.get("company"):
+            job_label = f"{job_label} @ {item['company']}"
+        table.add_row(
+            str(item["line"]),
+            job_label[:70],
+            "" if item.get("score") is None else str(item["score"]),
+            str(item["status"]),
+        )
+    console.print()
+    console.print(table)
+    console.print(f"[dim]Private report: {report_path}[/dim]")
+    if any(item.get("status") in {"failed", "score_failed", "document_generation_failed", "source_confirmation_failed"} for item in reports):
+        raise typer.Exit(code=1)
+
+
+@app.command("add")
+def add(
+    ctx: typer.Context,
+    url: Optional[str] = typer.Argument(None, help="One direct job posting URL."),
+    file: Optional[Path] = typer.Option(None, "--file", exists=True, dir_okay=False, readable=True, help="Text file with one job URL per line."),
+    min_score: int = typer.Option(7, "--min-score", min=1, max=10, help="Minimum qualification score for documents."),
+    save_only: bool = typer.Option(False, "--save-only", help="Save one URL without AI scoring or documents."),
+    confirm_source: bool = typer.Option(False, "--confirm-source", help="Confirm these exact direct links for preparation, never unattended submission."),
+) -> None:
+    """Add a URL (or --file of URLs) and prepare both PDFs."""
+    if bool(url) == bool(file):
+        raise typer.BadParameter("Provide one URL or --file, not both.")
+    if file:
+        if save_only:
+            raise typer.BadParameter("--save-only accepts one URL; omit it to prepare a file of links.")
+        _invoke_root_command(ctx, "apply-links", links_file=file, min_score=min_score, prepare_only=True, yes=confirm_source)
+    else:
+        _invoke_root_command(ctx, "add-url", job_url=url, prepare=not save_only, min_score=min_score, confirm_source=confirm_source)
 
 
 @app.command()
 def run(
     stages: Optional[list[str]] = typer.Argument(
         None,
-        help=(f"Pipeline stages to run. Valid: {', '.join(VALID_STAGES)}, all. Defaults to 'all' if omitted."),
+        hidden=True,
+        help=(f"Advanced: run specific stages ({', '.join(VALID_STAGES)})."),
     ),
-    min_score: int = typer.Option(7, "--min-score", help="Minimum fit score for tailor/cover stages."),
+    min_score: int = typer.Option(7, "--min-score", min=1, max=10, help="Minimum qualification score for documents."),
+    saved: bool = typer.Option(False, "--saved", help="Finish saved jobs without searching for new ones."),
+    limit: int = typer.Option(0, "--limit", "-l", min=0, help="Maximum job packets to process; 0 finishes all pending jobs."),
+    refresh: bool = typer.Option(False, "--refresh", help="Reread and regrade saved jobs, preserving existing documents."),
     prune_score: int = typer.Option(
-        0, "--prune-score", help="Auto-delete jobs scoring at or below this after scoring (0 = off)."
+        0, "--prune-score", min=0, max=10, hidden=True, help="Legacy stage mode: delete low scores (0 = off)."
     ),
-    workers: int = typer.Option(1, "--workers", "-w", help="Parallel threads for discovery/enrichment stages."),
-    stream: bool = typer.Option(False, "--stream", help="Run stages concurrently (streaming mode)."),
+    workers: int = typer.Option(1, "--workers", "-w", min=1, max=16, help="Search workers. Job packets are saved one at a time."),
+    stream: bool = typer.Option(False, "--stream", hidden=True, help="Advanced stage mode: run stages concurrently."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview stages without executing."),
-    yes: bool = typer.Option(False, "--yes", "-y", help="Confirm destructive pruning when --prune-score is used."),
+    yes: bool = typer.Option(False, "--yes", "-y", hidden=True, help="Confirm destructive pruning when --prune-score is used."),
     validation: str = typer.Option(
         "normal",
         "--validation",
+        hidden=True,
         help=(
             "Validation strictness for tailor/cover stages. "
             "strict: banned words = errors, judge must pass. "
@@ -723,10 +1513,10 @@ def run(
         ),
     ),
 ) -> None:
-    """Run pipeline stages: discover, enrich, score, tailor, cover, pdf."""
+    """Find jobs, check qualifications, and finish resume/cover-letter PDFs. Never submit."""
     _bootstrap()
 
-    from divapply.pipeline import run_pipeline
+    from divapply.pipeline import run_pipeline, run_preparation
 
     stage_list = stages if stages else ["all"]
 
@@ -738,7 +1528,7 @@ def run(
 
     # Gate AI stages behind Tier 2
     llm_stages = {"score", "tailor", "cover"}
-    if any(s in stage_list for s in llm_stages) or "all" in stage_list:
+    if not dry_run and (any(s in stage_list for s in llm_stages) or "all" in stage_list):
         from divapply.config import check_tier
 
         check_tier(2, "AI scoring/tailoring")
@@ -748,6 +1538,18 @@ def run(
     if validation not in valid_modes:
         console.print(f"[red]Invalid --validation value:[/red] '{validation}'. Choose from: {', '.join(valid_modes)}")
         raise typer.Exit(code=1)
+
+    advanced = bool(stages and stage_list != ["all"]) or stream or prune_score > 0
+    if advanced and (saved or limit or refresh):
+        raise typer.BadParameter("Use --saved/--limit/--refresh with the normal run, not individual stages, --stream, or --prune-score.")
+    if not advanced:
+        result = run_preparation(
+            saved=saved, limit=limit, min_score=min_score, refresh=refresh,
+            workers=workers, validation_mode=validation, dry_run=dry_run,
+        )
+        if result.get("errors"):
+            raise typer.Exit(code=1)
+        return
 
     if prune_score > 0 and not dry_run and not yes and ("all" in stage_list or "score" in stage_list):
         confirmed = typer.confirm(
@@ -771,7 +1573,7 @@ def run(
         raise typer.Exit(code=1)
 
 
-@app.command("credentials")
+@settings_app.command("credentials")
 def credentials_cmd(
     site: Optional[str] = typer.Option(
         None,
@@ -854,7 +1656,7 @@ def credentials_cmd(
     console.print("[dim]Passwords are not stored in profile.json and are excluded from normal backups.[/dim]")
 
 
-@app.command("browser-login")
+@settings_app.command("browser-login")
 def browser_login(
     url: str = typer.Option(
         "https://www.myworkday.com/",
@@ -929,6 +1731,11 @@ def apply(
     ),
     continuous: bool = typer.Option(False, "--continuous", "-c", help="Run forever, polling for new jobs."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview actions without submitting."),
+    assist: bool = typer.Option(
+        False,
+        "--assist",
+        help="Fill one explicit job in visible Chrome, then wait for you to review and submit it.",
+    ),
     headless: bool = typer.Option(False, "--headless", help="Run browsers in headless mode."),
     url: Optional[str] = typer.Option(None, "--url", help="Apply to a specific job URL."),
     gen: bool = typer.Option(False, "--gen", help="Generate prompt file for manual debugging instead of running."),
@@ -985,6 +1792,18 @@ def apply(
     # --- Full apply mode ---
 
     # Check 1: Tier 3 required (apply agent CLI + browser runtime + Node.js)
+    if assist:
+        if not url:
+            console.print("[red]--assist requires --url with one exact job link.[/red]")
+            raise typer.Exit(code=1)
+        if dry_run or headless or continuous or workers != 1:
+            console.print("[red]--assist cannot be combined with --dry-run, --headless, --continuous, or multiple workers.[/red]")
+            raise typer.Exit(code=1)
+        if browser is not None and get_apply_browser(browser) != "chrome":
+            console.print("[red]--assist uses visible Google Chrome so the browser can remain open for you.[/red]")
+            raise typer.Exit(code=1)
+        browser = "chrome"
+
     resolved_browser = get_apply_browser(browser)
     resolved_backend = get_apply_backend(backend)
     resolved_model = _resolve_apply_model(resolved_backend, model)
@@ -1008,7 +1827,7 @@ def apply(
         raise typer.Exit(code=1)
 
     # Check 3: Tailored resumes exist (skip for --gen with --url)
-    if not (gen and url):
+    if not (gen and url) and not assist:
         conn = get_connection()
         ready = int(
             conn.execute(
@@ -1064,6 +1883,21 @@ def apply(
         console.print(f"[green]Wrote prompt to:[/green] {prompt_file}")
         console.print("\n[bold]Run manually:[/bold]")
         console.print(f"  {get_manual_command(resolved_backend, resolved_model, prompt_file, mcp_path)}")
+        return
+
+    if assist:
+        assert url is not None
+        console.print("\n[bold blue]Launching Assisted Apply[/bold blue]")
+        console.print("  Browser:  Google Chrome (visible, isolated DivApply profile)")
+        console.print("  Submit:   You review and click the final button")
+        console.print(f"  Target:   {url}")
+        _run_assisted_cli(
+            url,
+            min_score=min_score,
+            max_score=max_score,
+            model=resolved_model,
+            backend=resolved_backend,
+        )
         return
 
     from divapply.apply.launcher import main as apply_main
@@ -1134,8 +1968,17 @@ def apply(
 
 
 @app.command()
-def status() -> None:
-    """Show pipeline statistics from the database."""
+def status(
+    details: bool = typer.Option(False, "--details", help="Show the document status and saved error for every job."),
+    min_score: int = typer.Option(7, "--min-score", min=1, max=10, help="Document qualification threshold."),
+) -> None:
+    """Show actual packet readiness and explain missing documents (no AI calls)."""
+    audit_command(min_score=min_score, details=details)
+
+
+@jobs_app.command("stats")
+def statistics() -> None:
+    """Show detailed database, search, and application counts."""
     _bootstrap()
 
     import sys
@@ -1219,6 +2062,7 @@ def status() -> None:
     console.print()
 
 
+@jobs_app.command("export")
 @export_app.command("jobs")
 def export_jobs(
     out: Path = typer.Option(Path("jobs.csv"), "--out", "-o", help="Output file path."),
@@ -1339,7 +2183,7 @@ def answers_match(
     console.print(table)
 
 
-@app.command()
+@jobs_app.command("track")
 def track(
     event: str = typer.Argument(
         ..., help="Lifecycle event: applied, screening, interview, offer, rejection, withdrawn."
@@ -1380,7 +2224,7 @@ def track(
         console.print(table)
 
 
-@app.command()
+@jobs_app.command("followups")
 def followups() -> None:
     """Show application follow-ups due today or earlier."""
     _bootstrap()
@@ -1407,7 +2251,7 @@ def followups() -> None:
     console.print(f"[dim]{len(rows)} due follow-up(s).[/dim]\n")
 
 
-@app.command()
+@jobs_app.command("analytics")
 def analytics() -> None:
     """Show application lifecycle analytics."""
     _bootstrap()
@@ -1434,11 +2278,11 @@ def analytics() -> None:
     console.print(f"[bold]Due follow-ups:[/bold] {data['due_followups']}\n")
 
 
-@app.command()
+@jobs_app.command("explain")
 def explain(
     job_url: str = typer.Argument(..., help="Job URL or URL fragment to explain."),
 ) -> None:
-    """Explain one job's hybrid score without printing resume/profile text."""
+    """Explain qualification scoring and diagnostics without printing resume/profile text."""
     _bootstrap()
 
     from divapply.database import get_connection
@@ -1450,7 +2294,9 @@ def explain(
         SELECT title, company, site, url, fit_score, llm_score, keyword_score,
                embedding_score, composite_score, score_breakdown, score_reasoning,
                matched_skills, missing_skills, keyword_hits, risk_flags,
-               apply_or_skip_reason
+               apply_or_skip_reason, eligibility_status, scoring_version, requirements_error,
+               scoring_source_url, detail_source_url, detail_scraped_at, requirements_sources,
+               requirements_assessment, detail_error
         FROM jobs
         WHERE url = ? OR url LIKE ? OR application_url LIKE ?
         ORDER BY scored_at DESC
@@ -1462,6 +2308,9 @@ def explain(
         console.print("[red]No matching job found.[/red]")
         raise typer.Exit(code=1)
 
+    from divapply.scoring.requirements import SCORING_VERSION
+    if row["fit_score"] is None or row["scoring_version"] != SCORING_VERSION:
+        console.print("[yellow]No current qualification audit. Prior diagnostics are not an eligibility recommendation.[/yellow]")
     table = Table(title="Score Explain", show_header=True, header_style="bold cyan")
     table.add_column("Field", style="bold")
     table.add_column("Value")
@@ -1470,6 +2319,12 @@ def explain(
         "company",
         "site",
         "fit_score",
+        "eligibility_status",
+        "scoring_source_url",
+        "detail_source_url",
+        "detail_scraped_at",
+        "detail_error",
+        "requirements_error",
         "llm_score",
         "keyword_score",
         "embedding_score",
@@ -1484,6 +2339,15 @@ def explain(
         table.add_row(key, str(row[key] if row[key] is not None else "legacy/missing"))
     console.print()
     console.print(table)
+    for source in json.loads(row["requirements_sources"] or "[]"):
+        console.print(f"Linked document ({source['status']}): {source['url']}", markup=False)
+    if row["requirements_assessment"] and row["scoring_version"] == SCORING_VERSION:
+        audit = Table(title="Requirement evidence", show_lines=True)
+        for column in ("Kind / result", "Requirement", "Posting evidence", "Comparison"):
+            audit.add_column(column)
+        for item in json.loads(row["requirements_assessment"]):
+            audit.add_row(f"{item['kind']} / {item['status']}", item['requirement'], item['quote'], item['reason'])
+        console.print(audit)
 
     if row["score_breakdown"]:
         try:
@@ -1497,17 +2361,21 @@ def explain(
         console.print("[dim]Legacy score: run `divapply rescore` for hybrid breakdown.[/dim]")
 
 
-@app.command()
+@app.command(hidden=True)
 def rescore(
-    limit: int = typer.Option(0, "--limit", "-l", help="Max rows to rescore; 0 = all."),
+    limit: int = typer.Option(0, "--limit", "-l", min=0, help="Max rows to rescore; 0 = all."),
 ) -> None:
-    """Recompute hybrid scores for existing enriched jobs."""
+    """Re-read employer pages and linked requirements, then reaudit saved jobs."""
     _bootstrap()
 
     from divapply.scoring.scorer import run_scoring
+    from divapply.config import check_tier
 
+    check_tier(2, "AI qualification scoring")
     result = run_scoring(limit=limit, rescore=True)
     console.print(f"[green]Rescored {result['scored']} job(s).[/green] Errors: {result['errors']}")
+    if result["errors"]:
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -1539,107 +2407,9 @@ def dashboard(
         console.print("\n[green]Dashboard stopped.[/green]")
 
 
-@app.command()
-def selfcheck() -> None:
-    """Run offline sanity checks without calling job boards, LLMs, browsers, or apply agents."""
-    import sys
-
-    from divapply.config import (
-        APP_DIR,
-        COVER_LETTER_DIR,
-        PROFILE_PATH,
-        RESUME_PATH,
-        SEARCH_CONFIG_PATH,
-        TAILORED_DIR,
-        ensure_dirs,
-        load_env,
-        load_search_config,
-        validate_search_config,
-    )
-    from divapply.database import get_active_db_path, get_coursework_summary, init_db
-
-    load_env()
-    ensure_dirs()
-
-    checks: list[tuple[str, str, str]] = []
-
-    def add(name: str, ok: bool, note: str = "", warn: bool = False) -> None:
-        if ok:
-            status = "[green]OK[/green]"
-        elif warn:
-            status = "[yellow]WARN[/yellow]"
-        else:
-            status = "[red]FAIL[/red]"
-        checks.append((name, status, note))
-
-    py = sys.version_info
-    add("Python version", py >= (3, 11), f"{sys.version.split()[0]} ({sys.executable})")
-    add(
-        "JobSpy Python",
-        py < (3, 13),
-        "Python 3.12 recommended; Python 3.13/3.14 may fail with python-jobspy/numpy pins",
-        warn=True,
-    )
-
-    for module in ("typer", "rich", "yaml", "playwright"):
-        try:
-            __import__(module)
-            add(f"import {module}", True)
-        except Exception as exc:
-            add(f"import {module}", False, str(exc))
-
-    try:
-        __import__("jobspy")
-        add("import jobspy", True)
-    except Exception as exc:
-        add("import jobspy", False, str(exc), warn=True)
-
-    add("profile.json", PROFILE_PATH.exists(), str(PROFILE_PATH), warn=True)
-    add("resume.txt", RESUME_PATH.exists(), str(RESUME_PATH), warn=True)
-    add("searches.yaml", SEARCH_CONFIG_PATH.exists(), str(SEARCH_CONFIG_PATH), warn=True)
-
-    try:
-        conn = init_db()
-        conn.execute("SELECT 1 FROM jobs LIMIT 1")
-        add("DB init", True, str(get_active_db_path()))
-    except Exception as exc:
-        add("DB init", False, str(exc))
-
-    try:
-        summary = get_coursework_summary()
-        add("coursework rows", True, str(summary["row_count"]))
-    except Exception as exc:
-        add("coursework rows", False, str(exc), warn=True)
-
-    try:
-        search_report = validate_search_config(load_search_config())
-        note = "; ".join(search_report["errors"] + search_report["warnings"])
-        add("search config", search_report["passed"], note or "valid", warn=not search_report["passed"])
-    except Exception as exc:
-        add("search config", False, str(exc), warn=True)
-
-    for path in (APP_DIR, TAILORED_DIR, COVER_LETTER_DIR):
-        add(f"dir {path.name}", path.exists(), str(path))
-
-    table = Table(title="DivApply Offline Selfcheck", show_header=True, header_style="bold cyan")
-    table.add_column("Check", style="bold")
-    table.add_column("Status")
-    table.add_column("Note")
-    for row in checks:
-        table.add_row(*row)
-    console.print()
-    console.print(table)
-    console.print("[dim]Offline only: no job boards, LLMs, browsers, apply agents, or external sites called.[/dim]\n")
-
-    failed = [name for name, status, _ in checks if "FAIL" in status]
-    if failed:
-        raise typer.Exit(code=1)
-
-
-@app.command()
+@system_app.command("check")
 def doctor() -> None:
-    """Check your setup and diagnose missing requirements."""
-    import shutil
+    """Check setup, database integrity, and search config offline (no AI or browser calls)."""
     import sys
     from divapply.config import (
         load_env,
@@ -1653,18 +2423,43 @@ def doctor() -> None:
         get_chrome_path,
         get_apply_browser,
         get_apply_browser_label,
+        load_search_config,
+        validate_search_config,
     )
     from divapply.database import get_active_db_path, get_coursework_summary, init_db
 
     load_env()
     ensure_dirs()
-    init_db()
+    conn = init_db()
 
     ok_mark = "[green]OK[/green]"
     fail_mark = "[red]MISSING[/red]"
     warn_mark = "[yellow]WARN[/yellow]"
 
     results: list[tuple[str, str, str]] = []  # (check, status, note)
+    failures: list[str] = []
+    for module in ("typer", "rich", "yaml", "playwright"):
+        try:
+            __import__(module)
+        except Exception as exc:
+            failures.append(f"import {module}")
+            results.append((f"import {module}", fail_mark, redact_error_snippet(str(exc))))
+    if conn is not None:
+        integrity = conn.execute("PRAGMA quick_check").fetchone()[0]
+        foreign_keys = conn.execute("PRAGMA foreign_key_check").fetchall()
+        healthy = integrity == "ok" and not foreign_keys
+        results.append(("database integrity", ok_mark if healthy else fail_mark, "ok" if healthy else "Integrity check failed"))
+        if not healthy:
+            failures.append("database integrity")
+    try:
+        search_report = validate_search_config(load_search_config())
+        results.append(("search config", ok_mark if search_report["passed"] else fail_mark,
+                        "; ".join(search_report["errors"] + search_report["warnings"]) or "valid"))
+        if not search_report["passed"]:
+            failures.append("search config")
+    except Exception as exc:
+        failures.append("search config")
+        results.append(("search config", fail_mark, redact_error_snippet(str(exc))))
 
     results.append(("DivApply version", ok_mark, __version__))
     results.append(("Python executable", ok_mark, sys.executable))
@@ -1737,7 +2532,7 @@ def doctor() -> None:
         model = os.environ.get("LLM_MODEL", "gemini-2.0-flash")
         results.append(("LLM API key", ok_mark, f"Gemini ({model})"))
     elif has_openai:
-        model = os.environ.get("LLM_MODEL", "gpt-4o-mini")
+        model = os.environ.get("LLM_MODEL", "gpt-5.6-luna")
         results.append(("LLM API key", ok_mark, f"OpenAI ({model})"))
     elif has_local:
         results.append(("LLM API key", ok_mark, f"Local: {os.environ.get('LLM_URL')}"))
@@ -1767,18 +2562,20 @@ def doctor() -> None:
         results.append(("Browser", ok_mark, f"Playwright channel: {get_apply_browser_label(selected_browser)}"))
 
     # Node.js + npm provision the integrity-locked MCP runtime.
-    node_bin = shutil.which("node")
-    npm_bin = shutil.which("npm")
+    from divapply.mcp_runtime import compatible_node_executable, compatible_npm_executable
+
+    node_bin = compatible_node_executable()
+    npm_bin = compatible_npm_executable()
     if node_bin and npm_bin:
         results.append(("Node.js / npm", ok_mark, f"{node_bin}; {npm_bin}"))
     else:
         results.append(
-            ("Node.js / npm", fail_mark, "Install Node.js 18+ from nodejs.org (needed for locked auto-apply runtime)")
+            ("Node.js / npm", fail_mark, "Install Node.js 20+ from nodejs.org (needed for locked auto-apply runtime)")
         )
 
     # --- Render results ---
     console.print()
-    console.print("[bold]DivApply Doctor[/bold]\n")
+    console.print("[bold]DivApply System Check[/bold]\n")
 
     col_w = max(len(r[0]) for r in results) + 2
     for check, status, note in results:
@@ -1805,10 +2602,12 @@ def doctor() -> None:
             "[dim]  -> Tier 3 unlocks: auto-apply (needs an apply backend CLI + Node.js + browser runtime)[/dim]"
         )
 
-    console.print()
+    console.print("[dim]Offline only: no job boards, LLMs, browsers, or apply agents called.[/dim]")
+    if failures:
+        raise typer.Exit(code=1)
 
 
-@app.command()
+@jobs_app.command("prune")
 def prune(
     max_score: int = typer.Option(
         4,
@@ -1859,7 +2658,7 @@ def prune(
     console.print(f"[green]Deleted {deleted} low-scoring jobs (score <= {max_score}).[/green]")
 
 
-@app.command()
+@app.command(hidden=True)
 def sync(
     platform: Optional[list[str]] = typer.Argument(
         None,
@@ -1921,6 +2720,18 @@ def sync(
 
     console.print(f"[dim]Full content saved to {_app_dir / 'social_sync.json'}[/dim]")
     console.print(f"[dim]Debug screenshots in {_app_dir / 'social_screenshots/'}[/dim]\n")
+
+
+# Legacy spellings reuse the implementations above without duplicating workflows.
+for _alias, _command in {
+    "init": init, "edit": edit, "migrate": migrate, "backup": backup,
+    "cleanup": cleanup, "import-coursework": import_coursework,
+    "coursework-summary": coursework_summary, "credentials": credentials_cmd,
+    "browser-login": browser_login, "track": track, "followups": followups,
+    "analytics": analytics, "explain": explain, "repair": repair_command,
+    "doctor": doctor, "selfcheck": doctor, "prune": prune,
+}.items():
+    app.command(_alias, hidden=True)(_command)
 
 
 if __name__ == "__main__":

@@ -1,22 +1,31 @@
-"""Job fit scoring: hybrid evaluation of candidate-job match quality.
+"""Job fit scoring: evidence-backed minimum qualifications and role fit.
 
-Scores jobs on a 1-10 scale by blending keyword hit-rate, local hashed
-embedding similarity, and the LLM evaluator. All personal data is loaded at
-runtime from the user's profile and resume file.
+The requirement audit determines the 1-10 score. Keyword and local similarity
+remain diagnostics, not proof of eligibility. Personal data is loaded at runtime
+from the user's profile and resume file.
 """
 
 import logging
+import json
 import re
 import time
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
-from divapply.config import RESUME_PATH, load_profile, load_search_config, profile_skills
+from divapply.config import (
+    RESUME_PATH,
+    load_profile,
+    load_search_config,
+    profile_for_job_resume_location,
+    profile_skills,
+)
 from divapply.database import (
-    MEANINGFUL_FULL_DESCRIPTION_SQL,
     delete_scored_jobs_at_or_below,
+    ensure_columns,
     get_connection,
     get_jobs_by_stage,
 )
+from divapply.education import education_completion_status, education_resume_status_note
 from divapply.llm import get_client_for_stage
 from divapply.privacy import redact_error_snippet
 from divapply.search_policy import (
@@ -26,6 +35,12 @@ from divapply.search_policy import (
 )
 from divapply.scoring.composite import composite_score
 from divapply.scoring.context import format_job_context
+from divapply.scoring.requirements import (
+    MAX_SCORING_DESCRIPTION,
+    REQUIREMENTS_PROMPT,
+    parse_requirement_report,
+    qualification_assessment,
+)
 from divapply.scoring.evidence import format_verified_work_history
 
 log = logging.getLogger(__name__)
@@ -71,42 +86,36 @@ SCORE_PROMPT = """You are a neutral job fit evaluator. Read the candidate's resu
 
 CORE POLICY:
 - Rank only job fit: verified candidate evidence against the posting's stated and clearly implied criteria.
-- When verified profile facts and active search filters state schedule limits or preferred role type, treat those as job-fit evidence.
-- Do not reward or penalize any job family, industry, employer type, or schedule type unless active search filters or verified profile facts make it relevant.
+- Do not lower qualification fit because of search priority, schedule preference, missing benefits text, source verification, relocation, or application mode. Those are application-readiness concerns reported separately.
+- Do not reward or penalize any job family, industry, employer type, or schedule type when judging qualifications.
 - Use general role sense only to interpret common requirements, not to invent unstated requirements.
 - Transferable experience counts when duties, tools, domain knowledge, education, or coursework reasonably map to the job's work.
 - When a posting says equivalent experience is accepted, evaluate verified duties and task summaries, not just exact titles.
-- When equivalent experience is accepted, do not list the substitutable degree field itself as a missing skill. State the verified equivalency evidence and only genuine task/tool gaps.
+- When equivalent experience is accepted, evaluate the whole allowed pathway. State whether the verified experience meets it, falls short, or needs employer confirmation; the clause alone is not proof of eligibility.
 - Do not invent a paid, professional, same-title, or minimum-years requirement unless the posting explicitly states it.
 - For entry-level, low-hour, student, customer service, cashier, front desk, office assistant, data entry, library, recreation, retail, or food service roles, do not require the same prior job title or exact industry/tool when the candidate has verified transferable public-facing service, records, payments, scheduling, data entry, or administrative experience.
 - Non-substitutable requirements such as licenses, clearances, legal credentials, completed degrees, or certifications must be treated as hard gaps when the posting requires them.
 - Preferred/nice-to-have certifications, tools, degrees, or licenses are not hard gaps. Treat them as small tie-breakers after required qualifications.
 - Coursework and in-progress education can support skills, exposure, and student eligibility. They do not prove completed degrees, completed certificates, licensure, employment history, or professional years of experience.
+- When verified profile facts contain an explicit SCORING-ONLY EDUCATION PROJECTION, follow it only for qualification ranking. It never authorizes a completed-degree claim in a resume or application.
 - State credential gaps precisely. Do not say a degree level is absent when the evidence shows a completed degree at that level; say that the completed degree is not IT-related when field alignment is the actual gap.
 - If search filters require part-time but verified search context marks an explicit schedule exception for the current employer, do not penalize a full-time posting solely for schedule. Still penalize real conflicts and missing required qualifications.
-- Search priority controls primary-queue eligibility after qualification fit. Priority 1 is primary, priority 2 is a bridge, and priority 3 is fallback.
-- Priority 3 or outside all named target families: maximum score 6.
-- When search context prefers full-time, a part-time, per-diem, temporary, or seasonal role: maximum score 6, unless an explicit schedule exception for the current employer applies.
+- Search priority controls queue organization after qualification fit. Priority 1 is primary, priority 2 is a bridge, and priority 3 is fallback; it must not change FIT_SCORE.
+- Schedule preferences, benefits confirmation, and source verification must not change FIT_SCORE.
 - When application mode is discovery only, evaluate fit but never recommend immediate application.
 
 SCORING CRITERIA:
 - 9-10: Direct match. The candidate clearly meets the title, duties, and minimum qualifications.
-- 7-8: Strong match. Candidate meets most qualifications; minor gaps that experience or education could bridge. For low-hour/student searches, this includes easy part-time roles that match search filters, location, and transferable customer service/admin skills.
-- 5-6: Moderate match. Relevant background exists but meaningful gaps in required experience, credentials, schedule, or stated search preferences.
+- 7-8: Strong match. Candidate meets minimum qualifications; only preferred or trainable gaps remain.
+- 5-6: Moderate match. Relevant background exists but meaningful gaps remain in required experience, credentials, tools, or duties.
 - 3-4: Weak match. Some transferable skills but significant gaps. Candidate could apply but is unlikely to be competitive.
 - 1-2: Incompatible. Role requires specific licensure, certification, or field experience the candidate does not have and cannot substitute.
 
-AUTOMATIC SCORE = 1 (do not evaluate further) only for clear SCAM/JUNK SIGNALS:
-- Job description is vague, generic, or could apply to any industry with no specific duties
-- Company name is missing, hidden, or listed only as "Confidential" or "Our Client"
-- No company website, physical address, or verifiable business presence mentioned
-- Promises unusually high pay for minimal qualifications (e.g. "$50-100/hr, no experience needed")
-- Application asks for SSN, bank account, or payment upfront before hiring
-- Job is "work from home, set your own hours, unlimited earnings" style AND also lacks concrete duties or a verifiable employer
-- Recruiter-only posting where the actual employer is never named
-- Job title/description is clearly a data harvesting scheme (brand ambassador, product tester, mystery shopper, chat agent, survey taker, social media evaluator, online rater) with no concrete employer, duties, or screening process
-- Job redirects to a third-party site asking to "create a profile" before any interview
-- Multiple identical job postings from the same "company" with different salaries
+SOURCE SAFETY (separate from qualification scoring):
+- Flag suspicious payments, requests for sensitive identifiers, unverifiable employers,
+  misleading compensation, and inadequate job details in RISK_FLAGS. Recommend review,
+  never immediate application. Missing qualification text means uncertain eligibility,
+  not an invented strong fit. A third-party ATS or an account-creation step is not by itself a scam.
 - Do not penalize legitimate remote, flexible, part-time, entry-level, customer-facing, sales, support, or field roles for category alone.
 
 QUALIFICATION MISMATCH:
@@ -117,8 +126,8 @@ QUALIFICATION MISMATCH:
 
 IMPORTANT NOTES:
 - Judge based on the actual job description minimum qualifications, not job title alone.
-- Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family unless the verified profile facts identify it as a current target.
-- Do not artificially boost or suppress roles based on a presumed career path; use active search queries and filters instead.
+- Do not favor or disfavor a job because it is IT, government, customer service, part-time, or any other job family.
+- Do not artificially boost or suppress qualification fit based on a presumed career path, active search query, or queue priority.
 - If the posting explicitly accepts equivalent experience or an in-progress degree, count that only when the posting says so.
 - Never turn "equivalent experience accepted" into "paid IT experience required" unless the posting itself uses that restriction.
 - Separate "required/minimum/must have" from "preferred/nice to have/bonus/plus"; required gaps matter much more.
@@ -415,7 +424,11 @@ def _completed_degree_rank(school: dict) -> tuple[int, str]:
     return rank, degree
 
 
-def _build_profile_evidence_context(profile: dict) -> str:
+def _build_profile_evidence_context(
+    profile: dict,
+    *,
+    assume_completed_bachelors: bool = False,
+) -> str:
     """Build scoring-safe profile facts without credentials or EEO data."""
     lines: list[str] = []
 
@@ -479,32 +492,62 @@ def _build_profile_evidence_context(profile: dict) -> str:
         for school in profile.get("education_schools", []) or []
         if isinstance(school, dict)
     ]
-    completed_degrees = [school for school in schools if school.get("degree_received") is True]
+    completed_degrees = [
+        school for school in schools if education_completion_status(school) == "received"
+    ]
     if completed_degrees:
         highest = max(completed_degrees, key=_completed_degree_rank)
         highest_degree = str(highest.get("degree") or "").strip()
         if highest_degree:
             lines.append(f"Highest completed degree: {highest_degree}")
 
+    projected_bachelors = [
+        school
+        for school in schools
+        if assume_completed_bachelors
+        and education_completion_status(school) == "in progress"
+        and "bachelor" in str(school.get("degree") or "").casefold()
+    ]
+    if projected_bachelors:
+        projected = projected_bachelors[0]
+        projected_label = " in ".join(
+            part
+            for part in (
+                str(projected.get("degree") or "").strip(),
+                str(projected.get("major") or "").strip(),
+            )
+            if part
+        )
+        lines.append(
+            "SCORING-ONLY EDUCATION PROJECTION: Treat "
+            f"{projected_label or 'the active bachelor degree'} as completed when evaluating "
+            "qualification fit. This is not a current credential and must not be copied to "
+            "resumes, cover letters, or applications. Do not deduct points or impose a "
+            "score ceiling solely for the pending award. Keep the stated field of study "
+            "and evaluate all other requirements normally."
+        )
+
     for school in schools:
-        profile_status = str(school.get("status", "")).strip().lower()
-        if profile_status in {"transferred", "transfer"}:
-            status = "transferred"
-        elif school.get("degree_received"):
-            status = "completed"
-        elif str(school.get("end_year", "")).lower() == "present":
-            status = "in progress"
-        else:
-            status = "not completed"
+        completion_status = education_completion_status(school)
+        projected_completion = school in projected_bachelors
+        education_status = (
+            "completed for scoring projection only"
+            if projected_completion
+            else "completed" if completion_status == "received" else completion_status
+        )
         parts = [
             school.get("school"),
             school.get("degree"),
             school.get("major"),
-            status,
+            education_status,
             f"GPA {school.get('gpa')}" if school.get("gpa") else "",
-            school.get("notes"),
+            "" if projected_completion else school.get("notes"),
         ]
         lines.append("Education: " + " | ".join(str(part) for part in parts if part))
+        if completion_status == "in progress" and school.get("expected_graduation_year"):
+            lines.append(
+                f"Actual education timing: {school.get('school', '')} | {education_resume_status_note(school)}"
+            )
 
     for cert in profile.get("certifications", []) or []:
         if not isinstance(cert, dict):
@@ -609,6 +652,35 @@ def _build_search_evidence_context(search_config: dict, *, job: dict | None = No
     return "\n".join(lines)
 
 
+def _relocation_needed_for_job(profile: dict, job: dict) -> bool:
+    """Return whether a configured target-market location differs from home."""
+    remote_value = str(job.get("is_remote") or "").strip().casefold()
+    location_text = " ".join(
+        str(job.get(key) or "") for key in ("location", "work_arrangement")
+    ).casefold()
+    if remote_value in {"1", "true", "yes"} or re.search(
+        r"\b(?:remote|work from home|wfh|distributed)\b",
+        location_text,
+    ):
+        return False
+
+    current = profile.get("personal", {}) or {}
+    projected = profile_for_job_resume_location(profile, job).get("personal", {}) or {}
+    current_location = (
+        str(current.get("city") or "").strip().casefold(),
+        str(current.get("province_state") or "").strip().casefold(),
+    )
+    projected_location = (
+        str(projected.get("city") or "").strip().casefold(),
+        str(projected.get("province_state") or "").strip().casefold(),
+    )
+    return bool(
+        any(projected_location)
+        and any(current_location)
+        and projected_location != current_location
+    )
+
+
 def score_job(
     resume_text: str,
     job: dict,
@@ -622,6 +694,8 @@ def score_job(
     max_hours_per_week: int | float | None = None,
     require_benefits: bool = False,
     source_verification: str = "",
+    employment_type: str = "",
+    relocation_needed: bool = False,
 ) -> dict:
     """Score a single job against the resume.
 
@@ -632,20 +706,22 @@ def score_job(
     Returns:
         Structured scoring fields.
     """
-    job_text = format_job_context(job, description_limit=3000)
+    job_text = format_job_context(job, description_limit=MAX_SCORING_DESCRIPTION, preserve_sections=True)
 
     coursework_block = coursework_summary.strip() or "N/A"
     coursework_skills_block = coursework_skills_summary.strip() or "N/A"
     profile_block = profile_context.strip() or "N/A"
+    projected_education = "SCORING-ONLY EDUCATION PROJECTION" in profile_block
     evidence_text = "\n\n".join(
         part for part in (resume_text, profile_block, coursework_block, coursework_skills_block)
         if part and part != "N/A"
     )
     messages = [
-        {"role": "system", "content": SCORE_PROMPT},
+        {"role": "system", "content": SCORE_PROMPT + REQUIREMENTS_PROMPT},
         {"role": "user", "content": (
             f"RESUME:\n{resume_text}\n\n"
-            f"VERIFIED PROFILE FACTS (safe scoring context; do not treat in-progress credentials as completed):\n{profile_block}\n\n"
+            "VERIFIED PROFILE FACTS (safe scoring context; honor only explicitly labeled "
+            f"scoring projections):\n{profile_block}\n\n"
             f"ACADEMIC COURSEWORK (internal only, do not cite unless already in resume):\n{coursework_block}\n\n"
             f"COURSEWORK SKILL MAP (internal only, do not cite unless already in resume):\n{coursework_skills_block}\n\n"
             f"---\n\nJOB POSTING:\n{job_text}"
@@ -654,8 +730,22 @@ def score_job(
 
     try:
         client = get_client_for_stage("score")
-        response = client.chat(messages, max_tokens=4096, temperature=0.1)
+        response = client.chat(messages, max_tokens=8000, temperature=0.1)
         llm_result = _parse_score_response(response)
+        if not llm_result["score"]:
+            raise ValueError("Grader returned no valid FIT_SCORE")
+        requirement_report = parse_requirement_report(response)
+        assessment = qualification_assessment(
+            requirement_report, posting=job_text, evidence=evidence_text,
+            raw_score=llm_result["score"],
+            incomplete=bool(
+                job.get("requirements_error") or "...[middle omitted]..." in job_text
+                or ((urlparse(str(job.get("url") or "")).hostname or "").endswith("calcareers.ca.gov")
+                    and not job.get("requirements_description"))
+            ),
+            projected=projected_education,
+        )
+        original_result = dict(llm_result)
         llm_result["missing_skills"] = _sanitize_substitution_gaps(
             llm_result.get("missing_skills"), job_text
         )
@@ -667,6 +757,10 @@ def score_job(
         )
         llm_result["reasoning"] = sanitized_reasoning
         llm_result["risk_flags"] = sanitized_risks
+        if requirement_report:
+            # A validated pathway comparison must not be erased by the old
+            # broad "equivalent experience" text-cleaning heuristics.
+            llm_result = original_result
         hybrid = composite_score(
             job_description=job_text,
             resume_text=evidence_text,
@@ -677,6 +771,9 @@ def score_job(
             max_hours_per_week=max_hours_per_week,
             require_benefits=require_benefits,
             source_verification=source_verification,
+            employment_type=employment_type,
+            application_mode=application_mode,
+            relocation_needed=relocation_needed,
         )
         hybrid["missing_skills"] = _remove_hit_covered_gaps(
             _sanitize_substitution_gaps(
@@ -689,8 +786,37 @@ def score_job(
             hybrid.get("keyword_hits"),
         )
         reasoning = _build_evidence_reasoning(hybrid, job_text)
+        # The semantic requirement audit determines qualification. Word overlap
+        # remains inspectable diagnostics, not proof of minimum eligibility.
+        hybrid["score"] = hybrid["qualification_score"] = assessment["score"]
+        if projected_education:
+            readiness_flags = json.loads(hybrid["readiness_flags"])
+            if "degree_completion_pending" not in readiness_flags:
+                readiness_flags.append("degree_completion_pending")
+            hybrid["readiness_flags"] = json.dumps(readiness_flags, ensure_ascii=True)
+            if hybrid["application_readiness"] == "ready":
+                hybrid["application_readiness"] = "review"
+        breakdown = json.loads(hybrid["score_breakdown"])
+        breakdown.update({
+            "similarity_composite": hybrid["composite_score"],
+            "qualification_score": assessment["score"],
+            "eligibility_status": assessment["eligibility_status"],
+            "assessment_incomplete": assessment["assessment_incomplete"],
+            "posting_source_url": job.get("detail_source_url"),
+            "posting_fetched_at": job.get("detail_scraped_at"),
+            "application_readiness": hybrid["application_readiness"],
+            "readiness_flags": json.loads(hybrid["readiness_flags"]),
+        })
+        hybrid["composite_score"] = float(assessment["score"])
+        hybrid["score_breakdown"] = json.dumps(breakdown, ensure_ascii=True)
+        if requirement_report:
+            hybrid["missing_skills"] = assessment["qualification_gaps"] or llm_result.get("missing_skills", "")
+            reasoning = llm_result.get("reasoning", "")
+        reasoning = f"Qualification {assessment['score']}/10; eligibility: {assessment['eligibility_status']}. " + reasoning
         risk_flags = str(llm_result.get("risk_flags", "") or "")
         action_reason = _build_action_reason(hybrid)
+        if projected_education:
+            action_reason = action_reason.replace("verified fit", "projected fit")
         normalized_mode = str(application_mode or "active").strip().casefold()
         if normalized_mode == "discovery_only":
             action_reason = (
@@ -704,16 +830,21 @@ def score_job(
         return {
             **llm_result,
             **hybrid,
-            "matched_skills": hybrid.get("keyword_hits", ""),
+            **{key: value for key, value in assessment.items() if key not in {"score", "qualification_gaps"}},
+            "matched_skills": llm_result.get("matched_skills", "") if requirement_report else hybrid.get("keyword_hits", ""),
             "risk_flags": risk_flags,
             "apply_or_skip_reason": action_reason,
             "reasoning": reasoning,
+            "scoring_source_url": job.get("detail_source_url"),
         }
     except Exception as e:
         safe_error = redact_error_snippet(str(e), max_length=500) or type(e).__name__
         log.error("LLM error scoring job '%s': %s", job.get("title", "?"), safe_error)
         return {
             "score": 0,
+            "qualification_score": 0,
+            "application_readiness": "scoring_error",
+            "readiness_flags": '["scoring_error"]',
             "llm_score": 0,
             "keyword_score": 0.0,
             "embedding_score": 0.0,
@@ -746,12 +877,12 @@ def _load_score_candidates(
 ) -> list[dict]:
     if target_url:
         rows = conn.execute(
-            f"SELECT * FROM jobs WHERE url = ? AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
+            "SELECT * FROM jobs WHERE url = ? "
             "AND archived_at IS NULL",
             (target_url,),
         ).fetchall()
     elif rescore:
-        query = f"SELECT * FROM jobs WHERE {MEANINGFUL_FULL_DESCRIPTION_SQL} AND archived_at IS NULL"
+        query = "SELECT * FROM jobs WHERE archived_at IS NULL AND COALESCE(availability_state, '') != 'closed'"
         if limit > 0:
             query += " LIMIT ?"
             rows = conn.execute(query, (limit,)).fetchall()
@@ -773,6 +904,7 @@ def _score_candidate(
     coursework_summary: str,
     coursework_skills_summary: str,
     search_config: dict,
+    profile: dict,
     profile_evidence_context: str,
 ) -> dict:
     effective_config = effective_search_config(search_config, job)
@@ -800,6 +932,8 @@ def _score_candidate(
         ),
         require_benefits=bool(effective_config.get("require_benefits")),
         source_verification=str(job.get("source_verification") or ""),
+        employment_type=str(job.get("employment_type") or ""),
+        relocation_needed=_relocation_needed_for_job(profile, job),
     )
     result["url"] = job["url"]
     result["prior_score_attempts"] = int(job.get("score_attempts") or 0)
@@ -808,6 +942,10 @@ def _score_candidate(
 
 
 def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
+    # Some callers provide an existing database connection directly. Migrate
+    # that connection before persisting the readiness fields so upgrades also
+    # work outside the normal get_connection() path.
+    ensure_columns(conn)
     for result in results:
         if result.get("error"):
             attempt = min(MAX_SCORE_ATTEMPTS, int(result.get("prior_score_attempts") or 0) + 1)
@@ -815,6 +953,7 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
                 """
                 UPDATE jobs
                 SET score_error = ?, score_attempts = ?, score_retry_at = ?,
+                    fit_score = NULL, qualification_score = NULL, scoring_version = NULL,
                     application_mode = COALESCE(?, application_mode)
                 WHERE url = ? AND archived_at IS NULL
                 """,
@@ -831,6 +970,9 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
             """
             UPDATE jobs
             SET fit_score = ?,
+                qualification_score = ?,
+                application_readiness = ?,
+                readiness_flags = ?,
                 llm_score = ?,
                 keyword_score = ?,
                 embedding_score = ?,
@@ -851,6 +993,9 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
             """,
             (
                 result["score"],
+                result.get("qualification_score", result["score"]),
+                result.get("application_readiness", "review"),
+                result.get("readiness_flags", "[]"),
                 result.get("llm_score"),
                 result.get("keyword_score"),
                 result.get("embedding_score"),
@@ -867,6 +1012,13 @@ def _persist_score_results(conn, results: list[dict], *, now: str) -> None:
                 result["url"],
             ),
         )
+        if result.get("scoring_version"):
+            conn.execute(
+                "UPDATE jobs SET eligibility_status=?, requirements_assessment=?, "
+                "scoring_version=?, scoring_input_hash=?, scoring_source_url=? WHERE url=? AND archived_at IS NULL",
+                (result.get("eligibility_status"), result.get("requirements_assessment"),
+                 result["scoring_version"], result.get("scoring_input_hash"), result.get("scoring_source_url"), result["url"]),
+            )
     conn.commit()
 
 
@@ -893,14 +1045,16 @@ def run_scoring(
     rescore: bool = False,
     prune_below: int = 0,
     target_url: str | None = None,
+    refresh: bool = True,
 ) -> dict:
     """Score unscored jobs that have full descriptions.
 
     Args:
         limit: Maximum number of jobs to score in this run.
-        rescore: If True, re-score all jobs (not just unscored ones).
+        rescore: If True, re-read and score saved jobs (not just unscored ones).
         prune_below: If > 0, delete jobs with fit_score <= this value after scoring.
         target_url: If provided, score only this job URL.
+        refresh: Internal optimization for a caller that just refreshed the page.
 
     Returns:
         {"scored": int, "errors": int, "elapsed": float, "distribution": list, "pruned": int}
@@ -910,7 +1064,14 @@ def run_scoring(
     coursework_summary = "\n".join(profile.get("coursework_summary", []))
     coursework_skills_summary = "\n".join(profile.get("coursework_skills", []))
     search_config = load_search_config()
-    profile_evidence_context = _build_profile_evidence_context(profile)
+    scoring_assumptions = search_config.get("scoring_assumptions") or {}
+    profile_evidence_context = _build_profile_evidence_context(
+        profile,
+        assume_completed_bachelors=bool(
+            isinstance(scoring_assumptions, dict)
+            and scoring_assumptions.get("assume_completed_bachelors")
+        ),
+    )
     conn = get_connection()
     jobs = _load_score_candidates(conn, target_url=target_url, rescore=rescore, limit=limit)
 
@@ -918,21 +1079,40 @@ def run_scoring(
         log.info("No unscored jobs with descriptions found.")
         return {"scored": 0, "errors": 0, "elapsed": 0.0, "distribution": []}
 
-    log.info("Scoring %d jobs sequentially...", len(jobs))
+    log.info("Reading employer postings and scoring %d jobs sequentially...", len(jobs))
     t0 = time.time()
     completed = 0
     errors = 0
     results: list[dict] = []
 
     for job in jobs:
+        from divapply.job_health import refresh_job
+
+        try:
+            if refresh or not job.get("detail_source_url"):
+                job = refresh_job(job, conn)
+            if job.get("availability_state") == "closed":
+                log.info("Skipping closed employer posting: %s", job.get("title", "?"))
+                continue
+        except Exception as exc:
+            error = redact_error_snippet(str(exc), max_length=400) or type(exc).__name__
+            log.warning("Employer page not scored: %s | %s", job.get("title", "?"), error)
+            _persist_score_results(conn, [{"url": job["url"], "error": error,
+                "prior_score_attempts": job.get("score_attempts", 0)}], now=datetime.now(timezone.utc).isoformat())
+            conn.execute("UPDATE jobs SET detail_error=? WHERE url=? AND archived_at IS NULL", (error, job["url"]))
+            conn.commit()
+            errors += 1
+            continue
         result = _score_candidate(
             job,
             resume_text=resume_text,
             coursework_summary=coursework_summary,
             coursework_skills_summary=coursework_skills_summary,
             search_config=search_config,
+            profile=profile,
             profile_evidence_context=profile_evidence_context,
         )
+        _persist_score_results(conn, [result], now=datetime.now(timezone.utc).isoformat())
         completed += 1
 
         if result.get("error"):
@@ -948,11 +1128,8 @@ def run_scoring(
             job.get("title", "?")[:60],
         )
 
-    now = datetime.now(timezone.utc).isoformat()
-    _persist_score_results(conn, results, now=now)
-
     elapsed = time.time() - t0
-    scored_count = len(results) - errors
+    scored_count = sum(not result.get("error") for result in results)
     log.info(
         "Done: %d scored, %d retryable errors in %.1fs (%.1f jobs/sec)",
         scored_count,

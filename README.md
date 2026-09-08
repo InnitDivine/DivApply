@@ -13,11 +13,14 @@ discover -> enrich -> score -> tailor -> cover -> pdf -> apply
 
 DivApply works from your profile, resume, search preferences, and optional coursework. It is designed to preserve facts—not invent employers, credentials, degrees, skills, dates, metrics, or experience.
 
+Reinstalling or resetting a computer? Follow the [recovery guide](docs/RECOVERY.md)
+to preserve private data separately from the source code.
+
 ## Highlights
 
 - Configurable searches across job boards and direct employer sources.
 - Full-posting enrichment and canonical application links.
-- Hybrid keyword, local-similarity, and optional LLM scoring.
+- Evidence-backed qualification audits, with keyword and local-similarity diagnostics.
 - Required-versus-preferred qualification handling.
 - Factual, job-specific resumes and cover letters with fail-closed ATS text validation.
 - Local dashboard, lifecycle tracking, analytics, and safe exports.
@@ -29,7 +32,7 @@ DivApply works from your profile, resume, search preferences, and optional cours
 | Feature | Requirement |
 | --- | --- |
 | Core CLI | Python 3.11+ |
-| Full JobSpy discovery | Python 3.12 recommended; maintained Windows setup uses 3.12.13 |
+| Full JobSpy discovery | Standalone Python 3.12 recommended |
 | Default browser and PDF workflows | Playwright Chromium; auto-apply can also target supported installed browsers |
 | AI scoring and documents | Gemini, OpenAI, or a compatible local endpoint |
 | Auto-apply | Node.js 20+ and Codex CLI or Claude Code |
@@ -55,8 +58,8 @@ python -m pip install --no-deps $JobSpyWheel
 python -m divapply.jobspy_runtime
 python -m playwright install chromium
 
-divapply init
-divapply doctor
+divapply settings init
+divapply system check
 ```
 
 If `py -3.12` is unavailable, install Python 3.12 or use an existing 3.12 interpreter explicitly.
@@ -75,8 +78,8 @@ python -m pip install --no-deps "$JOBSPY_WHEEL"
 python -m divapply.jobspy_runtime
 python -m playwright install chromium
 
-divapply init
-divapply doctor
+divapply settings init
+divapply system check
 ```
 
 ### Install choices
@@ -96,20 +99,18 @@ Because those published metadata ranges cannot overlap, `pip check` may report a
 
 ```powershell
 python -m divapply.jobspy_runtime
-divapply selfcheck
-divapply doctor
+divapply system check
 ```
 
 ## First Run
 
 ```powershell
-divapply init
-divapply edit
-divapply selfcheck
-divapply doctor
+divapply settings init
+divapply settings edit
+divapply system check
 ```
 
-`divapply init` is an interactive setup wizard. `divapply edit` opens the normal local-only editor for your profile and searches.
+`divapply settings init` is an interactive setup wizard. `divapply settings edit` opens the local-only editor for your profile and searches.
 
 User data lives under `~/.divapply`:
 
@@ -126,31 +127,36 @@ For a destination market, `profile.json` may define `resume_locations` entries w
 
 ## Core Workflow
 
-Run the full non-submitting pipeline:
+Type `divapply` to show the home screen and command menu. Use `divapply run` to start the non-submitting workflow:
 
 ```powershell
+divapply
 divapply run
 divapply status
 divapply dashboard
-divapply export jobs --out jobs.csv
 ```
 
-Run selected stages or inspect one posting:
+Finish saved jobs, try a bounded batch, or paste a posting:
 
 ```powershell
-divapply run discover enrich
-divapply run score tailor cover pdf
-divapply add-url JOB_URL
-divapply add-url JOB_URL --prepare --min-score 5
-divapply explain JOB_URL
-divapply rescore
+divapply run --saved
+divapply run --saved --limit 3 --dry-run
+divapply run --saved --limit 3
+divapply run --saved --refresh
+divapply add "JOB_URL" --min-score 5
+divapply add --file jobs.txt --min-score 5
+divapply jobs explain JOB_URL
 ```
 
-`divapply run` never submits applications. Submission is a separate, confirmation-gated `divapply apply` command.
+`run` searches unless `--saved` is supplied, then finishes one job packet at a time. `--limit` counts job packets, not separate resume/cover/scoring batches; `0` means all pending jobs. The default document threshold is 7; use `--min-score 5` when you want the broader queue. Fresh or obsolete grades require a live-page read before scoring. `--refresh` rereads and regrades saved jobs but preserves existing documents.
+
+Each document is saved immediately, so an interrupted run resumes without losing earlier PDFs. Missing files and text-only fallbacks are repaired. Both PDFs must exist before the packet is reported ready; errors return a nonzero exit code. Low scores, source verification, exhausted retries, and schedule restrictions are reported explicitly by `divapply status --details`.
+
+`divapply run` never submits applications. Submission is a separate, confirmation-gated `divapply apply` command. Scoring and writing send candidate evidence and job text to your configured AI provider and may incur API charges; `--dry-run` makes no job-page or AI calls.
 
 ## Search Configuration
 
-Most users should configure searches through `divapply edit`. The underlying `searches.yaml` remains human-readable:
+Most users should configure searches through `divapply settings edit`. The underlying `searches.yaml` remains human-readable:
 
 ```yaml
 defaults:
@@ -179,9 +185,14 @@ queries:
 boards:
   - indeed
   - linkedin
+
+# Optional: evaluate degree requirements as if an in-progress bachelor's were
+# complete, without changing factual resume or application content.
+scoring_assumptions:
+  assume_completed_bachelors: false
 ```
 
-Tier 1 is the strongest target, tier 2 is an adjacent path, and tier 3 is a broader fallback. Titles belong in `queries`; places belong in `locations`; schedule, benefits, market, and application-mode policy should remain structured search configuration. A posting with an explicit schedule that conflicts with its market policy is kept for manual review but cannot generate application documents or enter auto-apply; an exact configured schedule exception still takes precedence.
+Tier 1 is the strongest target, tier 2 is an adjacent path, and tier 3 is a broader fallback. Titles belong in `queries`; places belong in `locations`; schedule, benefits, market, and application-mode policy should remain structured search configuration. These factors appear as application-readiness flags and do not lower the qualification score. A posting with an explicit schedule that conflicts with its market policy is kept for manual review but cannot enter auto-apply; an exact configured schedule exception still takes precedence.
 
 Configured official GovernmentJobs/SchoolJobs, JobAps, and CalCareers sources use deterministic current-vacancy adapters. A row is marked open only when the current official board exposes an exact job/application entry; expired filing deadlines are excluded. Rediscovery may restore a legacy or source-closed row, but it never overrides a job you archived yourself or one excluded by search policy.
 
@@ -189,11 +200,13 @@ For `divapply add-url`, a visible inactive/expired notice or terminal HTTP 404/4
 
 Trusted static sources in private `~/.divapply/config/sites.yaml` may also define `location_label` and `default_location`. The default fills only a blank scraped location so a source can resolve to the correct configured market without overwriting concrete posting data.
 
-Legacy aliases still load, but `divapply selfcheck` reports migration guidance.
+Legacy aliases still load, but `divapply system check` reports migration guidance.
 
 ## Scoring and Resume Safety
 
-DivApply blends required/preferred keyword evidence, local similarity, and optional LLM judgment. Required non-substitutable gaps—such as a mandatory license or clearance—can cap a score. Preferred credentials should not block an otherwise strong match.
+DivApply audits full postings and linked minimum qualifications against documented candidate evidence. Confirmed unmet minimums cap the qualification score at 4; unresolved eligibility caps it at 6. Keyword similarity cannot lift those scores. Preferred credentials do not become hard gaps. Search priority, schedule, benefits confirmation, source verification, relocation, and application mode are reported separately as readiness flags. Degree projections remain hypothetical rather than confirmed eligibility.
+
+Use `divapply status --details` to explain missing documents and `divapply run --saved --refresh --limit 3` for a bounded live-page refresh, qualification audit, and missing-document/PDF recovery. `divapply jobs repair` exposes advanced recovery options, including `--retry-failed`. Neither command submits applications. See [qualification audits and packet repair](docs/QUALIFICATION_AUDIT_AND_REPAIR.md) for evidence rules, safe previews, provider data use, and output organization.
 
 Provider or transport failures remain retryable rather than becoming fake low scores. Inspect score evidence with:
 
@@ -218,13 +231,42 @@ divapply run score tailor --validation lenient
 Coursework can improve matching without exposing raw transcript text:
 
 ```powershell
-divapply import-coursework path\to\transcript.json
-divapply coursework-summary
+divapply settings coursework import path\to\transcript.json
+divapply settings coursework summary
 ```
 
 Supported formats are JSON, CSV, text, and PDF when the coursework extra is installed. Raw transcript text stays local. Selected completed-course facts may be included in scoring or tailoring prompts sent to your configured LLM, but coursework is not automatically copied into a resume.
 
 ## Browser Login and Auto-Apply
+
+### Assisted applications from pasted links
+
+For the most reliable workflow, put direct employer or ATS links in a UTF-8 text file with one URL per line. Blank lines and full-line `#` comments are ignored:
+
+```text
+# California full-time
+https://employer.example/jobs/123
+
+# Another California employer
+https://ats.example/application/456
+```
+
+Then run:
+
+```powershell
+divapply settings browser-login --browser chrome --worker 0 --url https://www.myworkday.com/
+divapply apply-links jobs.txt --min-score 5
+```
+
+`apply-links` validates and de-duplicates the links, fetches job details, scores each posting, creates its resume and cover-letter PDFs, and opens each eligible application in visible Chrome. The agent fills only supported facts and stops before the final submission control. Chrome stays open while the terminal waits for you to fix a login/CAPTCHA/missing answer, retry autofill in the same browser, confirm that you personally submitted, save the application for later, or skip it. Unconfigured direct URLs require your exact assisted-use confirmation and remain blocked from unattended auto-submit.
+
+Use `--prepare-only` to stop after scoring and document generation. For one already-prepared job, use:
+
+```powershell
+divapply apply --assist --url JOB_URL --min-score 5
+```
+
+Assisted mode always uses DivApply's visible, isolated Chrome profile. It does not control an existing Firefox tab, your personal Chrome profile, or the ChatGPT browser extension.
 
 Start with one dry-run job:
 
@@ -235,13 +277,13 @@ divapply apply --dry-run --limit 1 --min-score 7
 Optional usernames and passwords can be stored in the permission-protected local `credentials.yaml` file. This file is not an encrypted credential vault:
 
 ```powershell
-divapply credentials --username you@example.com
+divapply settings credentials --username you@example.com
 ```
 
 Save cookies separately in DivApply's dedicated browser profile by signing in interactively:
 
 ```powershell
-divapply browser-login --url https://www.myworkday.com/
+divapply settings browser-login --url https://www.myworkday.com/
 ```
 
 Then run the smallest real batch:
@@ -255,7 +297,7 @@ divapply apply --yes --limit 1 --workers 1 --min-score 7
 Safety boundaries:
 
 - Real application runs require explicit confirmation. The resulting runtime authorization covers exact local profile fields and, only in real mode, the final submission action.
-- `apply --gen` and `apply --dry-run` are form-fill/review scopes only; their prompts cannot authorize a final Submit/Apply click.
+- `apply --gen`, `apply --dry-run`, and `apply --assist` are no-submit scopes; assisted mode leaves Chrome open so you can review and personally submit.
 - An exact `apply --url ...` selection overrides discovery-city filtering for that job only. Work-authorization, scam, security, and wrong-job checks still apply.
 - Worker profiles are blank and dedicated; DivApply never clones your personal Chrome profile.
 - The apply agent receives an allowlisted browser surface, without host shell or arbitrary page-code execution. Codex approval-required browser actions use automatic review while the agent remains read-only.
@@ -271,46 +313,37 @@ The ChatGPT desktop app's `@Browser` and `@Chrome` controls are not available to
 ## Backups, Cleanup, and Privacy
 
 ```powershell
-divapply backup
-divapply cleanup
-divapply cleanup --yes
+divapply system backup
+divapply system cleanup
+divapply system cleanup --yes
 ```
 
 Backups include profile, resume, searches, database, local config, and generated documents. Logs and secrets are excluded unless you explicitly add `--include-logs` or `--include-secrets`.
 
-`divapply cleanup` previews dashboard benchmark/performance files, `.bak` files, and non-PDF sidecars in generated-document folders. Add `--include-backups` only when you intentionally want matching `divapply-backup-*.zip` archives removed.
+`divapply system cleanup` previews stale dashboard benchmark/performance files. It preserves generated PDFs, text fallbacks, and document validation sidecars. Add `--include-backups` only when you intentionally want matching old `divapply-backup-*.zip` archives removed.
 
 Apply logs use user-only permissions and expire after 30 days by default. See [Privacy](docs/PRIVACY.md) for data boundaries and Git hygiene.
 
 ## Common Commands
 
 ```powershell
-divapply init
-divapply add-url JOB_URL
-divapply edit
-divapply doctor
-divapply selfcheck
+divapply
 divapply run
-divapply credentials --username you@example.com
-divapply browser-login --url https://www.myworkday.com/
+divapply run --saved --limit 3
+divapply add "JOB_URL" --min-score 5
+divapply add --file jobs.txt --min-score 5
 divapply status
-divapply track applied JOB_URL
-divapply followups
-divapply analytics
+divapply status --details
 divapply dashboard
-divapply explain JOB_URL
-divapply rescore
-divapply export jobs --out jobs.csv
-divapply answers list
-divapply backup
-divapply cleanup
-divapply apply --dry-run
-divapply migrate
-divapply prune --dry-run
-divapply sync --dry-run
+divapply apply --assist --url JOB_URL --min-score 5
+divapply settings edit
+divapply jobs explain JOB_URL
+divapply system check
 ```
 
 Run `divapply --help` or `divapply COMMAND --help` for full options.
+
+Occasional tools live under three groups: `settings` (setup, profile/search editor, logins, coursework, saved answers), `jobs` (explanations, advanced repair, tracking, exports), and `system` (one combined offline check, backups, cleanup, migration). The old command spellings still work for scripts but are omitted from the main menu. `doctor` and `selfcheck` now share one implementation; `audit` is covered by `status`. Social-profile sync remains a legacy command, separate from job preparation. See [the command guide](docs/COMMANDS.md).
 
 ## Development
 

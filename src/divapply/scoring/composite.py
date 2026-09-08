@@ -186,8 +186,12 @@ def _posted_hours_per_week(job_description: str) -> list[float]:
     return values
 
 
-def _schedule_evidence(job_description: str) -> tuple[bool, bool]:
-    text = job_description.casefold()
+def _schedule_evidence(
+    job_description: str,
+    employment_type: str = "",
+) -> tuple[bool, bool]:
+    """Return part/full-time evidence from description and structured metadata."""
+    text = f"{job_description} {employment_type}".casefold()
     part_time = any(term in text for term in _PART_TIME_TERMS)
     full_time = any(term in text for term in _FULL_TIME_TERMS) or any(
         hours >= 35 for hours in _posted_hours_per_week(job_description)
@@ -218,8 +222,11 @@ def composite_score(
     max_hours_per_week: int | float | None = None,
     require_benefits: bool = False,
     source_verification: str = "",
+    employment_type: str = "",
+    application_mode: str = "active",
+    relocation_needed: bool = False,
 ) -> dict:
-    """Blend keyword, embedding, and LLM scores into a calibrated 1-10 score."""
+    """Return qualification fit separately from application-readiness policy."""
     active_weights = {**DEFAULT_WEIGHTS, **(weights or {})}
     keyword = score_keywords(job_description, resume_text)
     keyword_modality_available = bool(keyword.get("keywords"))
@@ -262,7 +269,10 @@ def composite_score(
     # Missing/malformed priority is not evidence that a job belongs in the
     # primary queue. Fail closed until a valid P1/P2 classification exists.
     search_priority_cap = target_priority not in {"1", "2"}
-    part_time_evidence, full_time_evidence = _schedule_evidence(job_description)
+    part_time_evidence, full_time_evidence = _schedule_evidence(
+        job_description,
+        employment_type,
+    )
     normalized_schedule = str(preferred_schedule or "any").strip().casefold()
     schedule_preference_cap = False
     if require_part_time:
@@ -292,15 +302,42 @@ def composite_score(
     source_verification_cap = (
         str(source_verification or "").strip().casefold() == "unverified_aggregator"
     )
-    if (
-        search_priority_cap
-        or schedule_preference_cap
-        or benefits_evidence_cap
-        or source_verification_cap
-    ):
-        composite_float = min(composite_float, 6.0)
+    legacy_policy_adjustment_needed = any(
+        (
+            search_priority_cap,
+            schedule_preference_cap,
+            benefits_evidence_cap,
+            source_verification_cap,
+        )
+    )
+    qualification_score = int(round(composite_float))
+    readiness_flags: list[str] = []
+    if search_priority_cap:
+        readiness_flags.append("outside_primary_target")
+    if schedule_preference_cap:
+        readiness_flags.append("schedule_needs_review")
+    if benefits_evidence_cap:
+        readiness_flags.append("benefits_not_confirmed")
+    if source_verification_cap:
+        readiness_flags.append("source_needs_verification")
+    if relocation_needed:
+        readiness_flags.append("relocation_needed")
+    normalized_mode = str(application_mode or "active").strip().casefold()
+    if normalized_mode == "discovery_only":
+        readiness_flags.append("market_not_active")
+        application_readiness = "discovery_only"
+    elif normalized_mode == "manual_review":
+        readiness_flags.append("manual_review_required")
+        application_readiness = "manual_review"
+    else:
+        application_readiness = "review" if readiness_flags else "ready"
 
-    fit_score = int(round(composite_float))
+    # Preserve the former policy-adjusted value for auditability, but do not
+    # use it as qualification fit. Search preferences and posting provenance
+    # affect readiness, not whether the candidate meets job requirements.
+    policy_adjusted_score = (
+        min(composite_float, 6.0) if legacy_policy_adjustment_needed else composite_float
+    )
 
     keyword_hits = keyword["hits"]
     keyword_misses = keyword["misses"]
@@ -322,6 +359,10 @@ def composite_score(
         "weights": active_weights,
         "keyword_modality_available": keyword_modality_available,
         "composite": composite_float,
+        "qualification_score": qualification_score,
+        "policy_adjusted_score": policy_adjusted_score,
+        "application_readiness": application_readiness,
+        "readiness_flags": readiness_flags,
         "hard_mismatch_cap": hard_mismatch_cap,
         "positive_apply_floor": positive_apply_floor,
         "referral_schedule_exception": referral_schedule_exception,
@@ -329,11 +370,15 @@ def composite_score(
         "schedule_preference_cap": schedule_preference_cap,
         "benefits_evidence_cap": benefits_evidence_cap,
         "source_verification_cap": source_verification_cap,
+        "relocation_needed": bool(relocation_needed),
         "skill_gaps": keyword_misses[:12],
     }
 
     return {
-        "score": fit_score,
+        "score": qualification_score,
+        "qualification_score": qualification_score,
+        "application_readiness": application_readiness,
+        "readiness_flags": json.dumps(readiness_flags, ensure_ascii=True),
         "llm_score": llm_score,
         "keyword_score": keyword["score"],
         "embedding_score": emb,

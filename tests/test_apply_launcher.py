@@ -898,7 +898,7 @@ def test_agent_command_rejects_npx_runtime_config(tmp_path) -> None:
                 "mcpServers": {
                     "playwright": {
                         "command": "npx",
-                        "args": ["-y", "@playwright/mcp@0.0.78", "--sandbox", "--block-service-workers"],
+                        "args": ["-y", "@playwright/mcp@0.0.80", "--sandbox", "--block-service-workers"],
                     }
                 }
             }
@@ -1008,7 +1008,7 @@ def test_v146_targeted_acquisition_marks_user_selected_job(monkeypatch) -> None:
             url, title, company, site, application_url, tailored_resume_path,
             fit_score, location, full_description, apply_attempts
         ) VALUES (?, 'Selected Role', 'Example', 'Official', ?, 'resume.txt',
-                  6, 'Davis, CA', 'Selected by exact URL.', 3)
+                  6, 'Davis, CA', 'Selected by exact URL.', 1)
         """,
         (url, url),
     )
@@ -1017,7 +1017,7 @@ def test_v146_targeted_acquisition_marks_user_selected_job(monkeypatch) -> None:
     monkeypatch.setattr(launcher, "_load_blocked", lambda: ([], []))
     monkeypatch.setattr(launcher.config, "is_manual_ats", lambda _url: False, raising=False)
 
-    job = launcher.acquire_job(target_url=f"{url}/?utm_source=manual", worker_id=7)
+    job = launcher.acquire_job(target_url=f"{url}/?utm_source=manual", min_score=0, worker_id=7)
 
     assert job is not None
     assert job["_explicit_target"] is True
@@ -1793,6 +1793,7 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
     tmp_path,
     monkeypatch,
 ) -> None:
+    import divapply.mcp_runtime as mcp_runtime
     import divapply.security as security
 
     worker_root = tmp_path / "apply-workers"
@@ -1850,14 +1851,20 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
     monkeypatch.setattr(launcher.config, "load_env", lambda: None)
     monkeypatch.setattr(launcher.config, "load_credentials", lambda: {})
     monkeypatch.setattr(launcher.config, "gmail_mcp_enabled", lambda: False)
+    monkeypatch.setattr(mcp_runtime, "compatible_node_executable", lambda: tmp_path / "node.exe")
     monkeypatch.setattr(launcher, "ensure_mcp_runtime", launcher.expected_mcp_runtime)
+    monkeypatch.setattr(
+        launcher,
+        "ensure_mcp_browser",
+        lambda browser, *, runtime: captured.update(browser_provision=(browser, runtime)),
+    )
     monkeypatch.setenv("CAPSOLVER_API_KEY", "must-not-reach-agent")
     monkeypatch.setattr(launcher.prompt_mod, "build_prompt", fake_build_prompt)
     monkeypatch.setattr(launcher, "_make_mcp_config", fake_make_mcp_config)
     monkeypatch.setattr(launcher, "setup_worker_profile", lambda worker_id, browser: profile_dir)
     monkeypatch.setattr(launcher, "reset_worker_dir", lambda worker_id: worker_dir)
 
-    def fake_build_agent_command(backend, model, mcp_path, prompt_path):
+    def fake_build_agent_command(backend, model, mcp_path, prompt_path, **_kwargs):
         captured["mcp_path"] = mcp_path
         captured["prompt_path"] = prompt_path
         return ["fake-agent"]
@@ -1890,6 +1897,8 @@ def test_run_job_keeps_gmail_disabled_and_removes_transient_prompt_file(
     assert captured["upload_dir"] == worker_dir
     assert captured["mcp_path"] == worker_dir / "mcp.json"
     assert captured["prompt_path"] == worker_dir / "apply_prompt.txt"
+    assert captured["browser_provision"][0] == "chromium"
+    assert captured["browser_provision"][1] == launcher.expected_mcp_runtime()
     assert "CAPSOLVER_API_KEY" not in captured["agent_env"]
     assert all(path.parent == log_dir for path in log_dir.iterdir())
     assert "site-secret-value" not in "\n".join(path.read_text(encoding="utf-8") for path in log_dir.iterdir())

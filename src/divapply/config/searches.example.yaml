@@ -45,5 +45,10 @@ defaults:
   prune_score: 3
   country_indeed: usa
 
+# Optional scoring projection. This affects qualification ranking only; it
+# never changes education claims in resumes, cover letters, or applications.
+scoring_assumptions:
+  assume_completed_bachelors: false
+
 allow_unknown_location: false
 require_part_time: true

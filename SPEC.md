@@ -88,7 +88,7 @@
 
 - R1: OpenAI CLI: danger bypass intended only for externally isolated runners; sandbox/approval/config/MCP-tool controls available. https://developers.openai.com/codex/cli/reference https://developers.openai.com/codex/config-reference
 - R2: Claude Code: bypass mode intended for containers/VMs; `dontAsk`, `--tools`, strict MCP config, allow/deny controls available. https://code.claude.com/docs/en/permission-modes https://code.claude.com/docs/en/cli-usage
-- R3: Playwright MCP: v0.0.72 renamed code runner `_unsafe`; v0.0.76 added path traversal checks; v0.0.78 enables Chromium sandbox by default. https://github.com/microsoft/playwright-mcp/releases
+- R3: Playwright MCP: v0.0.72 renamed code runner `_unsafe`; v0.0.76 added path traversal checks; v0.0.78 enabled Chromium sandbox by default; runtime is pinned to v0.0.80. https://github.com/microsoft/playwright-mcp/releases
 - R4: uv: `uv.lock` universal across OS/arch/Python markers; `uv sync --locked` rejects stale metadata. https://docs.astral.sh/uv/concepts/projects/layout/ https://docs.astral.sh/uv/concepts/projects/sync/
 - R5: GitHub Actions: full commit SHA = only immutable action reference. https://docs.github.com/en/actions/reference/security/secure-use
 - R6: npm: `package-lock.json` records exact tree; `npm ci` requires matching lock, never rewrites it; `--ignore-scripts` blocks lifecycle scripts. https://docs.npmjs.com/cli/commands/npm-ci/ https://docs.npmjs.com/cli/v11/configuring-npm/package-lock-json/
@@ -119,7 +119,7 @@
 
 - V1: ∀ automated/manual agent launch: no `bypassPermissions`/`--dangerously-bypass-approvals-and-sandbox`; built-in shell disabled; only declared MCP browser/email tools reachable.
 - V2: ∀ agent child env: `CAPSOLVER_API_KEY`, `GITHUB_TOKEN`, login passwords, unrelated provider keys absent; required selected-backend auth may pass.
-- V3: ∀ Playwright MCP configs: exact `@playwright/mcp@0.0.78`; browser sandbox + service-worker block requested; `browser_run_code` + `browser_run_code_unsafe` unavailable to both backends.
+- V3: ∀ Playwright MCP configs: exact `@playwright/mcp@0.0.80`; browser sandbox + service-worker block requested; `browser_run_code` + `browser_run_code_unsafe` unavailable to both backends.
 - V4: ∀ concurrent workers A≠B: process cwd + staged resume/letter/MCP/prompt paths disjoint, resolved beneath own worker dir; finally leaves no transient run artifacts.
 - V5: ∀ CAPTCHA prompt: no resolver key/API/shell recipe; instruction terminates `RESULT:CAPTCHA`.
 - V6: Gmail MCP absent from runtime/tool/prompt surface; truthy legacy opt-in fails closed until audited maintained replacement exists.
@@ -267,6 +267,16 @@
 - V148: before applicant-data entry + final submit, visible form identity -> stored title/employer or requisition; confirmed mismatch -> permanent `wrong_job`; unverifiable -> manual review.
 - V149: missing exact required answer | unverifiable identity | unverified material prefill -> durable job-specific `manual` state + reason; ⊥ queue-wide stop/attempt consumption.
 - V150: GovernmentJobs saved-account Work/Education prefill -> bounded material-fact comparison with local sources; mismatch -> exact correction or manual review; ⊥ blind trust.
+- V151: `apply --assist --url` -> explicit target + visible owned Chrome + no-submit authorization; browser remains open until user decision; ⊥ headless/multiworker/continuous/final agent submit.
+- V152: user-confirmed direct URL -> `source_verification=user_confirmed_direct` + `application_mode=manual_review`; assisted exact-target preparation/acquisition only; ⊥ unattended queue eligibility or official-source promotion.
+- V153: assisted agent completion -> `RESULT:READY_FOR_REVIEW`; user-reported submission -> manual applied event; blocker/save state -> no attempt consumption; ⊥ model-reported applied status.
+- V154: `apply-links` input -> UTF-8 one external URL per line, blank/full-line comments ignored, canonical order-preserving dedup, invalid lines reported; ⊥ inline-fragment stripping or silent loss.
+- V155: manual URL redirect -> validated terminal HTTPS URL persisted as `application_url` and included in the navigation guard; ⊥ private/local redirect or unapproved unattended cross-origin navigation.
+- V156: application URL host -> include only the matching verbose ATS playbook; generic applications omit NEOGOV instructions; ⊥ one oversized all-ATS prompt.
+- V157: repeated manual/direct URL ingest -> posting metadata may refresh while application status, attempts, timestamps, ownership, and terminal lifecycle remain unchanged; ⊥ previously applied/terminal job becoming eligible again.
+- V158: live assisted handoff -> owner-specific lease heartbeat + owner-qualified final transition; lost/reclaimed lease blocks resume and completion; ⊥ stale recovery or another worker causing duplicate/overwriting submission state.
+- V159: assisted retry after human action -> snapshot and continue from the current application page; preserve login/CAPTCHA/form progress; ⊥ reload, back navigation, or navigation to the original posting URL.
+- V160: assisted startup/interruption/CDP failure -> release owned claim and clean only DivApply-owned Chrome; failed final state persistence leaves the review session open until retry or explicit abort; ⊥ false cleanup-success reporting or orphan browser process.
 
 ## §T
 
@@ -350,6 +360,7 @@
 |T76|publish privacy-clean 0.5.16 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V142,V143|x|
 |T77|repair apply provenance, approval fail-stop, + targeted authority|`test_v144_*`-`test_v150_*` + Sutter dry/live probe + full/release gates; V1,V3,V12,V144-V150,I4,I24,I40,I47|x|
 |T78|publish privacy-clean 0.5.17 release|version parity + locked preflight + private tree/dist scan; V14,V46,V48-V50,V63,V144,V145|~|
+|T79|add supervised pasted-link applications + harden human handoff|link parser/manual redirect + assisted prompt/launcher/CLI/Chrome regressions + live Chrome control smoke + full gates; V151-V160|x|
 
 ## §B
 

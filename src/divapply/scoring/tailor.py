@@ -26,9 +26,18 @@ from divapply.config import (
 )
 from divapply.database import (
     ACTIONABLE_JOB_SQL,
+    ASSISTED_ACTIONABLE_JOB_SQL,
     MEANINGFUL_FULL_DESCRIPTION_SQL,
+    ensure_columns,
     get_connection,
     get_jobs_by_stage,
+)
+from divapply.education import (
+    certification_is_earned,
+    education_completion_status,
+    education_credential_label,
+    education_is_active_program,
+    education_resume_status_note,
 )
 from divapply.llm import get_client_for_stage
 from divapply.scoring.context import format_job_context
@@ -42,6 +51,7 @@ from divapply.scoring.validator import (
     validate_json_fields,
     validate_tailored_resume,
 )
+from divapply.writing_style import NATURAL_APPLICATION_VOICE, RESUME_VOICE
 from divapply.security import protect_file
 
 log = logging.getLogger(__name__)
@@ -89,6 +99,12 @@ def _delete_unpersisted_artifacts(*paths: Path) -> None:
                 path.unlink()
         except OSError:
             log.warning("Could not delete unpersisted tailored artifact: %s", path)
+    for parent in {path.parent for path in paths}:
+        if parent.resolve() != root and parent.resolve().is_relative_to(root):
+            try:
+                parent.rmdir()  # Only remove the now-empty job folder, never its siblings.
+            except OSError:
+                pass
 
 
 # â”€â”€ Prompt Builders (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -137,6 +153,9 @@ def _build_tailor_prompt(profile: dict) -> str:
     truth_block = "\n".join(f"- {item}" for item in truth_items) if truth_items else "N/A"
     availability_statement = str(profile.get("resume_availability_statement") or "").strip()
     availability_block = availability_statement or "N/A"
+    fixed_section_words = _fixed_resume_section_word_count(profile)
+    generated_body_max = max(300, 555 - fixed_section_words)
+    generated_body_min = max(250, generated_body_max - 100)
 
     return f"""You are a neutral resume editor rewriting a resume using only verified facts.
 
@@ -186,7 +205,8 @@ BULLETS: Strong verb + verified action + outcome or purpose. Use a metric only w
 Keep compound verbs in the same tense. Write "Provision and administer" for ongoing work or "Provisioned and administered" for completed work, never "Provisioned and administer."
 
 ## VOICE:
-- Write like a real engineer. Short, direct.
+{NATURAL_APPLICATION_VOICE}
+{RESUME_VOICE}
 - GOOD: "Automated recurring reports with Python and API integrations, reducing manual processing"
 - BAD: "Leveraged cutting-edge AI technologies to drive transformative operational efficiencies"
 - BANNED WORDS (using ANY of these = validation failure â€” do not use them even once):
@@ -198,8 +218,8 @@ Keep compound verbs in the same tense. Write "Provision and administer" for ongo
 - Do NOT change real numbers ({metrics_str})
 - CRITICAL: You MUST include experience entries for these companies (at minimum the first two): {companies_str} â€” these are real jobs the candidate held. Reframe the bullets for this role, but the company names MUST appear in the experience section headers.
 - Must fit 1 page.
-- Target about 475-575 words before contact links.
-- Leave enough room for the code-injected EDUCATION section at the bottom.
+- Target about {generated_body_min}-{generated_body_max} words for the JSON-generated body before contact links.
+- Leave enough room for the code-injected CERTIFICATIONS and EDUCATION sections at the bottom; they currently reserve about {fixed_section_words} words.
 
 ## TRUTHFULNESS RULES (critical â€” violating these = immediate rejection):
 - Use only facts from the original resume, profile, and hidden coursework summaries.
@@ -259,12 +279,14 @@ def _build_judge_prompt(profile: dict) -> str:
             ("GPA", school.get("gpa", "")),
             ("GPA as of", school.get("gpa_as_of", "")),
             ("Earned credits", school.get("units", "")),
-            ("Status", school.get("status", "")),
+            ("Status", education_completion_status(school)),
         )
         education_lines.append(
             " | ".join(f"{label}: {value}" for label, value in labeled_fields if str(value or "").strip())
         )
     education_evidence = "\n".join(f"- {line}" for line in education_lines) or "- N/A"
+    certification_lines = _resume_certification_lines(profile.get("certifications"))
+    certification_evidence = "\n".join(f"- {line}" for line in certification_lines) or "- N/A"
 
     return f"""You are a final factuality and coherence judge. A tailoring engine rewrote a resume to target a specific job. Your job is to catch lies, unsupported claims, contradictions, and incoherent output.
 
@@ -285,6 +307,9 @@ VERDICT DECISION: FAIL only when ISSUES names at least one concrete claim and ex
 
 ## AUTHORITATIVE CURRENT EDUCATION (profile/transcript; newer than base résumé):
 {education_evidence}
+
+## AUTHORITATIVE EARNED CERTIFICATIONS AND LICENSES (profile; newer than base résumé):
+{certification_evidence}
 
 ## AUTHORITATIVE ALLOWED SKILLS (profile; exact listed phrases are supported):
 {skills_evidence}
@@ -478,8 +503,15 @@ def _apply_resume_availability(data: dict, profile: dict) -> dict:
 
 
 def _trim_list_items(raw: str, max_items: int) -> str:
-    """Keep only the first N comma-separated items in a skills string."""
-    parts = [p.strip() for p in str(raw or "").split(",") if p.strip()]
+    """Keep the first N distinct items; do not repeat skills in one category."""
+    parts = []
+    seen = set()
+    for item in str(raw or "").split(","):
+        item = item.strip()
+        key = " ".join(item.casefold().split())
+        if key and key not in seen:
+            parts.append(item)
+            seen.add(key)
     if not parts:
         return str(raw or "").strip()
     return ", ".join(parts[:max_items])
@@ -587,6 +619,98 @@ def _structured_coursework(value: object, *, limit: int) -> list[str]:
     return items
 
 
+def _resume_certification_lines(value: object) -> list[str]:
+    """Return deduplicated earned credential labels without private identifiers."""
+    if not isinstance(value, list):
+        return []
+
+    lines: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        if not certification_is_earned(raw):
+            continue
+        name = sanitize_text(str(raw.get("name") or "")).strip()
+        issuer = sanitize_text(str(raw.get("issuer") or "")).strip()
+        key = (name.casefold(), issuer.casefold())
+        if not name or key in seen:
+            continue
+        seen.add(key)
+
+        parts = [name]
+        if issuer:
+            parts.append(issuer)
+        for field, label in (("issued", "Earned"), ("expires", "Expires")):
+            year_match = re.search(r"(?:19|20)\d{2}", str(raw.get(field) or ""))
+            if year_match:
+                parts.append(f"{label} {year_match.group()}")
+        lines.append(" | ".join(parts))
+    return lines
+
+
+def _resume_education_lines(value: object) -> list[str]:
+    """Return canonical education lines shared by rendering and word budgeting."""
+    lines = ["EDUCATION"]
+    if not isinstance(value, list) or not value:
+        return [*lines, "Not provided"]
+
+    school_count = 0
+    for sch in value:
+        if not isinstance(sch, dict):
+            continue
+        school_count += 1
+        years = "-".join(str(sch.get(key) or "").strip() for key in ("start_year", "end_year") if sch.get(key))
+        active_program = education_is_active_program(sch)
+        degree_status = education_credential_label(sch)
+        status_note = education_resume_status_note(sch)
+        try:
+            gpa_eligible = float(str(sch.get("gpa", ""))) >= 3.5
+        except ValueError:
+            gpa_eligible = False
+        show_gpa = sch.get("show_gpa", gpa_eligible)
+        # Keep transcript dates as internal evidence only. Applicant-facing
+        # resumes need the GPA, not a distracting "as of" parenthetical.
+        gpa_str = f" | GPA: {sch['gpa']}" if show_gpa and sch.get("gpa") else ""
+        credits_str = (
+            f" | Earned credits: {sch['units']}"
+            if active_program and sch.get("units") and sch.get("units_scope") == "total"
+            else ""
+        )
+        show_minor = bool(sch.get("show_minor", active_program))
+        minor_str = f" | Minor: {sch['minor']}" if show_minor and sch.get("minor") else ""
+        # Keep the institution and its credential/status on the same line so
+        # ATS parsers cannot attach a degree to the following school.
+        lines.append(f"{sch.get('school', '')} | {degree_status} ({status_note})")
+        details = " | ".join(part for part in (str(sch.get("city_state") or "").strip(), years) if part)
+        details = f"{details}{gpa_str}{credits_str}{minor_str}".strip(" |")
+        if details:
+            lines.append(details)
+        completed_coursework = _structured_coursework(
+            sch.get("completed_coursework"), limit=COMPLETED_COURSEWORK_MAX_ITEMS
+        )
+        current_coursework = _structured_coursework(
+            sch.get("current_coursework"), limit=CURRENT_COURSEWORK_MAX_ITEMS
+        )
+        if completed_coursework:
+            lines.append(f"Relevant completed coursework: {'; '.join(completed_coursework)}")
+        if current_coursework:
+            lines.append(f"Current coursework: {'; '.join(current_coursework)}")
+        lines.append("")
+
+    return lines if school_count else ["EDUCATION", "Not provided"]
+
+
+def _fixed_resume_section_word_count(profile: dict) -> int:
+    """Count words added after the model returns the JSON-generated body."""
+    lines: list[str] = []
+    certifications = _resume_certification_lines(profile.get("certifications"))
+    if certifications:
+        lines.extend(["CERTIFICATIONS", *certifications])
+    lines.extend(_resume_education_lines(profile.get("education_schools")))
+    return sum(len(line.split()) for line in lines)
+
+
 def assemble_resume_text(data: dict, profile: dict) -> str:
     """Convert JSON resume data to formatted plain text.
 
@@ -667,76 +791,16 @@ def assemble_resume_text(data: dict, profile: dict) -> str:
                 lines.append(f"- {sanitize_text(b)}")
             lines.append("")
 
-    # Education -- always injected from profile, never trusted from LLM
-    lines.append("EDUCATION")
-    edu_schools = profile.get("education_schools", [])
-    if edu_schools:
-        for sch in edu_schools:
-            degree_status = str(sch.get("degree", "")).strip()
-            major = str(sch.get("major", "")).strip()
-            received = sch.get("degree_received", False)
-            end_year = sch.get("end_year", "")
-            status = str(sch.get("status", "")).strip().lower()
-            expected_year = str(sch.get("expected_graduation_year", "")).strip()
-            active_program = bool(
-                not received
-                and status not in {"transferred", "transfer"}
-                and (
-                    status in {"in progress", "in-progress", "current", "enrolled"}
-                    or str(end_year).casefold() == "present"
-                    or expected_year
-                )
-            )
-            if status in {"transferred", "transfer"}:
-                status_note = "transferred"
-                degree_status = f"{major or degree_status} coursework"
-            elif active_program:
-                status_note = f"in progress; expected {expected_year}" if expected_year else "in progress"
-            elif not received:
-                status_note = "not completed"
-            else:
-                status_note = f"conferred {end_year}"
-            if major and status not in {"transferred", "transfer"} and major.casefold() not in degree_status.casefold():
-                degree_status = f"{degree_status} in {major}"
-            try:
-                gpa_eligible = float(str(sch.get("gpa", ""))) >= 3.5
-            except ValueError:
-                gpa_eligible = False
-            show_gpa = sch.get("show_gpa", gpa_eligible)
-            gpa_as_of = str(sch.get("gpa_as_of", "")).strip()
-            if gpa_as_of:
-                try:
-                    parsed_gpa_date = datetime.strptime(gpa_as_of, "%Y-%m-%d")
-                    gpa_as_of = f"{parsed_gpa_date.strftime('%B')} {parsed_gpa_date.day}, {parsed_gpa_date.year}"
-                except ValueError:
-                    pass
-            gpa_note = f" (as of {gpa_as_of})" if gpa_as_of else ""
-            gpa_str = f" | GPA: {sch['gpa']}{gpa_note}" if show_gpa and sch.get("gpa") else ""
-            credits_str = (
-                f" | Earned credits: {sch['units']}"
-                if active_program and sch.get("units") and sch.get("units_scope") == "total"
-                else ""
-            )
-            show_minor = bool(sch.get("show_minor", active_program))
-            minor_str = f" | Minor: {sch['minor']}" if show_minor and sch.get("minor") else ""
-            lines.append(f"{degree_status} ({status_note})")
-            lines.append(
-                f"{sch['school']} | {sch['city_state']} | "
-                f"{sch['start_year']}-{end_year}{gpa_str}{credits_str}{minor_str}"
-            )
-            completed_coursework = _structured_coursework(
-                sch.get("completed_coursework"), limit=COMPLETED_COURSEWORK_MAX_ITEMS
-            )
-            current_coursework = _structured_coursework(
-                sch.get("current_coursework"), limit=CURRENT_COURSEWORK_MAX_ITEMS
-            )
-            if completed_coursework:
-                lines.append(f"Relevant completed coursework: {'; '.join(completed_coursework)}")
-            if current_coursework:
-                lines.append(f"Current coursework: {'; '.join(current_coursework)}")
-            lines.append("")
-    else:
-        lines.append("Not provided")
+    # Certifications -- code-injected so the LLM cannot invent or omit earned
+    # credentials. In-progress training belongs in Education, not this section.
+    certifications = _resume_certification_lines(profile.get("certifications"))
+    if certifications:
+        lines.append("CERTIFICATIONS")
+        lines.extend(certifications)
+        lines.append("")
+
+    # Education -- always injected from profile, never trusted from LLM.
+    lines.extend(_resume_education_lines(profile.get("education_schools")))
 
     return "\n".join(lines)
 
@@ -892,7 +956,7 @@ def tailor_resume(
         except (TypeError, json.JSONDecodeError):
             gap_targets = ""
 
-    job_text = format_job_context(job, description_limit=4000, extra=gap_targets)
+    job_text = format_job_context(job, description_limit=30000, extra=gap_targets, preserve_sections=True)
 
     report: dict = {
         "attempts": 0,
@@ -1027,6 +1091,7 @@ def run_tailoring(
     limit: int = 20,
     validation_mode: str = "normal",
     target_url: str | None = None,
+    allow_user_confirmed: bool = False,
 ) -> dict:
     """Generate tailored resumes for high-scoring jobs.
 
@@ -1035,6 +1100,7 @@ def run_tailoring(
         limit:           Maximum jobs to process.
         validation_mode: "strict", "normal", or "lenient".
         target_url: If provided, tailor only this job URL.
+        allow_user_confirmed: Permit an explicitly targeted, user-confirmed URL for assisted review.
 
     Returns:
         {"approved": int, "failed": int, "errors": int, "elapsed": float}
@@ -1042,8 +1108,10 @@ def run_tailoring(
     profile = load_profile()
     resume_text = RESUME_PATH.read_text(encoding="utf-8")
     conn = get_connection()
+    ensure_columns(conn)
 
     if target_url:
+        actionable_job = ASSISTED_ACTIONABLE_JOB_SQL if allow_user_confirmed else ACTIONABLE_JOB_SQL
         jobs = conn.execute(
             """
             SELECT * FROM jobs
@@ -1054,7 +1122,7 @@ def run_tailoring(
               AND COALESCE(tailor_attempts, 0) < ?
             """.format(
                 meaningful_full_description=MEANINGFUL_FULL_DESCRIPTION_SQL,
-                actionable_job=ACTIONABLE_JOB_SQL,
+                actionable_job=actionable_job,
             ),
             (target_url, min_score, MAX_ATTEMPTS),
         ).fetchall()
@@ -1072,7 +1140,7 @@ def run_tailoring(
     log.info("Tailoring resumes for %d jobs (score >= %d)...", len(jobs), min_score)
     t0 = time.time()
     completed = 0
-    results: list[dict] = []
+    saved_approved = 0
     stats: dict[str, int] = {"approved": 0, "failed_validation": 0, "failed_judge": 0, "error": 0}
 
     for job in jobs:
@@ -1087,6 +1155,7 @@ def run_tailoring(
             )
 
             txt_path, job_path, report_path = tailored_artifact_paths(TAILORED_DIR, job)
+            txt_path.parent.mkdir(parents=True, exist_ok=True)
             txt_path.write_text(tailored, encoding="utf-8")
             protect_file(txt_path)
 
@@ -1110,8 +1179,8 @@ def run_tailoring(
                     pdf_path = str(convert_to_pdf(txt_path))
                     artifact_path = pdf_path
                     _delete_temp_artifacts(txt_path, job_path, report_path)
-                except Exception:
-                    log.debug("PDF generation failed for %s", txt_path, exc_info=True)
+                except Exception as exc:
+                    log.warning("Resume PDF generation failed for %s: %s", txt_path.name, exc)
             else:
                 # Strict failures are private review artifacts, not application
                 # artifacts. Keep the text, trace, and report for human review,
@@ -1128,6 +1197,7 @@ def run_tailoring(
                 "site": job["site"],
                 "status": report["status"],
                 "attempts": report["attempts"],
+                "error": None if artifact_path else json.dumps(report, ensure_ascii=True)[:1600],
             }
         except Exception as e:
             result = {
@@ -1138,10 +1208,31 @@ def run_tailoring(
                 "attempts": 0,
                 "path": None,
                 "pdf_path": None,
+                "error": str(e)[:1600],
             }
             log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
 
-        results.append(result)
+        # Checkpoint each job before another AI call. Interrupted batches must
+        # not orphan completed PDFs or forget validation failures.
+        now = datetime.now(timezone.utc).isoformat()
+        if result["status"] in {"approved", "approved_with_judge_warning"} and result.get("path"):
+            cursor = conn.execute(
+                "UPDATE jobs SET tailored_resume_path=?, tailored_at=?, "
+                "tailor_attempts=COALESCE(tailor_attempts,0)+1, tailor_error=NULL "
+                "WHERE url=? AND archived_at IS NULL",
+                (result["path"], now, result["url"]),
+            )
+            if cursor.rowcount > 0:
+                saved_approved += 1
+            else:
+                _delete_unpersisted_artifacts(*(Path(path) for path in result.get("cleanup_paths", []) if path))
+        else:
+            conn.execute(
+                "UPDATE jobs SET tailor_attempts=COALESCE(tailor_attempts,0)+1, tailor_error=? "
+                "WHERE url=? AND archived_at IS NULL",
+                (result.get("error") or result["status"], result["url"]),
+            )
+        conn.commit()
         stats[result.get("status", "error")] = stats.get(result.get("status", "error"), 0) + 1
 
         elapsed = time.time() - t0
@@ -1155,29 +1246,6 @@ def run_tailoring(
             rate * 60,
             result["title"][:40],
         )
-
-    # Persist to DB: increment attempt counter for ALL, save path only for approved
-    now = datetime.now(timezone.utc).isoformat()
-    _success_statuses = {"approved", "approved_with_judge_warning"}
-    saved_approved = 0
-    for r in results:
-        if r["status"] in _success_statuses and r.get("path"):
-            cursor = conn.execute(
-                "UPDATE jobs SET tailored_resume_path=?, tailored_at=?, "
-                "tailor_attempts=COALESCE(tailor_attempts,0)+1 "
-                "WHERE url=? AND archived_at IS NULL",
-                (r["path"], now, r["url"]),
-            )
-            if cursor.rowcount > 0:
-                saved_approved += 1
-            else:
-                _delete_unpersisted_artifacts(*(Path(path) for path in r.get("cleanup_paths", []) if path))
-        else:
-            conn.execute(
-                "UPDATE jobs SET tailor_attempts=COALESCE(tailor_attempts,0)+1 WHERE url=? AND archived_at IS NULL",
-                (r["url"],),
-            )
-    conn.commit()
 
     elapsed = time.time() - t0
     approved_count = saved_approved

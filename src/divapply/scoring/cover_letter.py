@@ -1,6 +1,6 @@
 """Cover letter generation: LLM-powered, profile-driven, with validation.
 
-Generates concise, engineering-voice cover letters tailored to specific job
+Generates concise, natural cover letters tailored to specific job
 postings. All personal data (name, skills, achievements) comes from the user's
 profile at runtime. No hardcoded personal information.
 """
@@ -21,7 +21,9 @@ from divapply.config import (
 )
 from divapply.database import (
     ACTIONABLE_JOB_SQL,
+    ASSISTED_ACTIONABLE_JOB_SQL,
     MEANINGFUL_FULL_DESCRIPTION_SQL,
+    ensure_columns,
     get_connection,
     get_jobs_by_stage,
 )
@@ -35,6 +37,7 @@ from divapply.scoring.validator import (
     validate_cover_letter,
 )
 from divapply.security import _is_link_or_reparse, protect_file
+from divapply.writing_style import NATURAL_APPLICATION_VOICE
 
 log = logging.getLogger(__name__)
 
@@ -93,6 +96,11 @@ def _delete_unpersisted_artifact(path_value: str | None) -> None:
             path.unlink()
     except OSError:
         log.warning("Could not delete unpersisted cover artifact: %s", path)
+    if path.parent.resolve() != COVER_LETTER_DIR.resolve():
+        try:
+            path.parent.rmdir()  # Empty per-job folder only; keep any retained draft.
+        except OSError:
+            pass
 
 
 # â”€â”€ Prompt Builder (profile-driven) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -220,17 +228,16 @@ def _build_cover_letter_prompt(profile: dict) -> str:
 
     return f"""Write a cover letter for {sign_off_name}. The goal is to get an interview.
 
-STRUCTURE: 3 short paragraphs. Under 250 words. Every sentence must earn its place.
+STRUCTURE: 3 short paragraphs. Aim for 160-220 words and never exceed 250 words. Every sentence must earn its place.
 - Output exactly three body paragraphs separated by blank lines, plus the salutation and sign-off as their own blocks.
 
-PARAGRAPH 1 (2-3 sentences): Open with the strongest verified fact from the candidate's background that directly matches the job. Use the same rule for every role.
+PARAGRAPH 1 (2-3 sentences): Name the exact target job title once, then connect it naturally to the strongest verified experience. Do not use a stock cover-letter opening.
 
-PARAGRAPH 2 (3-4 sentences): Pick 2 achievements from the resume that are MOST relevant to THIS job. Use numbers when available. Frame as solving their problem, not listing your accomplishments.{metrics_hint}
+PARAGRAPH 2 (3-4 sentences): Develop one or two relevant examples from the resume. Explain the work clearly and let the connection to the role be apparent without announcing that it \"maps\" or proves a fit. Use numbers only when they add meaningful context.{metrics_hint}
 {coursework_hint}
 {coursework_skills_hint}
 
-PARAGRAPH 3 (1-2 sentences): Reference one specific thing about the company or role from the job description. Then close: "Happy to walk through any of this in more detail." or "Let's discuss." Nothing else.
-- Name the exact target job title once in the letter.
+PARAGRAPH 3 (2-3 sentences): Give one genuine, specific reason for interest in the company, team, location, or work when the job description supports it. Thank the reader and express interest in an interview in fresh, courteous language. Do not use a canned command or catchphrase.
 
 JOB DESCRIPTION ACCURACY:
 - Use the job description as evidence, not decoration. Mention a company, duty, requirement, or team detail only if it appears in TARGET JOB.
@@ -238,7 +245,7 @@ JOB DESCRIPTION ACCURACY:
 - Never mention logins, passwords, tokens, private credentials, or application-site automation.
 
 EXPERIENCE AND AVAILABILITY BOUNDARY:
-- Transferable experience is not the same as prior target-role employment. Name the real setting and say how its duties map.
+- Transferable experience is not the same as prior target-role employment. Name the real setting and explain the relevant duties without claiming they are identical to the target work.
 - Do not relabel front-desk work as IT support, healthcare work, field support, ticket handling, onboarding/offboarding, or user-access administration unless the source resume explicitly says that happened there.
 - Municipal public-facing service is not patient-facing healthcare service. Never merge those contexts.
 - Residents, members, visitors, and public-counter customers are not software clients. Do not call that verified work "client-facing" unless the source résumé explicitly does.
@@ -269,18 +276,20 @@ ALSO BANNED (meta-commentary the validator catches):
 BANNED PUNCTUATION: No em dashes (â€”) or en dashes (â€“). Use commas or periods.
 
 VOICE:
-- Write like a real professional emailing someone they respect. Not formal, not casual. Just direct.
+{NATURAL_APPLICATION_VOICE}
 - Avoid stock cover-letter openings like "I am writing to express my interest" or "I am excited to apply."
 - NEVER narrate or explain what you're doing. BAD: "This demonstrates my commitment to X." GOOD: Just state the fact.
-- NEVER hedge. BAD: "might address some of your challenges." GOOD: "solves the same problem."
 - Prefer concrete facts over generalities. If a sentence does not add useful information, cut it.
 - Only mention projects or tools that are directly relevant to the job.
+- Do not mention GPA, earned credits, term GPA, Dean's List, President's List, or similar academic statistics unless TARGET JOB explicitly asks for GPA, a transcript, or academic standing.
 
 FABRICATION = INSTANT REJECTION:
 The candidate's real tools are ONLY: {skills_str}.
 Do NOT mention ANY tool not in this list. If the job asks for tools not listed, talk about the work, not the tools.
 
-Sign off: just "{sign_off_name}"
+Sign off with exactly:
+Sincerely,
+{sign_off_name}
 
 Output ONLY the letter text. No subject lines. No "Here is the cover letter:" preamble. No notes after the sign-off.
 Start DIRECTLY with "Dear Hiring Manager," and end with the name. Do not repeat the candidate's name immediately after the salutation."""
@@ -327,6 +336,22 @@ def _ensure_exact_target_title_once(text: str, job: dict) -> str:
         return text
     blocks[1] = f"I am applying for the {title} position. {blocks[1]}"
     return "\n\n".join(blocks)
+
+
+def _ensure_professional_signoff(text: str, profile: dict) -> str:
+    """Normalize a model's name-only ending to a courteous sign-off."""
+    personal = profile.get("personal", {})
+    name = str(personal.get("preferred_name") or personal.get("full_name") or "").strip()
+    if not name:
+        return text
+    blocks = [block.strip() for block in re.split(r"\n{2,}", text.strip()) if block.strip()]
+    if not blocks:
+        return text
+    final_lines = [line.strip() for line in blocks[-1].splitlines() if line.strip()]
+    if len(final_lines) == 1 and final_lines[0].casefold() == name.casefold():
+        blocks[-1] = f"Sincerely,\n{name}"
+        return "\n\n".join(blocks)
+    return text
 
 
 def _read_tailored_resume_text(job: dict) -> str:
@@ -392,7 +417,7 @@ def generate_cover_letter(
         CoverLetterValidationError: Every generated draft failed validation.
     """
     document_job = {**job, "title": normalize_target_title(job.get("title"))}
-    job_text = format_job_context(document_job, description_limit=3000)
+    job_text = format_job_context(document_job, description_limit=30000, preserve_sections=True)
     missing_skills = _recorded_missing_skills(job)
     gap_block = ", ".join(missing_skills) if missing_skills else "none recorded"
 
@@ -417,7 +442,7 @@ def generate_cover_letter(
                 "Delete any candidate IT sentence where the lab/project/training anchor comes after the skill. "
                 "Use this safe closing pattern: "
                 f'"{company}\'s [verified job detail] is a practical next step for my home-lab and training '
-                'foundation. Happy to walk through any of this in more detail."'
+                'foundation. Thank you for considering my application. I would welcome the opportunity to discuss the role."'
             )
 
         if rejected_draft:
@@ -450,6 +475,7 @@ def generate_cover_letter(
         letter = _repair_unanchored_zero_it_closing(letter, document_job, profile)
         letter = _drop_ambiguous_zero_it_bridge_sentences(letter, profile)
         letter = _ensure_exact_target_title_once(letter, document_job)
+        letter = _ensure_professional_signoff(letter, profile)
 
         validation = validate_cover_letter(
             letter,
@@ -483,6 +509,7 @@ def run_cover_letters(
     limit: int = 0,
     validation_mode: str = "normal",
     target_url: str | None = None,
+    allow_user_confirmed: bool = False,
 ) -> dict:
     """Generate cover letters for high-scoring jobs that have tailored resumes.
 
@@ -491,20 +518,23 @@ def run_cover_letters(
         limit:           Maximum jobs to process.
         validation_mode: "strict", "normal", or "lenient".
         target_url: If provided, generate a cover letter only for this job URL.
+        allow_user_confirmed: Permit an explicitly targeted, user-confirmed URL for assisted review.
 
     Returns:
         {"generated": int, "errors": int, "elapsed": float}
     """
     profile = load_profile()
     conn = get_connection()
+    ensure_columns(conn)
 
     # Fetch jobs that have tailored resumes but no cover letter yet
     if target_url:
+        actionable_job = ASSISTED_ACTIONABLE_JOB_SQL if allow_user_confirmed else ACTIONABLE_JOB_SQL
         jobs = conn.execute(
             "SELECT * FROM jobs "
             "WHERE url = ? AND fit_score >= ? AND tailored_resume_path IS NOT NULL "
             "AND archived_at IS NULL "
-            f"AND {ACTIONABLE_JOB_SQL} "
+            f"AND {actionable_job} "
             f"AND {MEANINGFUL_FULL_DESCRIPTION_SQL} "
             "AND (cover_letter_path IS NULL OR cover_letter_path = '') "
             "AND COALESCE(cover_attempts, 0) < ?",
@@ -539,7 +569,7 @@ def run_cover_letters(
     )
     t0 = time.time()
     completed = 0
-    results: list[dict] = []
+    saved = 0
     error_count = 0
 
     for job in jobs:
@@ -550,6 +580,7 @@ def run_cover_letters(
             letter = generate_cover_letter(resume_text, job, job_profile, validation_mode=validation_mode)
 
             cl_path = cover_letter_artifact_path(COVER_LETTER_DIR, job)
+            cl_path.parent.mkdir(parents=True, exist_ok=True)
             cl_path.write_text(letter, encoding="utf-8")
             protect_file(cl_path)
 
@@ -573,7 +604,6 @@ def run_cover_letters(
                 "title": job["title"],
                 "site": job["site"],
             }
-            results.append(result)
 
             elapsed = time.time() - t0
             rate = completed / elapsed if elapsed > 0 else 0
@@ -594,30 +624,28 @@ def run_cover_letters(
                 "error": str(e),
             }
             error_count += 1
-            results.append(result)
             log.error("%d/%d [ERROR] %s -- %s", completed, len(jobs), job["title"][:40], e)
 
-    # Persist to DB: increment attempt counter for ALL, save path only for successes
-    now = datetime.now(timezone.utc).isoformat()
-    saved = 0
-    for r in results:
-        if r.get("path"):
+        # Persist immediately so an interruption cannot discard earlier jobs.
+        now = datetime.now(timezone.utc).isoformat()
+        if result.get("path"):
             cursor = conn.execute(
                 "UPDATE jobs SET cover_letter_path=?, cover_letter_at=?, "
-                "cover_attempts=COALESCE(cover_attempts,0)+1 "
+                "cover_attempts=COALESCE(cover_attempts,0)+1, cover_error=NULL "
                 "WHERE url=? AND archived_at IS NULL",
-                (r["path"], now, r["url"]),
+                (result["path"], now, result["url"]),
             )
             if cursor.rowcount > 0:
                 saved += 1
             else:
-                _delete_unpersisted_artifact(r.get("path"))
+                _delete_unpersisted_artifact(result.get("path"))
         else:
             conn.execute(
-                "UPDATE jobs SET cover_attempts=COALESCE(cover_attempts,0)+1 WHERE url=? AND archived_at IS NULL",
-                (r["url"],),
+                "UPDATE jobs SET cover_attempts=COALESCE(cover_attempts,0)+1, cover_error=? "
+                "WHERE url=? AND archived_at IS NULL",
+                (str(result.get("error") or "Generation failed")[:1600], result["url"]),
             )
-    conn.commit()
+        conn.commit()
 
     elapsed = time.time() - t0
     log.info("Cover letters done in %.1fs: %d generated, %d errors", elapsed, saved, error_count)

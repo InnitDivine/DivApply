@@ -3,7 +3,7 @@ Unified LLM client for DivApply.
 
 Auto-detects provider from environment:
   GEMINI_API_KEY  -> Google Gemini (default: gemini-2.0-flash)
-  OPENAI_API_KEY  -> OpenAI (default: gpt-4o-mini)
+  OPENAI_API_KEY  -> OpenAI (default: gpt-5.6-luna)
   LLM_URL         -> Local llama.cpp / Ollama compatible endpoint
 
 LLM_MODEL env var overrides the model name for any provider.
@@ -48,7 +48,7 @@ def _detect_provider(alias: str | None = None) -> tuple[str, str, str]:
         if provider in ("openai", "oa"):
             if not openai_key:
                 raise RuntimeError("DIVAPPLY_LLM alias requested OpenAI but OPENAI_API_KEY is missing.")
-            return ("https://api.openai.com/v1", model or model_override or "gpt-4o-mini", openai_key)
+            return ("https://api.openai.com/v1", model or model_override or "gpt-5.6-luna", openai_key)
         if provider in ("gemini", "google"):
             if not gemini_key:
                 raise RuntimeError("DIVAPPLY_LLM alias requested Gemini but GEMINI_API_KEY is missing.")
@@ -70,7 +70,7 @@ def _detect_provider(alias: str | None = None) -> tuple[str, str, str]:
     if openai_key and not local_url:
         return (
             "https://api.openai.com/v1",
-            model_override or "gpt-4o-mini",
+            model_override or "gpt-5.6-luna",
             openai_key,
         )
 
@@ -255,6 +255,11 @@ class LLMClient:
             payload["max_completion_tokens"] = max_tokens
         else:
             payload["max_tokens"] = max_tokens
+        if self.model.startswith("gpt-5.6"):
+            payload["reasoning_effort"] = os.environ.get(
+                "DIVAPPLY_OPENAI_REASONING_EFFORT",
+                "none",
+            )
         # Ollama 0.9+ supports think:false to disable qwen3 chain-of-thought
         if "qwen" in self.model.lower():
             payload["think"] = False
@@ -510,10 +515,8 @@ def get_client_for_stage(stage: str) -> LLMClient:
     This lets you run scoring on qwen2.5:7b and tailoring on a larger model
     simply by setting LLM_MODEL_TAILOR=qwen2.5:14b without touching LLM_MODEL.
     """
-    global _stage_instances
-
     # Re-read env each call so changes after load_env() are picked up.
-    # New alias form: DIVAPPLY_LLM_SCORER=openai:gpt-5.4-mini,
+    # New alias form: DIVAPPLY_LLM_SCORER=openai:gpt-5.6-luna,
     # DIVAPPLY_LLM_TAILOR=ollama:qwen2.5:14b, etc.
     alias_var = _STAGE_ALIAS_VARS.get(stage, "")
     alias = os.environ.get(alias_var, "") if alias_var else ""
@@ -534,7 +537,7 @@ def get_client_for_stage(stage: str) -> LLMClient:
 
     cache_key = f"{stage}:{stage_model}"
     if cache_key not in _stage_instances:
-        base_url, default_model, api_key = _detect_provider()
+        base_url, _, api_key = _detect_provider()
         log.info("LLM stage '%s': provider=%s  model=%s", stage, base_url, stage_model)
         _stage_instances[cache_key] = LLMClient(base_url, stage_model, api_key)
 

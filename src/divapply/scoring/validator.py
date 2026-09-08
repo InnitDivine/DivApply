@@ -16,6 +16,11 @@ import re
 import logging
 
 from divapply.config import profile_skills
+from divapply.education import (
+    certification_is_earned,
+    education_completion_status,
+    education_credential_label,
+)
 from divapply.scoring.evidence import verified_work_history_text
 
 log = logging.getLogger(__name__)
@@ -208,9 +213,12 @@ GENERIC_COVER_LETTER_PHRASES: list[str] = [
     "esteemed organization",
     "bring value to your organization",
     "thank you for your time and consideration",
+    "maps directly",
+    "those settings required",
+    "happy to walk through any of this",
+    "let's discuss",
 ]
 
-REQUIRED_SECTIONS: set[str] = {"SUMMARY", "TECHNICAL SKILLS", "EXPERIENCE", "PROJECTS", "EDUCATION"}
 ALLOWED_SKILLS_SECTION_TITLES: set[str] = {"TECHNICAL SKILLS", "CORE QUALIFICATIONS"}
 MISSING_SKILL_CLAIM_ALIASES: dict[str, tuple[str, ...]] = {
     "asset inventory": ("asset inventory", "asset tracking", "asset management", "inventory control"),
@@ -289,6 +297,41 @@ def _profile_evidence_text(profile: dict, original_text: str = "") -> str:
         if isinstance(school, dict):
             chunks.extend(str(value) for value in school.values() if value)
     return " ".join(chunks).lower()
+
+
+def _credential_evidence_text(profile: dict) -> str:
+    """Return only verified credentials, excluding coursework and disclaimer text."""
+    chunks: list[str] = []
+    for cert in profile.get("certifications", []) or []:
+        if not certification_is_earned(cert):
+            continue
+        name = str(cert.get("name") or "").strip()
+        issuer = str(cert.get("issuer") or "").strip()
+        if not name:
+            continue
+        chunks.extend((name, issuer))
+        name_lower = name.casefold()
+        if "license" in name_lower:
+            chunks.append("license licensed")
+        elif "clearance" in name_lower:
+            chunks.append("clearance")
+        else:
+            chunks.append("certification certificate certified")
+
+    for school in profile.get("education_schools", []) or []:
+        if not isinstance(school, dict):
+            continue
+        completion = education_completion_status(school)
+        if completion not in {"received", "in progress"}:
+            continue
+        label = education_credential_label(school)
+        school_name = str(school.get("school") or "").strip()
+        chunks.extend((label, school_name, completion))
+        degree = str(school.get("degree") or "").strip().casefold()
+        if re.search(r"\b(?:associate|bachelor|master|phd|doctorate|degree)\b", degree):
+            chunks.append("degree")
+
+    return " ".join(chunk for chunk in chunks if chunk).casefold()
 
 
 def candidate_evidence_supports(term: str, profile: dict, original_text: str = "") -> bool:
@@ -374,7 +417,10 @@ def _add_coursework_as_work_findings(
     coursework_skills = _build_coursework_skills_set(profile)
     if not coursework_skills:
         return
-    paid_work_evidence = (original_text + " " + " ".join(_build_skills_set(profile))).lower()
+    # A global skill boundary proves that the candidate has a skill, not that
+    # they performed it for an employer. Only work-history evidence may move a
+    # coursework skill into a paid-experience bullet.
+    paid_work_evidence = f"{original_text} {verified_work_history_text(profile)}".lower()
     coursework_only = {skill for skill in coursework_skills if skill not in paid_work_evidence}
     if not coursework_only:
         return
@@ -623,7 +669,7 @@ def validate_json_fields(
 
     # Bulk text checks
     all_text = " ".join(all_text_parts).lower()
-    evidence_text = _profile_evidence_text(profile)
+    evidence_text = _credential_evidence_text(profile)
     _add_unsupported_metric_findings(all_text, profile, errors)
     _add_unsupported_credential_findings(all_text, evidence_text, errors)
 
@@ -791,15 +837,24 @@ def validate_tailored_resume(
                 warnings.append(f"New tool/skill appeared: '{fake}' (not in original)")
 
     # 8b. Coursework-only skills may appear in skills, but not as paid-work duties.
-    experience_block = _section_text(text, "EXPERIENCE", ("PROJECTS", "EDUCATION"))
+    experience_block = _section_text(
+        text,
+        "EXPERIENCE",
+        ("PROJECTS", "CERTIFICATIONS", "EDUCATION"),
+    )
     experience_entry = {"header": "EXPERIENCE", "subtitle": "", "bullets": experience_block.splitlines()}
     _add_coursework_as_work_findings([experience_entry], profile, original_text, errors)
 
     # 8c. Numeric outcomes and credential/degree claims must be supported.
     evidence_text = _profile_evidence_text(profile, original_text)
+    credential_evidence_text = _credential_evidence_text(profile)
     _add_unsupported_metric_findings(text, profile, errors)
     non_education_text = text.replace(_section_text(text, "EDUCATION", ()), "")
-    _add_unsupported_credential_findings(non_education_text.lower(), evidence_text, errors)
+    _add_unsupported_credential_findings(
+        non_education_text.lower(),
+        credential_evidence_text,
+        errors,
+    )
     _add_unsupported_confidentiality_findings(text, evidence_text, errors)
 
     # 8d. When the candidate has no professional IT tenure, hands-on IT work
@@ -920,6 +975,10 @@ def validate_cover_letter(
         return {"passed": True, "errors": [], "warnings": []}
 
     text_lower = text.lower()
+    job_evidence = " ".join(
+        str((job or {}).get(key) or "")
+        for key in ("title", "company", "site", "location", "full_description", "description")
+    ).casefold()
 
     target_title = normalize_target_title((job or {}).get("title")).casefold()
     normalized_cover_text = " ".join(text.casefold().split())
@@ -991,6 +1050,19 @@ def validate_cover_letter(
         if mode != "lenient":
             errors.append(msg)
 
+    academic_details = (
+        "gpa",
+        "earned credits",
+        "dean's list",
+        "president's list",
+        "term gpa",
+    )
+    job_requests_academic_details = bool(
+        re.search(r"\b(?:gpa|grade point average|transcript|academic standing)\b", job_evidence)
+    )
+    if not job_requests_academic_details and any(detail in text_lower for detail in academic_details):
+        errors.append("Academic statistics are not requested by the target job.")
+
     # 3. Word count
     words = len(text.split())
     if mode == "strict" and words > 250:
@@ -1007,10 +1079,6 @@ def validate_cover_letter(
     _add_cover_letter_tool_findings(text_lower, profile, resume_text, job, errors)
     _add_cover_letter_job_specificity_findings(text_lower, job, warnings)
     resume_evidence = (resume_text or "").casefold()
-    job_evidence = " ".join(
-        str((job or {}).get(key) or "")
-        for key in ("title", "company", "site", "location", "full_description", "description")
-    ).casefold()
     normalized_cover = re.sub(r"[-_/]+", " ", text_lower)
     normalized_candidate_evidence = re.sub(
         r"[-_/]+",

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from divapply.dashboard_data import fetch_dashboard_snapshot
 from divapply import view
+from divapply.database import ensure_columns
+from divapply.scoring.requirements import SCORING_VERSION
 
 
 LONG_DESCRIPTION = "Full job description with responsibilities and minimum qualifications. " * 5
@@ -69,6 +71,8 @@ def _dashboard_db() -> sqlite3.Connection:
             None,
         ),
     )
+    ensure_columns(conn)
+    conn.execute("UPDATE jobs SET scoring_version=?", (SCORING_VERSION,))
     conn.commit()
     return conn
 
@@ -120,7 +124,7 @@ def test_dashboard_uses_contrast_safe_brand_accents(tmp_path, monkeypatch):
 
 def test_dashboard_empty_state_is_accessible(tmp_path, monkeypatch):
     conn = _dashboard_db()
-    conn.execute("UPDATE jobs SET fit_score = 4 WHERE url = 'https://example.com/job'")
+    conn.execute("DELETE FROM jobs")
     conn.commit()
     monkeypatch.setattr(view, "get_connection", lambda: conn)
 
@@ -280,6 +284,8 @@ def test_lazy_description_script_is_empty_when_interactive_descriptions_disabled
 
 def test_dashboard_renders_generated_doc_and_apply_states(tmp_path, monkeypatch):
     conn = _dashboard_db()
+    saved_pdf = tmp_path / "private.pdf"
+    saved_pdf.write_bytes(b"pdf fixture")
     conn.execute(
         """
         UPDATE jobs
@@ -289,8 +295,8 @@ def test_dashboard_renders_generated_doc_and_apply_states(tmp_path, monkeypatch)
         WHERE url = 'https://example.com/job'
         """,
         (
-            "C:/Users/ExampleUser/.divapply/tailored/private.pdf",
-            "C:/Users/ExampleUser/.divapply/cover/private.pdf",
+            str(saved_pdf),
+            str(saved_pdf),
         ),
     )
     conn.execute(

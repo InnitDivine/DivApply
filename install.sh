@@ -178,6 +178,6 @@ Use it from this terminal with:
 First-time setup:
   divapply init
 
-For auto-apply, install Node.js 18+ plus Codex CLI or Claude Code, then rerun:
+For auto-apply, install Node.js 20+ plus Codex CLI or Claude Code, then rerun:
   divapply doctor
 EOF

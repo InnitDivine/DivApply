@@ -229,8 +229,14 @@ def launch_chrome(worker_id: int, port: int | None = None,
     with _chrome_lock:
         _chrome_procs[worker_id] = proc
 
-    # Wait for Chrome to open the CDP debug port (up to 15s)
-    _wait_for_cdp(port, timeout=15, worker_id=worker_id)
+    # Wait for Chrome to open the CDP debug port (up to 15s). Once the
+    # process is registered, every failed launch path must undo both the
+    # process and registry state before returning control to the caller.
+    try:
+        _wait_for_cdp(port, timeout=15, worker_id=worker_id)
+    except BaseException:
+        cleanup_worker(worker_id, proc)
+        raise
     logger.info("[worker-%d] Chrome started on port %d (pid %d)",
                 worker_id, port, proc.pid)
     return proc

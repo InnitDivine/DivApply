@@ -105,6 +105,7 @@ def test_v143_launch_chrome_denies_permissions_without_fake_media_flags(tmp_path
     monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
     monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "chrome.exe")
     monkeypatch.setattr(chrome, "_wait_for_cdp", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(chrome.platform, "system", lambda: "Windows")
     monkeypatch.setattr(chrome.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(chrome, "_chrome_procs", {})
 
@@ -116,6 +117,85 @@ def test_v143_launch_chrome_denies_permissions_without_fake_media_flags(tmp_path
     assert "--disable-notifications" in cmd
     assert "--use-fake-device-for-media-stream" not in cmd
     assert "--use-fake-ui-for-media-stream" not in cmd
+
+
+def test_launch_chrome_cleans_up_running_process_when_cdp_readiness_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Proc:
+        pid = 4242
+
+        @staticmethod
+        def poll():
+            return None
+
+    proc = Proc()
+    killed: list[int] = []
+    readiness_error = RuntimeError("CDP did not become ready")
+
+    monkeypatch.setattr(chrome, "_port_is_available", lambda _port: True)
+    monkeypatch.setattr(chrome, "setup_worker_profile", lambda _worker_id: tmp_path)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "chrome.exe")
+    monkeypatch.setattr(chrome.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: proc)
+    monkeypatch.setattr(
+        chrome,
+        "_wait_for_cdp",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(readiness_error),
+    )
+    monkeypatch.setattr(chrome, "_kill_process_tree", killed.append)
+    monkeypatch.setattr(chrome, "_chrome_procs", {})
+
+    try:
+        chrome.launch_chrome(7, port=9229)
+    except RuntimeError as exc:
+        assert exc is readiness_error
+    else:
+        raise AssertionError("CDP readiness failure was not re-raised")
+
+    assert killed == [4242]
+    assert chrome._chrome_procs == {}
+
+
+def test_launch_chrome_unregisters_exited_process_when_cdp_readiness_fails(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    class Proc:
+        pid = 5252
+
+        @staticmethod
+        def poll():
+            return 1
+
+    proc = Proc()
+    killed: list[int] = []
+
+    monkeypatch.setattr(chrome, "_port_is_available", lambda _port: True)
+    monkeypatch.setattr(chrome, "setup_worker_profile", lambda _worker_id: tmp_path)
+    monkeypatch.setattr(chrome, "_suppress_restore_nag", lambda _profile: None)
+    monkeypatch.setattr(chrome.config, "get_chrome_path", lambda: "chrome.exe")
+    monkeypatch.setattr(chrome.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(chrome.subprocess, "Popen", lambda *_args, **_kwargs: proc)
+    monkeypatch.setattr(
+        chrome,
+        "_wait_for_cdp",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("Chrome exited")),
+    )
+    monkeypatch.setattr(chrome, "_kill_process_tree", killed.append)
+    monkeypatch.setattr(chrome, "_chrome_procs", {})
+
+    try:
+        chrome.launch_chrome(8, port=9230)
+    except RuntimeError as exc:
+        assert str(exc) == "Chrome exited"
+    else:
+        raise AssertionError("CDP readiness failure was not re-raised")
+
+    assert killed == []
+    assert chrome._chrome_procs == {}
 
 
 def test_kill_all_chrome_only_terminates_tracked_processes(monkeypatch) -> None:

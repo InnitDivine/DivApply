@@ -182,6 +182,7 @@ def get_apply_browser_label(browser: str | None) -> str:
 def get_tier(preferred_backend: str | None = None, preferred_browser: str | None = None) -> int:
     """Detect the current tier based on available dependencies."""
     from divapply.config import load_env
+    from divapply.mcp_runtime import compatible_node_executable, compatible_npm_executable
 
     load_env()
 
@@ -198,7 +199,9 @@ def get_tier(preferred_backend: str | None = None, preferred_browser: str | None
         except FileNotFoundError:
             has_browser = False
 
-    has_mcp_runtime_tools = shutil.which("node") is not None and shutil.which("npm") is not None
+    has_mcp_runtime_tools = (
+        compatible_node_executable() is not None and compatible_npm_executable() is not None
+    )
     if has_apply_agent and has_browser and has_mcp_runtime_tools:
         return 3
 
@@ -224,10 +227,12 @@ def check_tier(
     if required >= 2 and not any(os.environ.get(key) for key in ("GEMINI_API_KEY", "OPENAI_API_KEY", "LLM_URL")):
         missing.append("LLM API key - run [bold]divapply init[/bold] or set GEMINI_API_KEY")
     if required >= 3:
+        from divapply.mcp_runtime import compatible_node_executable, compatible_npm_executable
+
         if get_apply_backend(preferred_backend) is None:
             missing.append("Apply agent CLI - install Codex or Claude Code for auto-apply")
-        if shutil.which("node") is None or shutil.which("npm") is None:
-            missing.append("Node.js / npm - install Node.js 18+ for the locked MCP runtime")
+        if compatible_node_executable() is None or compatible_npm_executable() is None:
+            missing.append("Node.js / npm - install Node.js 20+ for the locked MCP runtime")
         if get_apply_browser(preferred_browser) == "chrome":
             try:
                 get_chrome_path()
