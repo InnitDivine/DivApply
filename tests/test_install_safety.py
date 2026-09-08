@@ -75,14 +75,17 @@ def test_python_probe_rejects_a_command_that_exists_but_cannot_run_requested_int
         f"$bad = [pscustomobject]@{{ Command = '{python_executable}'; Args = @('-c', 'raise SystemExit(1)') }}\n"
         + f"$good = [pscustomobject]@{{ Command = '{python_executable}'; Args = @() }}\n"
         + 'Write-Output "bad=$(Test-PythonCommand -Spec $bad -RequireJobSpyCompatible)"\n'
+        + 'Write-Output "core=$(Test-PythonCommand -Spec $good)"\n'
         + 'Write-Output "good=$(Test-PythonCommand -Spec $good -RequireJobSpyCompatible)"\n',
     )
 
     assert "bad=False" in completed.stdout
-    assert "good=True" in completed.stdout
+    assert "core=True" in completed.stdout
+    jobspy_compatible = (3, 11) <= sys.version_info[:2] < (3, 13)
+    assert f"good={jobspy_compatible}" in completed.stdout
 
 
-def test_resolver_skips_broken_py_312_and_uses_working_python(tmp_path) -> None:
+def test_core_resolver_skips_broken_py_312_and_uses_working_python(tmp_path) -> None:
     python_executable = str(Path(sys.executable).resolve()).replace("'", "''")
     completed = _run_bootstrap_function_harness(
         tmp_path,
@@ -92,7 +95,7 @@ def test_resolver_skips_broken_py_312_and_uses_working_python(tmp_path) -> None:
         + f"  if ($Name -in @('py', 'python')) {{ return [pscustomobject]@{{ Source = '{python_executable}' }} }}\n"
         + "  return $null\n"
         + "}\n"
-        + "$resolved = Resolve-PythonCommand -RequireJobSpyCompatible\n"
+        + "$resolved = Resolve-PythonCommand\n"
         + 'Write-Output "command=$($resolved.Command)"\n'
         + 'Write-Output "args=$($resolved.Args -join ",")"\n',
     )
